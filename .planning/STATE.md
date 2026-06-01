@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-03-PLAN.md
-last_updated: "2026-06-01T18:49:25.206Z"
+stopped_at: Completed 01-04-PLAN.md
+last_updated: "2026-06-01T19:07:00.488Z"
 last_activity: 2026-06-01
 progress:
   total_phases: 14
   completed_phases: 0
   total_plans: 6
-  completed_plans: 3
+  completed_plans: 4
   percent: 0
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-01)
 ## Current Position
 
 Phase: 1 (Walking Skeleton) — EXECUTING
-Plan: 4 of 6
+Plan: 5 of 6
 Status: Ready to execute
 Last activity: 2026-06-01
 
-Progress: [█████░░░░░] 50%
+Progress: [███████░░░] 67%
 
 ## Performance Metrics
 
@@ -55,6 +55,7 @@ Progress: [█████░░░░░] 50%
 | Phase 01 P01 | 5 | 3 tasks | 13 files |
 | Phase 01 P02 | 25 | 2 tasks | 19 files |
 | Phase 01 P03 | 20 | 1 tasks | 11 files |
+| Phase 01 P04 | 18 | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -72,6 +73,8 @@ Recent decisions affecting current work:
 - [Phase 1]: [01-02] Hash-chained audit writer (AUD-01): monotonic hash-covered seq, prev_hash links, canonical JSON, fail-closed redaction (D-15); SQLite Store, Postgres models retained as production target (D-14).
 - [Phase 1]: [01-03] SEC-01 prompt-injection detector is stdlib re + Pydantic only — inline=True, sub-ms, ReDoS-safe, no LLM/model/network on the hot path (P0-killer, D-12); patterns compiled once at construction.
 - [Phase 1]: [01-03] Detector is advisory-only and stateless — normalize() (NFKC + zero-width strip + base64) runs before matching; out-of-scope evasion (typoglycemia/sharded/paraphrase) honestly strict-xfail; 32 KB bounded input with recorded truncation.
+- [Phase 1]: [01-04] opa-wasmtime locked (>=0.1.1,<0.2) + wasmtime>=27 after the human-verify checkpoint — the locked opa-wasm was Python-3.12-incompatible (stale wasmer dep); no wasmer in the resolution (POL-03/D-05).
+- [Phase 1]: [01-04] WasmPolicyEngine behind a runtime_checkable PolicyEngine Protocol — OPAPolicy loaded ONCE at construction (Pitfall 2), allowlist injected as a Rego data document (set_data); evaluate() extracts result[0]['result'] and fails closed. egress.rego is deny-by-default; compiled egress.wasm is a gitignored CI/build artifact (D-06).
 
 ### Pending Todos
 
@@ -96,6 +99,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-01T18:49:25.185Z
-Stopped at: Completed 01-03-PLAN.md
+Last session: 2026-06-01T19:07:00.465Z
+Stopped at: Completed 01-04-PLAN.md
 Resume file: None

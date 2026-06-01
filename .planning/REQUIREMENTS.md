@@ -35,7 +35,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 - [ ] **POL-01** [P0]: An operator authors a human-readable Constitution of numbered principles as a declarative resource
 - [ ] **POL-02** [P0]: A compiler lowers Constitution principles into structured YAML policies scoped to agents/tools/action types
-- [ ] **POL-03** [P0]: YAML policies compile to OPA/Rego and are evaluated deterministically on the hot path behind a `PolicyEngine` interface (OPA-server in P0, opa-wasm togglable)
+- [x] **POL-03** [P0]: YAML policies compile to OPA/Rego and are evaluated deterministically on the hot path behind a `PolicyEngine` interface (OPA-server in P0, opa-wasm togglable)
 - [ ] **POL-04** [P0]: On no-rule/ambiguous results, an LLM semantic interpreter returns `{outcome, cited principle, rationale}` via structured outputs — never an unexplained verdict
 - [ ] **POL-05** [P0]: The semantic interpreter is advisory-only, runs only on flagged ambiguity, and can never upgrade a high-risk action beyond the deterministic policy floor
 - [ ] **POL-06** [P0]: The graduated-response stage maps {policy, risk, trust} to one outcome in {allow, warn, sandbox, require_consensus, require_approval, deny} with policy-driven thresholds
@@ -223,7 +223,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | PIPE-07 | Phase 1 | Complete |
 | POL-01 | Phase 3 | Pending |
 | POL-02 | Phase 3 | Pending |
-| POL-03 | Phase 1 | Pending |
+| POL-03 | Phase 1 | Complete |
 | POL-04 | Phase 3 | Pending |
 | POL-05 | Phase 3 | Pending |
 | POL-06 | Phase 1 | Pending |
