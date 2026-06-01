@@ -44,6 +44,23 @@ jobs:
             echo "policies/ has no .rego yet — skipping opa test (added in plan 01-04)."
           fi
 
+      - name: Build egress policy WASM (D-06)
+        # The WasmPolicyEngine + the e2e / red-team fixtures load policies/build/egress.wasm,
+        # which is a build PRODUCT (gitignored). CI MUST compile it from the tracked Rego
+        # BEFORE pytest, or the e2e + regression-lock tests error at fixture construction
+        # (missing WASM) — which would break the gate for the wrong reason and means
+        # "delete the principle -> CI fails" (D-04 / success criterion 4) is not truly enforced.
+        run: |
+          if compgen -G "policies/*.rego" > /dev/null; then
+            mkdir -p policies/build
+            opa build -t wasm -e 'agentos/egress/allow' policies/egress.rego -o policies/build/bundle.tar.gz
+            tar -xzf policies/build/bundle.tar.gz -C policies/build /policy.wasm
+            mv policies/build/policy.wasm policies/build/egress.wasm
+            test -f policies/build/egress.wasm && echo "Built policies/build/egress.wasm"
+          else
+            echo "policies/ has no .rego yet — skipping WASM build."
+          fi
+
       - name: Pytest
         run: uv run pytest -q
 
