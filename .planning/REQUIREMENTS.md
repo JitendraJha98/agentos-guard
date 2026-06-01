@@ -1,0 +1,217 @@
+# Requirements: agentos-guard
+
+**Defined:** 2026-06-01
+**Core Value:** Every agent action is intercepted at runtime and returned an explainable, graduated decision grounded in policy + a human-readable constitution, with tamper-evident audit evidence — making unsafe agent behavior structurally impossible rather than merely unlikely.
+
+## Scope note
+
+The milestone scope is the **full documented vision (Phases 0–2)**. Every requirement below is committed (v1) and carries a build-phase tag — **[P0]** MVP / parity walking skeleton, **[P1]** trust · containment · security · scale, **[P2]** moonshot (speculative, hard-gated on the P0/P1 substrate). Phase tags inform roadmap sequencing; they do not change commitment. Source of truth: `docs/architecture/` (authoritative) + `.planning/research/SUMMARY.md`.
+
+## v1 Requirements
+
+### Interception & PEP
+
+- [ ] **INT-01** [P0]: A LangChain/LangGraph agent's tool calls are intercepted before execution via SDK middleware and normalized into an `AgentAction`
+- [ ] **INT-02** [P0]: Model invocations are intercepted and normalized into an `AgentAction`
+- [ ] **INT-03** [P0]: Memory-access operations are intercepted and normalized into an `AgentAction`
+- [ ] **INT-04** [P0]: MCP-server calls are intercepted and normalized into an `AgentAction`
+- [ ] **INT-05** [P0]: Agent-to-agent delegation is intercepted and normalized into an `AgentAction` with `parent_action_id` lineage
+- [ ] **INT-06** [P0]: An interception-coverage check verifies all five action types are hooked and detects un-instrumented paths (no silent gaps)
+- [ ] **INT-07** [P1]: A framework-agnostic network gateway/proxy PEP intercepts actions without SDK changes, behind the same pipeline contract
+- [ ] **INT-08** [P1]: At least one additional framework adapter (e.g. CrewAI or OpenAI Agents SDK) intercepts actions
+- [ ] **INT-09** [P2]: A Kubernetes sidecar/operator PEP intercepts at the network layer behind the same contract
+
+### Decision Pipeline
+
+- [ ] **PIPE-01** [P0]: Each `AgentAction` passes synchronously through ordered stages identity/trust → policy → risk → graduated response, producing one `Decision`
+- [ ] **PIPE-02** [P0]: Every stage contributes machine-readable `reasons` (fired policies/principles) to the `Decision` for explainability
+- [ ] **PIPE-03** [P0]: A stage can short-circuit to a terminal outcome (e.g. forged identity → deny) without running later stages
+- [ ] **PIPE-04** [P0]: Pipeline overhead for cached policy/identity stays within a defined p95 latency budget (low single-digit ms), verified by a benchmark test
+- [ ] **PIPE-05** [P0]: Fail-closed vs fail-open on control-plane unavailability is a per-action-class policy decision; high-risk classes default fail-closed; no silent allow
+- [ ] **PIPE-06** [P0]: The control plane maintains its own decision/identity/compiled-policy cache (OPA does not cache), invalidated on policy-version change
+- [ ] **PIPE-07** [P0]: A stable, serializable `contract` package (`AgentAction` + `evaluate() -> Decision`) is the single dependency every PEP form uses
+
+### Constitution, Policy & Graduated Response
+
+- [ ] **POL-01** [P0]: An operator authors a human-readable Constitution of numbered principles as a declarative resource
+- [ ] **POL-02** [P0]: A compiler lowers Constitution principles into structured YAML policies scoped to agents/tools/action types
+- [ ] **POL-03** [P0]: YAML policies compile to OPA/Rego and are evaluated deterministically on the hot path behind a `PolicyEngine` interface (OPA-server in P0, opa-wasm togglable)
+- [ ] **POL-04** [P0]: On no-rule/ambiguous results, an LLM semantic interpreter returns `{outcome, cited principle, rationale}` via structured outputs — never an unexplained verdict
+- [ ] **POL-05** [P0]: The semantic interpreter is advisory-only, runs only on flagged ambiguity, and can never upgrade a high-risk action beyond the deterministic policy floor
+- [ ] **POL-06** [P0]: The graduated-response stage maps {policy, risk, trust} to one outcome in {allow, warn, sandbox, require_consensus, require_approval, deny} with policy-driven, configurable thresholds
+- [ ] **POL-07** [P0]: A `require_approval` outcome parks an `ApprovalRequest` with full action context, fired principles, and risk/trust scores; the action blocks until resolved or times out to a safe default
+- [ ] **POL-08** [P0]: Every `Decision` records the exact Constitution/Policy version that evaluated the action
+- [ ] **POL-09** [P1]: A `require_consensus` outcome requires 2-of-3 agent agreement before the action proceeds
+- [ ] **POL-10** [P2]: Agents or the self-play trainer can propose Constitution amendments; humans review and ratify; the Constitution is versioned like a legal document
+- [ ] **POL-11** [P2]: A conflict-resolution engine computes transitive permissions across delegation chains and flags emergent capability conflicts
+- [ ] **POL-12** [P2]: BFT consensus backs multi-agent agreement for `require_consensus` at scale
+
+### Security Engine — Detection / Risk
+
+- [ ] **SEC-01** [P0]: The risk stage scores prompt-injection patterns in tool inputs, retrieved content, and inter-agent messages, contributing to `risk_score` with typed findings
+- [ ] **SEC-02** [P0]: Baseline runtime guardrails score PII, unsafe content, and format violations on inputs/outputs
+- [ ] **SEC-03** [P0]: Detectors are pluggable scorers — cheap heuristics run inline, expensive models only when flagged
+- [ ] **SEC-04** [P1]: Data-exfiltration detection scores outbound payloads carrying secrets/PII to untrusted targets
+- [ ] **SEC-05** [P1]: Secret-leakage detection flags credentials/keys in prompts, tool args, or outputs
+- [ ] **SEC-06** [P1]: Tool-poisoning detection flags malicious/drifted tool definitions (P0 records tool-manifest hashes for after-the-fact detection)
+- [ ] **SEC-07** [P1]: An MCP security gateway inspects/normalizes MCP interactions and quarantines hostile tool manifests
+- [ ] **SEC-08** [P1]: Supply-chain checks cross-reference an agent's ABOM against known-bad models/prompts/tools
+- [ ] **SEC-09** [P1]: A memory/context-poisoning detector flags malicious memory writes/reads (OWASP ASI06)
+- [ ] **SEC-10** [P1]: Inter-agent communication is authenticated and agent identity/card is verified on delegation (OWASP ASI07)
+- [ ] **SEC-11** [P1]: A code-execution detector flags unsafe dynamic code/command execution by agents (OWASP ASI05)
+
+### Runtime Security — Containment
+
+- [ ] **RUN-01** [P0]: An operator can kill-switch a single agent, immediately halting its actions
+- [ ] **RUN-02** [P0]: An operator can kill-switch the entire fleet immediately
+- [ ] **RUN-03** [P1]: A `sandbox` outcome runs the action in an isolated context with quarantined or reversible side effects
+- [ ] **RUN-04** [P1]: Privilege rings gate sensitive tools behind higher capability tiers per agent
+- [ ] **RUN-05** [P1]: Resource isolation enforces CPU/memory/network limits per agent execution
+- [ ] **RUN-06** [P1]: Circuit breakers auto-trip an agent/tool after a threshold of violations or errors
+- [ ] **RUN-07** [P1]: Emergency shutdown stops the fleet with an audit-logged justification
+
+### Identity
+
+- [ ] **IDN-01** [P0]: Each `Agent` registers and is issued a signed identity token
+- [ ] **IDN-02** [P0]: The identity stage verifies the token; forged/unknown identity short-circuits to deny
+- [ ] **IDN-03** [P1]: Agents are issued X.509-style certificates binding identity to keys
+- [ ] **IDN-04** [P2]: SPIFFE/SVID workload identity enables zero-trust mTLS
+
+### Trust & Reputation
+
+- [ ] **TRST-01** [P0]: Each `Agent` has a 0–1 trust score consumed by the graduated-response stage
+- [ ] **TRST-02** [P0]: Trust modulates outcome within a policy-defined band but never overrides a deterministic policy decision
+- [ ] **TRST-03** [P1]: A longitudinal reputation score is derived from violation/approval history
+- [ ] **TRST-04** [P1]: Trust propagates (and decays) across delegation edges as a bounded budget; delegated scope is enforced as an intersection, not a union
+- [ ] **TRST-05** [P2]: Agents stake on behavior; violations slash stake; reputation is portable across deployments
+
+### Discovery & Agent Graph
+
+- [ ] **DISC-01** [P0]: Agents self-register via the SDK and appear in an authoritative agent inventory
+- [ ] **DISC-02** [P0]: The inventory tracks known agents, tools, prompts, and memories
+- [ ] **DISC-03** [P1]: Framework discovery detects LangChain/LangGraph, CrewAI, AutoGen, OpenAI Agents SDK, MCP, etc.
+- [ ] **DISC-04** [P1]: Shadow-agent detection flags agents acting without registration
+- [ ] **DISC-05** [P1]: Rogue-agent detection flags agents diverging from declared scope
+- [ ] **DISC-06** [P1]: A live agent graph materializes agents/tools/MCP/models/memories and delegation edges; lineage derives from `parent_action_id`
+
+### Audit
+
+- [ ] **AUD-01** [P0]: Each `Decision` appends an `AuditRecord` to an append-only, hash-chained log (each record includes the prior record's hash)
+- [ ] **AUD-02** [P0]: Each `AuditRecord` links `AgentAction` → `Decision` → fired policies/principles → outcome
+- [ ] **AUD-03** [P0]: Each `AuditRecord` carries the exact policy/constitution version (policy evidence)
+- [ ] **AUD-04** [P0]: Sensitive payloads are redacted at write time per policy; redaction fails closed (no write if redaction fails)
+- [ ] **AUD-05** [P0]: A verifier (runnable in CI) detects any retroactive edit by re-validating the hash chain; chain checkpoints are externally anchored/signed
+- [ ] **AUD-06** [P1]: The hash chain is upgraded to a Merkle DAG enabling inclusion proofs and partial disclosure
+- [ ] **AUD-07** [P2]: Zero-knowledge compliance proofs prove properties (e.g. "no PII exfiltrated") without revealing underlying data
+
+### Compliance
+
+- [ ] **CMP-01** [P0]: Each detector/policy maps to OWASP Agentic Top 10 categories
+- [ ] **CMP-02** [P0]: Policy + audit evidence maps to NIST AI RMF (Govern/Map/Measure/Manage)
+- [ ] **CMP-03** [P0]: Minimal logging + human-oversight evidence supports EU AI Act Art. 12 / Art. 26 claims at launch (obligations bind 2026-08-02)
+- [ ] **CMP-04** [P1]: Full EU AI Act mapping (risk classification, logging, human oversight) is produced
+- [ ] **CMP-05** [P1]: SOC 2 control evidence (access, change, monitoring) is derived from the audit log
+- [ ] **CMP-06** [P1]: One-click export produces evidence bundles per framework and time range
+
+### Testing & Red-Team
+
+- [ ] **TEST-01** [P0]: Engineers write pytest safety tests using provided fixtures/adapters that run an attack library against an agent
+- [ ] **TEST-02** [P0]: A prompt-injection attack suite (garak/PyRIT-backed) runs in CI
+- [ ] **TEST-03** [P0]: Red-team suites cover tool misuse, exfiltration, and jailbreak scenarios
+- [ ] **TEST-04** [P0]: Safety assertions use statistical thresholds (e.g. attack-success-rate < X%), not single runs
+- [ ] **TEST-05** [P0]: Fixed vulnerabilities are locked by regression tests so they cannot silently return
+- [ ] **TEST-06** [P0]: A failing safety test breaks the CI build
+- [ ] **TEST-07** [P1]: Attack-success-rate is tracked over time per agent/attack class
+- [ ] **TEST-08** [P1]: Continuous validation re-runs suites against the live agent on a schedule
+- [ ] **TEST-09** [P1]: Multi-step adversarial simulations run campaign-style attacks
+- [ ] **TEST-10** [P2]: Continuous adversarial self-play generates novel attacks, scores defenses, and proposes Constitution/policy patches (human-ratified, held-out eval)
+- [ ] **TEST-11** [P2]: A runtime-patching path rolls out ratified defenses; a threat-intel feed imports emerging attack patterns
+
+### Observability
+
+- [ ] **OBS-01** [P0]: Every `AgentAction`/`Decision` is emitted as an OpenTelemetry span to the user's backend
+- [ ] **OBS-02** [P0]: `trace_id` correlates an action across pipeline stages and across agents (distributed tracing)
+- [ ] **OBS-03** [P0]: Per-agent metrics (action volume, outcome mix, violation counts, p95 pipeline latency) are emitted
+- [ ] **OBS-04** [P1]: Agent health monitoring tracks liveness/error-rate/circuit-breaker state per agent
+- [ ] **OBS-05** [P1]: Conversation tracing reconstructs a full conversation across tools and delegations
+- [ ] **OBS-06** [P1]: Per-agent SLO and violation dashboards with attack visualization
+
+### Economics
+
+- [ ] **ECON-01** [P1]: Token/API cost is attributed to each agent/action
+- [ ] **ECON-02** [P1]: Token/budget limits are expressed as policy; over-budget actions are denied/escalated by the graduated-response engine
+- [ ] **ECON-03** [P1]: GPU usage and downstream API consumption are attributed per agent
+- [ ] **ECON-04** [P2]: ROI analytics present value-vs-cost per agent/workflow
+
+### ABOM (Supply Chain)
+
+- [ ] **ABOM-01** [P1]: Each `Agent` declares an Agent Bill of Materials (models, prompts, tools, MCP servers) as a resource
+- [ ] **ABOM-02** [P1]: ABOM components are versioned with provenance
+- [ ] **ABOM-03** [P2]: Vulnerability impact analysis answers "which agents use compromised component vX?" instantly
+
+### Control-Plane API & Persistence
+
+- [ ] **API-01** [P0]: A declarative API validates, versions, and stores resources (Agent, Constitution, Policy, TrustProfile, ApprovalRequest, ABOM) in PostgreSQL
+- [ ] **API-02** [P0]: Applying a Constitution compiles it to Policy/Rego on write (compile-on-write)
+- [ ] **API-03** [P0]: Operators approve/deny `ApprovalRequest`s via the API
+- [ ] **API-04** [P1]: Reconciliation loops continuously compile constitutions, refresh trust, materialize the graph, and warm hot-path caches
+
+### Python SDK
+
+- [ ] **SDK-01** [P0]: The SDK provides interception decorators/middleware for LangChain/LangGraph (the PEP)
+- [ ] **SDK-02** [P0]: The SDK provides agent self-registration returning an identity token
+- [ ] **SDK-03** [P0]: The SDK provides pytest adapters for the red-team layer
+- [ ] **SDK-04** [P0]: The SDK provides a control-plane client for resource CRUD and approvals
+
+### Dashboard
+
+- [ ] **DASH-01** [P0]: A minimal dashboard shows read-only agent inventory and recent decisions/audit
+- [ ] **DASH-02** [P0]: Operators resolve pending `ApprovalRequest`s from the dashboard
+- [ ] **DASH-03** [P0]: Operators trigger agent/fleet kill switches from the dashboard
+- [ ] **DASH-04** [P1]: The dashboard adds the live agent graph, per-agent SLOs/violations, and attack visualization
+
+### Performance
+
+- [ ] **PERF-01** [P2]: Hot-path enforcement components are rewritten in Rust (PyO3 interop) where profiling justifies it
+
+## v2 Requirements
+
+Deferred beyond the documented vision. Tracked but not in the current roadmap.
+
+### Compliance
+
+- **CMP-V2-01**: Additional compliance frameworks beyond OWASP/NIST/EU/SOC2 (e.g. HIPAA, FedRAMP, ISO 42001)
+
+### Identity & Policy
+
+- **POL-V2-01**: Cedar as an alternative policy backend alongside OPA/Rego
+- **IDN-V2-01**: DID-based decentralized identity interop
+
+## Out of Scope
+
+Explicitly excluded. Documented to prevent scope creep.
+
+| Feature | Reason |
+|---------|--------|
+| Training or hosting the agents themselves | agentos-guard *governs* agents; it is not an agent framework |
+| Managed SaaS offering | Open-source and self-hosted first |
+| Replacing existing observability backends | We emit OpenTelemetry and integrate, not replace |
+| Non-Python SDKs (TypeScript, Go) | Deferred until the Python surface stabilizes (ADR-0001) |
+| Kubernetes as a Phase 0 requirement | Phase 0 is self-hosted (API + Postgres + dashboard); K8s operator/sidecar is Phase 2 |
+
+## Traceability
+
+Populated during roadmap creation — the roadmapper maps every v1 requirement to exactly one phase and fills the table below.
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| _(pending roadmap)_ | — | Pending |
+
+**Coverage:**
+- v1 requirements: 111 total
+- Mapped to phases: 0 (pending roadmap)
+- Unmapped: 111 ⚠️
+
+---
+*Requirements defined: 2026-06-01*
+*Last updated: 2026-06-01 after initial definition*
