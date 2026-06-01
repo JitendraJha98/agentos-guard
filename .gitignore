@@ -65,6 +65,16 @@ db.sqlite3-journal
 agentos_controlplane.db
 *.db-journal
 
+# agentos-guard: pinned OPA CLI binary (a downloaded toolchain artifact, not source;
+# pinned to v1.17.0 — see scripts/smoke_opa_wasmtime.py / 01-04 plan)
+tools/opa/opa.exe
+tools/opa/opa.exe.sha256
+# agentos-guard: throwaway WASM build output from the 01-04 Task-1 smoke script
+scripts/_smoke_build/
+# agentos-guard: throwaway venv holding opa-wasmtime/wasmtime for the 01-04 smoke
+# test ONLY (these are NOT locked until the human-verify checkpoint is approved)
+.smoke-venv/
+
 # Flask stuff:
 instance/
 .webassets-cache
