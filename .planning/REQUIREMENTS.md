@@ -38,7 +38,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [ ] **POL-03** [P0]: YAML policies compile to OPA/Rego and are evaluated deterministically on the hot path behind a `PolicyEngine` interface (OPA-server in P0, opa-wasm togglable)
 - [ ] **POL-04** [P0]: On no-rule/ambiguous results, an LLM semantic interpreter returns `{outcome, cited principle, rationale}` via structured outputs — never an unexplained verdict
 - [ ] **POL-05** [P0]: The semantic interpreter is advisory-only, runs only on flagged ambiguity, and can never upgrade a high-risk action beyond the deterministic policy floor
-- [ ] **POL-06** [P0]: The graduated-response stage maps {policy, risk, trust} to one outcome in {allow, warn, sandbox, require_consensus, require_approval, deny} with policy-driven, configurable thresholds
+- [ ] **POL-06** [P0]: The graduated-response stage maps {policy, risk, trust} to one outcome in {allow, warn, sandbox, require_consensus, require_approval, deny} with policy-driven thresholds
 - [ ] **POL-07** [P0]: A `require_approval` outcome parks an `ApprovalRequest` with full action context, fired principles, and risk/trust scores; the action blocks until resolved or times out to a safe default
 - [ ] **POL-08** [P0]: Every `Decision` records the exact Constitution/Policy version that evaluated the action
 - [ ] **POL-09** [P1]: A `require_consensus` outcome requires 2-of-3 agent agreement before the action proceeds
@@ -201,17 +201,127 @@ Explicitly excluded. Documented to prevent scope creep.
 
 ## Traceability
 
-Populated during roadmap creation — the roadmapper maps every v1 requirement to exactly one phase and fills the table below.
+Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documented Phase-0 parity loop, Phases 7–12 the Phase-1 substrate, and Phases 13–14 the hard-gated Phase-2 moonshot.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| _(pending roadmap)_ | — | Pending |
+| INT-01 | Phase 1 | Pending |
+| INT-02 | Phase 2 | Pending |
+| INT-03 | Phase 2 | Pending |
+| INT-04 | Phase 2 | Pending |
+| INT-05 | Phase 2 | Pending |
+| INT-06 | Phase 2 | Pending |
+| INT-07 | Phase 10 | Pending |
+| INT-08 | Phase 10 | Pending |
+| INT-09 | Phase 14 | Pending |
+| PIPE-01 | Phase 1 | Pending |
+| PIPE-02 | Phase 1 | Pending |
+| PIPE-03 | Phase 1 | Pending |
+| PIPE-04 | Phase 3 | Pending |
+| PIPE-05 | Phase 3 | Pending |
+| PIPE-06 | Phase 3 | Pending |
+| PIPE-07 | Phase 1 | Pending |
+| POL-01 | Phase 3 | Pending |
+| POL-02 | Phase 3 | Pending |
+| POL-03 | Phase 1 | Pending |
+| POL-04 | Phase 3 | Pending |
+| POL-05 | Phase 3 | Pending |
+| POL-06 | Phase 1 | Pending |
+| POL-07 | Phase 3 | Pending |
+| POL-08 | Phase 3 | Pending |
+| POL-09 | Phase 9 | Pending |
+| POL-10 | Phase 13 | Pending |
+| POL-11 | Phase 13 | Pending |
+| POL-12 | Phase 13 | Pending |
+| SEC-01 | Phase 1 | Pending |
+| SEC-02 | Phase 3 | Pending |
+| SEC-03 | Phase 3 | Pending |
+| SEC-04 | Phase 8 | Pending |
+| SEC-05 | Phase 8 | Pending |
+| SEC-06 | Phase 8 | Pending |
+| SEC-07 | Phase 8 | Pending |
+| SEC-08 | Phase 8 | Pending |
+| SEC-09 | Phase 8 | Pending |
+| SEC-10 | Phase 8 | Pending |
+| SEC-11 | Phase 8 | Pending |
+| RUN-01 | Phase 4 | Pending |
+| RUN-02 | Phase 4 | Pending |
+| RUN-03 | Phase 9 | Pending |
+| RUN-04 | Phase 9 | Pending |
+| RUN-05 | Phase 9 | Pending |
+| RUN-06 | Phase 9 | Pending |
+| RUN-07 | Phase 9 | Pending |
+| IDN-01 | Phase 1 | Pending |
+| IDN-02 | Phase 1 | Pending |
+| IDN-03 | Phase 7 | Pending |
+| IDN-04 | Phase 14 | Pending |
+| TRST-01 | Phase 1 | Pending |
+| TRST-02 | Phase 3 | Pending |
+| TRST-03 | Phase 7 | Pending |
+| TRST-04 | Phase 7 | Pending |
+| TRST-05 | Phase 14 | Pending |
+| DISC-01 | Phase 5 | Pending |
+| DISC-02 | Phase 5 | Pending |
+| DISC-03 | Phase 10 | Pending |
+| DISC-04 | Phase 10 | Pending |
+| DISC-05 | Phase 10 | Pending |
+| DISC-06 | Phase 10 | Pending |
+| AUD-01 | Phase 1 | Pending |
+| AUD-02 | Phase 4 | Pending |
+| AUD-03 | Phase 4 | Pending |
+| AUD-04 | Phase 4 | Pending |
+| AUD-05 | Phase 4 | Pending |
+| AUD-06 | Phase 11 | Pending |
+| AUD-07 | Phase 14 | Pending |
+| CMP-01 | Phase 6 | Pending |
+| CMP-02 | Phase 6 | Pending |
+| CMP-03 | Phase 6 | Pending |
+| CMP-04 | Phase 11 | Pending |
+| CMP-05 | Phase 11 | Pending |
+| CMP-06 | Phase 11 | Pending |
+| TEST-01 | Phase 6 | Pending |
+| TEST-02 | Phase 6 | Pending |
+| TEST-03 | Phase 6 | Pending |
+| TEST-04 | Phase 6 | Pending |
+| TEST-05 | Phase 6 | Pending |
+| TEST-06 | Phase 6 | Pending |
+| TEST-07 | Phase 12 | Pending |
+| TEST-08 | Phase 12 | Pending |
+| TEST-09 | Phase 12 | Pending |
+| TEST-10 | Phase 14 | Pending |
+| TEST-11 | Phase 14 | Pending |
+| OBS-01 | Phase 6 | Pending |
+| OBS-02 | Phase 6 | Pending |
+| OBS-03 | Phase 6 | Pending |
+| OBS-04 | Phase 12 | Pending |
+| OBS-05 | Phase 12 | Pending |
+| OBS-06 | Phase 12 | Pending |
+| ECON-01 | Phase 11 | Pending |
+| ECON-02 | Phase 11 | Pending |
+| ECON-03 | Phase 11 | Pending |
+| ECON-04 | Phase 14 | Pending |
+| ABOM-01 | Phase 8 | Pending |
+| ABOM-02 | Phase 8 | Pending |
+| ABOM-03 | Phase 14 | Pending |
+| API-01 | Phase 5 | Pending |
+| API-02 | Phase 5 | Pending |
+| API-03 | Phase 3 | Pending |
+| API-04 | Phase 7 | Pending |
+| SDK-01 | Phase 1 | Pending |
+| SDK-02 | Phase 5 | Pending |
+| SDK-03 | Phase 6 | Pending |
+| SDK-04 | Phase 5 | Pending |
+| DASH-01 | Phase 5 | Pending |
+| DASH-02 | Phase 5 | Pending |
+| DASH-03 | Phase 5 | Pending |
+| DASH-04 | Phase 12 | Pending |
+| PERF-01 | Phase 14 | Pending |
 
 **Coverage:**
 - v1 requirements: 111 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 111 ⚠️
+- Mapped to phases: 111 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-01*
-*Last updated: 2026-06-01 after initial definition*
+*Last updated: 2026-06-01 after roadmap creation (traceability populated, 111/111 mapped)*
