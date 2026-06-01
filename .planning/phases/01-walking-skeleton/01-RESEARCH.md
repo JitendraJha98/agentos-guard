@@ -752,19 +752,19 @@ All load-bearing code examples are inlined in their respective sections above (C
 | A3 | LangChain 1.3.x exposes an async middleware variant (e.g. `awrap_tool_call`) usable from the LangGraph event loop, OR `wrap_tool_call` can `await` the async pipeline. | Pipeline Composition (async note) | Medium — if neither exists cleanly, the audit write may need a sync DB path (psycopg sync) on the hot path for Phase 1. Verify the exact async hook in langchain 1.3.x at plan time. |
 | A4 | `httpx`/`urllib` for the `http_get` tool body (Claude's discretion). | Standard Stack | Negligible — the tool is a test fixture. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Exact OPA WASM result extraction with `opa-wasmtime`.**
+1. **Exact OPA WASM result extraction with `opa-wasmtime`.** RESOLVED: recorded by the blocking human-verify checkpoint in plan 01-04 Task 1.
    - What we know: `opa build -t wasm -e 'agentos/egress/allow'` makes `data.agentos.egress.allow` the entrypoint; `policy.evaluate(input)` returns an OPA result set (documented elsewhere as `[{"result": <value>}]`).
    - What's unclear: the precise Python object `opa-wasmtime` returns and whether `set_data` for the allowlist composes with the entrypoint as expected.
    - Recommendation: a Wave-0 smoke test that builds `egress.wasm`, loads it via `opa-wasmtime`, sets the allowlist data, and asserts allow/deny for two hosts — resolve before wiring the pipeline stage. (Ties to A1's human-verify checkpoint.)
 
-2. **Async hook name in langchain 1.3.x.**
+2. **Async hook name in langchain 1.3.x.** RESOLVED: verified-then-implemented in plan 01-06 Task 1 (sync fallback documented).
    - What we know: `wrap_tool_call(request, handler)` is the sync seam; the middleware runs inside the LangGraph event loop; `asyncio.run()` inside it raises.
    - What's unclear: the exact async variant name/signature in the pinned 1.3.x.
    - Recommendation: verify `awrap_tool_call` (or equivalent) at plan time; if absent, make the audit write sync for Phase 1 (psycopg sync) — acceptable for a single-process skeleton, revisit when the gateway lands.
 
-3. **Append-only enforcement depth for Phase 1.**
+3. **Append-only enforcement depth for Phase 1.** RESOLVED: Postgres trigger blocking UPDATE/DELETE in plan 01-02 Task 1.
    - What we know: D-14 wants append-only; full verifier/anchoring is Phase 4.
    - Recommendation: app-layer append-only (no UPDATE/DELETE code path) is the minimum; a Postgres trigger blocking UPDATE/DELETE on `audit_record` is a cheap, recommended Phase-1 hardening. Decide explicitly.
 

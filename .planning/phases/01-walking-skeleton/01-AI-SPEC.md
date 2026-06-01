@@ -132,7 +132,7 @@ This system's *purpose* is to produce the evidence these frameworks require; the
 
 **Selected Framework:** Lightweight in-house heuristic/pattern prompt-injection detector — Python stdlib `re` + a Pydantic v2 typed finding, implemented behind a pluggable `RiskScorer` interface (the SEC-03 pluggable-scorer contract; the risk stage of the decision pipeline).
 
-**Version:** No new heavy runtime dependency — Python 3.12+ stdlib `re` + Pydantic v2.13.x (already in the locked stack). OPA CLI / opa-wasm 0.3.2 for the policy stage; `anthropic` 0.105.x reserved for eval-time judge only.
+**Version:** No new heavy runtime dependency — Python 3.12+ stdlib `re` + Pydantic v2.13.x (already in the locked stack). OPA CLI / opa-wasmtime for the policy stage (superseded: opa-wasm 0.3.2 is wasmer-bound and incompatible with Python 3.12/3.13 - use opa-wasmtime; see 01-RESEARCH.md A1); `anthropic` 0.105.x reserved for eval-time judge only.
 
 **Rationale:**
 Phase 1 is deterministic-by-design (opa-wasm in-process, no LLM interpreter — CONTEXT.md D-12) and must keep the hot path at low-single-digit-ms (PITFALLS Pitfall 1, a P0-KILLER). A regex/pattern scorer is sub-millisecond, CPU-only, and dependency-light, yet fully satisfies SEC-01 (contributes a typed prompt-injection finding to `risk_score`) and the SEC-03 pluggable-scorer contract. Critically, it keeps the red-team CI gate (D-04) testing the **Constitution principle + pipeline wiring** rather than a probabilistic classifier's accuracy, so the "delete the principle → CI fails" proof-of-life stays deterministic and non-flaky. Heavier options (LlamaFirewall orchestration, ML classifiers) are the right Phase-3 upgrade once detector tiering (SEC-02/03) exists — the stable `RiskScorer` interface makes them a drop-in, never a rewrite.
@@ -163,7 +163,7 @@ uv add "pydantic>=2.13"          # typed RiskFinding model (already in the stack
 
 # Already present from the broader Phase-1 stack — listed for completeness:
 uv add "langchain>=1.3" "langgraph>=1.2"   # the governed agent + AgentMiddleware PEP seam
-uv add opa-wasm                            # deterministic policy floor (compiled Rego → WASM)
+uv add opa-wasmtime                        # deterministic policy floor (compiled Rego → WASM); superseded: opa-wasm 0.3.2 is wasmer-bound and incompatible with Python 3.12/3.13 - use opa-wasmtime; see 01-RESEARCH.md A1
 
 # Phase 3 ONLY (do NOT install in Phase 1 — designated upgrade tier behind RiskScorer):
 #   uv add transformers huggingface_hub    # Llama Prompt Guard 2 (22M) classifier
@@ -298,7 +298,7 @@ agentos-guard/                       # uv workspace root (pyproject.toml + uv.lo
 - OWASP — MCP Tool Poisoning (untrusted tool descriptions/metadata): https://owasp.org/www-community/attacks/MCP_Tool_Poisoning
 - Llama Prompt Guard 2 22M (DeBERTa-xsmall, ~22M params; ~75% latency/compute reduction vs 86M — the Phase-3 `inline=False` upgrade tier): https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-22M
 - LlamaFirewall (multi-scanner orchestrator front door, Phase-3): https://meta-llama.github.io/PurpleLlama/LlamaFirewall/
-- opa-wasm in-process Rego (policy floor): https://pypi.org/project/opa-wasm/ ; OPA policy performance (~1 ms prepared-query budget): https://www.openpolicyagent.org/docs/policy-performance
+- opa-wasmtime in-process Rego (policy floor): https://pypi.org/project/opa-wasmtime/ (superseded: opa-wasm 0.3.2 is wasmer-bound and incompatible with Python 3.12/3.13 - use opa-wasmtime; see 01-RESEARCH.md A1) ; OPA policy performance (~1 ms prepared-query budget): https://www.openpolicyagent.org/docs/policy-performance
 
 ---
 
