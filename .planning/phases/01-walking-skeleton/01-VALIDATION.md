@@ -19,18 +19,18 @@ updated: 2026-06-01
 
 | Property | Value |
 |----------|-------|
-| **Framework** | pytest 8.x (+ pytest-repeat, pytest-benchmark, testcontainers[postgres] 4.14.2) |
+| **Framework** | pytest 8.x (+ pytest-repeat, pytest-benchmark). No testcontainers — audit/e2e run on a SQLite-backed `Store` (no Docker; D-14 deviation). |
 | **Config file** | `pyproject.toml [tool.pytest.ini_options]` created in **plan 01-01 / Wave 1** (markers: `regression_lock`, `floor_invariant`, `latency`; testpaths) |
 | **Quick run command** | `uv run pytest tests/unit tests/redteam -m "not slow" -q` |
-| **Full suite command** | `uv run pytest -q` (spins testcontainers Postgres for audit/integration) + `opa test policies/` |
-| **Estimated runtime** | ~30–60s full suite (unit/redteam < 5s; testcontainers Postgres startup dominates) |
+| **Full suite command** | `uv run pytest -q` (audit/integration run on a SQLite-backed `Store` — no Docker) + `opa test policies/` |
+| **Estimated runtime** | ~5–15s full suite (all in-process; SQLite, no container startup) |
 
 ---
 
 ## Sampling Rate
 
 - **After every task commit:** Run `uv run pytest tests/unit tests/redteam -q` (fast; no containers)
-- **After every plan wave:** Run `uv run pytest -q` (full suite incl. testcontainers Postgres) + `opa test policies/`
+- **After every plan wave:** Run `uv run pytest -q` (full suite; SQLite-backed Store, no Docker) + `opa test policies/`
 - **Before `/gsd:verify-work`:** Full suite green + `pytest -m regression_lock --maxfail=1` green + detector determinism (`--count=100`) green
 - **Max feedback latency:** < 60 seconds (full); < 5 seconds (quick)
 
@@ -51,9 +51,9 @@ updated: 2026-06-01
 | 01-05-T1 | 01-05 | 4 | POL-06 / TRST-01 | T-01-16 | `graduated_response` never upgrades past policy deny (floor invariant) | unit | `uv run pytest tests/unit/test_graduated.py -m floor_invariant -x` | created by 01-05 | ⬜ pending |
 | 01-03-FEAT | 01-03 | 2 | SEC-01 | T-01-08/09/11 | Detector fires on each covered probe class; benign content scores < 0.4 | unit | `uv run pytest tests/unit/test_detector_recall.py -x` | created by 01-03 | ⬜ pending |
 | 01-03-FEAT | 01-03 | 2 | SEC-01 (determinism) | T-01-12 | Same action → byte-identical finding over 100 runs; no network/model import | unit | `uv run pytest tests/unit/test_detector_recall.py --count=100 -q` | created by 01-03 | ⬜ pending |
-| 01-02-T2 | 01-02 | 2 | AUD-01 | T-01-05/06 | Hash-chained append; `seq` monotonic; chain links; redaction fails closed | integration | `uv run pytest tests/integration/test_audit_chain.py -x` (testcontainers) | created by 01-02 | ⬜ pending |
+| 01-02-T2 | 01-02 | 2 | AUD-01 | T-01-05/06 | Hash-chained append; `seq` monotonic; chain links; redaction fails closed | integration | `uv run pytest tests/integration/test_audit_chain.py -x` (SQLite Store) | created by 01-02 | ⬜ pending |
 | 01-06-T3 | 01-06 | 5 | **D-04 (done-criterion)** | T-01-20 | Exfil probe → deny WITH principle; **deleting principle → CI red** | redteam | `uv run pytest tests/redteam/test_exfil_injection.py -m regression_lock --maxfail=1` | created by 01-06 | ⬜ pending |
-| 01-06-T2 | 01-06 | 5 | End-to-end | T-01-19/21 | LangGraph agent: allowlisted fetch runs, attacker fetch blocked, one audit record written | integration | `uv run pytest tests/integration/test_e2e_slice.py -x` (testcontainers) | created by 01-06 | ⬜ pending |
+| 01-06-T2 | 01-06 | 5 | End-to-end | T-01-19/21 | LangGraph agent: allowlisted fetch runs, attacker fetch blocked, one audit record written | integration | `uv run pytest tests/integration/test_e2e_slice.py -x` (SQLite Store) | created by 01-06 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -64,10 +64,10 @@ updated: 2026-06-01
 > All satisfied by **plan 01-01 (Wave 1)** which scaffolds the workspace, pytest config, conftest, and CI; per-test files are then authored by their owning plans (above).
 
 - [ ] `pyproject.toml [tool.pytest.ini_options]` — register markers (`regression_lock`, `floor_invariant`, `latency`), set testpaths *(01-01 Task 1)*
-- [ ] `tests/conftest.py` — fixtures: `pipeline_with_principle`, `pipeline_without_principle`, `prompt_injection_scorer`, Postgres `testcontainers` fixture, registered-agent + issued-token fixture *(scaffold 01-01 Task 3; filled in 01-06 Task 2)*
+- [ ] `tests/conftest.py` — fixtures: `pipeline_with_principle`, `pipeline_without_principle`, `prompt_injection_scorer`, SQLite-backed `audit_store` fixture (no Docker), registered-agent + issued-token fixture *(scaffold 01-01 Task 3; filled in 01-06 Task 2)*
 - [ ] `tests/unit/`, `tests/integration/`, `tests/redteam/` — all test files above (none exist; greenfield) *(per owning plan)*
 - [ ] CI: pinned **OPA CLI** install + `opa build -t wasm` + `opa test` step; the `regression_lock` hard-fail gate; the `--count=100` determinism check *(01-01 Task 1; exercised meaningfully by 01-04 / 01-06)*
-- [ ] Framework install: `uv add --dev pytest pytest-repeat pytest-benchmark "testcontainers[postgres]"` *(01-01 Task 1)*
+- [ ] Framework install: `uv add --dev pytest pytest-repeat pytest-benchmark` (no testcontainers — SQLite Store, no Docker) *(01-01 Task 1)*
 
 ---
 

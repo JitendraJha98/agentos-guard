@@ -22,17 +22,17 @@ A platform-security engineer can wrap one LangGraph agent's single governed `htt
 | Graduated response | Pure `graduated_response(policy_outcome, risk, trust) -> Outcome`; policy `deny` is terminal; risk/trust may only RESTRICT, never relax | POL-06 / TRST-01 (D-13). Floor invariant (POL-05/TRST-02) honored in code even though full enforcement is Phase 3. Phase 1 realizes `allow` + `deny` end-to-end; `warn`/`sandbox` are vocabulary-only. |
 | Identity | EdDSA (Ed25519) JWT via PyJWT + `cryptography`; verify with explicit `algorithms=["EdDSA"]`, check `iss`/`sub`/registration; forged/unknown → terminal `deny` | IDN-01 / IDN-02 (D-10). Clean upgrade path to X.509 (Phase 7). Algorithm-confusion advisory GHSA-ffqj-6fqr-9h24 honored. |
 | Trust | Single 0–1 `trust_score` column on the agent registry row, loaded in stage 1, fed to graduated response | TRST-01 (D-11). Longitudinal reputation engine is Phase 7. |
-| Data layer | PostgreSQL 16/17; SQLAlchemy 2.0 async + asyncpg (hot path); Alembic (sync) migrations; append-only `audit_record` table | D-14. NOT SQLite (hides append-only/concurrency behavior — research). docker-compose for dev; `testcontainers[postgres]` for tests. |
+| Data layer | Pluggable `Store` interface. **Phase-1 backend: SQLite** (SQLAlchemy, dialect-agnostic generic types) — runs directly, no Docker. SQLAlchemy 2.0 + Alembic models authored for **PostgreSQL as the production target** (Phase 5 = backend swap, not rewrite); append-only `audit_record` table. | D-14 (REVISED, no-Docker deviation). Postgres append-only/concurrency hardening + real-PG validation deferred to Phase 4/5 (research caveat — SQLite hides it). |
 | Audit | Hash-chained `AuditRecord`: stdlib `hashlib` SHA-256 over canonical JSON (sorted keys, no whitespace), monotonic `seq` covered by hash, `prev_hash` link; redaction fails closed (no write if redaction fails) | AUD-01 / D-14 / D-15. CI chain-verifier, external anchoring, full provenance = Phase 4 (AUD-02..05); Merkle DAG = Phase 11. `policy_version` column left nullable. |
-| Test / red-team | pytest 8.x + pytest-repeat + pytest-benchmark + testcontainers[postgres]; markers `regression_lock`, `floor_invariant`, `latency`; OPA CLI `opa test` in CI | D-04. The `regression_lock` red-team test hard-fails CI; deleting the principle flips the probe deny→allow and breaks the build. Determinism asserted with `--count=100` (non-flaky gate). |
+| Test / red-team | pytest 8.x + pytest-repeat + pytest-benchmark (SQLite-backed `Store` for audit/e2e — no Docker/testcontainers); markers `regression_lock`, `floor_invariant`, `latency`; OPA CLI `opa test` in CI | D-04. The `regression_lock` red-team test hard-fails CI; deleting the principle flips the probe deny→allow and breaks the build. Determinism asserted with `--count=100` (non-flaky gate). |
 
 ## Stack Touched in Phase 1
 
 - [x] Project scaffold — `uv` workspace, four `packages/*`, `pyproject.toml` with pytest config + markers, `docker-compose.yml`, CI workflow with pinned OPA CLI
 - [x] Routing — N/A (single-process library + in-process pipeline; no HTTP control-plane endpoint until Phase 5). The "route" is `pipeline.evaluate(AgentAction) -> Decision`.
-- [x] Database — at least one real read (chain head / agent registry lookup) AND one real write (append-only `audit_record` INSERT) against real Postgres via testcontainers
+- [x] Database — at least one real read (chain head / agent registry lookup) AND one real write (append-only `audit_record` INSERT) against the SQLite-backed `Store` (no Docker; Postgres models retained as production target)
 - [x] Interactive element wired to the engine — LangGraph agent's `http_get` tool call intercepted by `GovernanceMiddleware.wrap_tool_call`, enforced end-to-end (allow runs / deny blocks)
-- [x] Local full-stack run — `docker compose up` (Postgres) + `uv run pytest -q` runs the full vertical slice; documented in the repo README/Makefile
+- [x] Local full-stack run — `uv run pytest -q` runs the full vertical slice directly (SQLite-backed `Store`, no Docker); documented in the repo README/Makefile
 
 ## Out of Scope (Deferred to Later Slices)
 

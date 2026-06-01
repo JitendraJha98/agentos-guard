@@ -41,8 +41,11 @@ This is a vertical slice (MVP / Walking Skeleton mode), not a horizontal layer. 
 - **D-13:** The graduated-response stage maps {policy, risk, trust} to an outcome (POL-06). Phase 1 must realize at least `allow` and `deny` end-to-end; the full spectrum (warn/sandbox/require_consensus/require_approval) lands in Phase 3/9.
 
 ### Audit
-- **D-14:** The hash-chained `AuditRecord` is persisted to **PostgreSQL** (append-only table) from Phase 1 (AUD-01): stdlib `hashlib` SHA-256 over canonical JSON, each record including the prior record's hash.
-- **D-15:** Redaction-at-write **fails closed** (no record written if redaction fails) — wired minimally now. Full record provenance, the CI chain-verifier, and external anchoring are Phase 4 (AUD-02..05); Merkle DAG is Phase 11.
+- **D-14 (REVISED 2026-06-01 — no-Docker deviation):** The hash-chained `AuditRecord` is written through a **pluggable `Store` interface** (mirrors the `PolicyEngine` pattern). For Phase 1 the active backend is **SQLite** (stdlib `sqlite3` / SQLAlchemy SQLite dialect — zero external deps, runs directly with no Docker/Postgres). The SQLAlchemy 2.0 models + Alembic migration are authored against **PostgreSQL as the declared production backend** (so Phase 5's control-plane-over-Postgres is a backend swap, not a rewrite) but are NOT exercised in Phase 1. The chain logic is backend-agnostic: monotonic `seq`, prev-hash links, stdlib `hashlib` SHA-256 over canonical JSON. **No `testcontainers`/Docker.** Original D-14 (Postgres-now via testcontainers) was overridden because this machine has no Docker and no native Postgres; see Deviation note below.
+- **D-15:** Redaction-at-write **fails closed** (no record written if redaction fails) — backend-agnostic, wired minimally now on the SQLite store. Full record provenance, the CI chain-verifier, and external anchoring are Phase 4 (AUD-02..05); Merkle DAG is Phase 11.
+
+### Deviation Log (tracked for Phase 4 / Phase 5)
+- **2026-06-01 — Audit backend: Postgres → pluggable Store w/ SQLite (no-Docker constraint).** Execution machine has no Docker and no native Postgres. D-14's Postgres-via-testcontainers approach is replaced by a `Store` interface with a SQLite backend for Phase 1; Postgres SQLAlchemy models + Alembic migration are retained as the production target but unexercised. **Phase 4 (audit hardening) and Phase 5 (control-plane API on Postgres) MUST re-validate the chain against real Postgres** (append-only triggers, advisory-lock serialization, concurrency) — research flagged that SQLite hides this behavior. The `Store` interface is the seam that makes the backend swap clean.
 
 ### Claude's Discretion
 - Identity token mechanism — JWT (PyJWT) vs Ed25519 (`cryptography`/PyNaCl), per `.planning/research/STACK.md`.
