@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "agentos-contract",
+    "opa-wasmtime>=0.1.1,<0.2",
+    "wasmtime>=27",
 ]
 
 [build-system]
