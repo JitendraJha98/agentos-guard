@@ -72,7 +72,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 ### Identity
 
-- [ ] **IDN-01** [P0]: Each `Agent` registers and is issued a signed identity token
+- [x] **IDN-01** [P0]: Each `Agent` registers and is issued a signed identity token
 - [ ] **IDN-02** [P0]: The identity stage verifies the token; forged/unknown identity short-circuits to deny
 - [ ] **IDN-03** [P1]: Agents are issued X.509-style certificates binding identity to keys
 - [ ] **IDN-04** [P2]: SPIFFE/SVID workload identity enables zero-trust mTLS
@@ -96,7 +96,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 ### Audit
 
-- [ ] **AUD-01** [P0]: Each `Decision` appends an `AuditRecord` to an append-only, hash-chained log (each record includes the prior record's hash)
+- [x] **AUD-01** [P0]: Each `Decision` appends an `AuditRecord` to an append-only, hash-chained log (each record includes the prior record's hash)
 - [ ] **AUD-02** [P0]: Each `AuditRecord` links `AgentAction` → `Decision` → fired policies/principles → outcome
 - [ ] **AUD-03** [P0]: Each `AuditRecord` carries the exact policy/constitution version (policy evidence)
 - [ ] **AUD-04** [P0]: Sensitive payloads are redacted at write time per policy; redaction fails closed (no write if redaction fails)
@@ -251,7 +251,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | RUN-05 | Phase 9 | Pending |
 | RUN-06 | Phase 9 | Pending |
 | RUN-07 | Phase 9 | Pending |
-| IDN-01 | Phase 1 | Pending |
+| IDN-01 | Phase 1 | Complete |
 | IDN-02 | Phase 1 | Pending |
 | IDN-03 | Phase 7 | Pending |
 | IDN-04 | Phase 14 | Pending |
@@ -266,7 +266,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | DISC-04 | Phase 10 | Pending |
 | DISC-05 | Phase 10 | Pending |
 | DISC-06 | Phase 10 | Pending |
-| AUD-01 | Phase 1 | Pending |
+| AUD-01 | Phase 1 | Complete |
 | AUD-02 | Phase 4 | Pending |
 | AUD-03 | Phase 4 | Pending |
 | AUD-04 | Phase 4 | Pending |

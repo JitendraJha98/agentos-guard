@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-01-PLAN.md
-last_updated: "2026-06-01T18:27:43.464Z"
+stopped_at: Completed 01-02-PLAN.md
+last_updated: "2026-06-01T18:38:50.073Z"
 last_activity: 2026-06-01
 progress:
   total_phases: 14
   completed_phases: 0
   total_plans: 6
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-01)
 ## Current Position
 
 Phase: 1 (Walking Skeleton) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-06-01
 
-Progress: [██░░░░░░░░] 17%
+Progress: [███░░░░░░░] 33%
 
 ## Performance Metrics
 
@@ -53,6 +53,7 @@ Progress: [██░░░░░░░░] 17%
 
 *Updated after each plan completion*
 | Phase 01 P01 | 5 | 3 tasks | 13 files |
+| Phase 01 P02 | 25 | 2 tasks | 19 files |
 
 ## Accumulated Context
 
@@ -66,6 +67,8 @@ Recent decisions affecting current work:
 - [Roadmap]: Phase 14 is explicitly gated on the full P0/P1 substrate passing verification (latency held, audit externally verifiable, coverage matrix green, red-team gating CI).
 - [Phase 1]: [01-01] Contract package built first with zero internal dependencies (D-08/PIPE-07) — the stable serializable boundary every PEP form plugs into.
 - [Phase 1]: [01-01] Audit store seam is SQLite-backed (D-14 no-Docker deviation); opa-wasmtime/wasmtime gated to plan 01-04 (A1), not installed this wave.
+- [Phase 1]: [01-02] EdDSA (Ed25519) JWT identity engine — verify uses explicit algorithms=[EdDSA] allowlist (GHSA-ffqj-6fqr-9h24), iss+sub+registered checks (IDN-01/IDN-02 seed).
+- [Phase 1]: [01-02] Hash-chained audit writer (AUD-01): monotonic hash-covered seq, prev_hash links, canonical JSON, fail-closed redaction (D-15); SQLite Store, Postgres models retained as production target (D-14).
 
 ### Pending Todos
 
@@ -90,6 +93,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-01T18:27:43.444Z
-Stopped at: Completed 01-01-PLAN.md
+Last session: 2026-06-01T18:38:50.055Z
+Stopped at: Completed 01-02-PLAN.md
 Resume file: None
