@@ -73,5 +73,19 @@
     "execution": "opus",
     "verification": "opus",
     "completion": "opus"
+  },
+  "model_overrides": {
+    "gsd-plan-checker": "opus",
+    "gsd-verifier": "opus",
+    "gsd-integration-checker": "opus",
+    "gsd-nyquist-auditor": "opus",
+    "gsd-research-synthesizer": "opus",
+    "gsd-codebase-mapper": "opus",
+    "gsd-pattern-mapper": "opus",
+    "gsd-doc-writer": "opus",
+    "gsd-ui-researcher": "opus",
+    "gsd-ui-checker": "opus",
+    "gsd-ui-auditor": "opus",
+    "gsd-doc-verifier": "opus"
   }
 }
