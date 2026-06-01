@@ -16,6 +16,7 @@ dependencies = [
     "agentos-contract",
     "agentos-controlplane",
     "agentos-pipeline",
+    "agentos-sdk",
 ]
 
 [dependency-groups]
@@ -35,6 +36,7 @@ members = ["packages/*"]
 agentos-contract = { workspace = true }
 agentos-controlplane = { workspace = true }
 agentos-pipeline = { workspace = true }
+agentos-sdk = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
