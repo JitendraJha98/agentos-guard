@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 01-05-PLAN.md
-last_updated: "2026-06-01T19:17:55.747Z"
+status: verifying
+stopped_at: Completed 01-06-PLAN.md
+last_updated: "2026-06-01T19:36:11.254Z"
 last_activity: 2026-06-01
 progress:
   total_phases: 14
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 6
-  completed_plans: 5
-  percent: 83
+  completed_plans: 6
+  percent: 7
 ---
 
 # Project State
@@ -27,10 +27,10 @@ See: .planning/PROJECT.md (updated 2026-06-01)
 
 Phase: 1 (Walking Skeleton) — EXECUTING
 Plan: 6 of 6
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-01
 
-Progress: [████████░░] 83%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -57,6 +57,7 @@ Progress: [████████░░] 83%
 | Phase 01 P03 | 20 | 1 tasks | 11 files |
 | Phase 01 P04 | 18 | 2 tasks | 8 files |
 | Phase 01 P05 | 5 | 2 tasks | 6 files |
+| Phase 01 P06 | 11 | 3 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -79,6 +80,9 @@ Recent decisions affecting current work:
 - [Phase 1]: [01-05] The 4-stage PDP (Pipeline.evaluate) orders identity->policy->risk->graduated into one Decision with per-stage machine-readable reasons (PIPE-01/02); forged/unknown identity short-circuits to a terminal, audited deny without running later stages (PIPE-03/IDN-02).
 - [Phase 1]: [01-05] graduated_response enforces the floor invariant (POL-05/TRST-02) — a policy deny is terminal; risk/trust may only RESTRICT (proven by a risk x trust property sweep marked floor_invariant). Trust loaded in stage 1 feeds graduated but never overrides policy (TRST-01/POL-06).
 - [Phase 1]: [01-05] agentos-pipeline keeps its single internal dependency on agentos-contract — the identity engine, policy engine, and audit writer are injected and typed via structural Protocols (same toggle discipline as PolicyEngine); no control-plane import in the pipeline package.
+- [Phase 1]: [01-06] The SDK PEP (GovernanceMiddleware.awrap_tool_call) intercepts http_get tool calls, normalizes to AgentAction, awaits the 4-stage pipeline, and enforces allow (run handler) / deny (ToolMessage WITHOUT calling handler => no egress, D-03). INT-01/SDK-01.
+- [Phase 1]: [01-06] Open Q2 RESOLVED — langchain 1.3.2 exposes awrap_tool_call (async); chose the async path so the pipeline + async audit write run in the LangGraph loop with no nested asyncio.run. SDK depends on contract + pipeline only (no PEP-in-PDP leak, Anti-Pattern 5).
+- [Phase 1]: [01-06] D-04 red-team regression lock GREEN — WITH the egress principle the exfil probe is denied (egress_allowlist_violation); deleting the principle (allow-all engine, since an empty allowlist still denies by default) flips the same-host probe (benign body, to isolate floor from the risk stage) to allow and turns the deny test RED (CI-break proof verified). The Walking Skeleton is closed.
 
 ### Pending Todos
 
@@ -103,6 +107,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-01T19:17:37.594Z
-Stopped at: Completed 01-05-PLAN.md
+Last session: 2026-06-01T19:36:11.235Z
+Stopped at: Completed 01-06-PLAN.md
 Resume file: None

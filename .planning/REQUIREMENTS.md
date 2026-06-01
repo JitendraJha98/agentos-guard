@@ -11,7 +11,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 ### Interception & PEP
 
-- [ ] **INT-01** [P0]: A LangChain/LangGraph agent's tool calls are intercepted before execution via SDK middleware and normalized into an `AgentAction`
+- [x] **INT-01** [P0]: A LangChain/LangGraph agent's tool calls are intercepted before execution via SDK middleware and normalized into an `AgentAction`
 - [ ] **INT-02** [P0]: Model invocations are intercepted and normalized into an `AgentAction`
 - [ ] **INT-03** [P0]: Memory-access operations are intercepted and normalized into an `AgentAction`
 - [ ] **INT-04** [P0]: MCP-server calls are intercepted and normalized into an `AgentAction`
@@ -158,7 +158,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 ### Python SDK
 
-- [ ] **SDK-01** [P0]: The SDK provides interception decorators/middleware for LangChain/LangGraph (the PEP)
+- [x] **SDK-01** [P0]: The SDK provides interception decorators/middleware for LangChain/LangGraph (the PEP)
 - [ ] **SDK-02** [P0]: The SDK provides agent self-registration returning an identity token
 - [ ] **SDK-03** [P0]: The SDK provides pytest adapters for the red-team layer
 - [ ] **SDK-04** [P0]: The SDK provides a control-plane client for resource CRUD and approvals
@@ -205,7 +205,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INT-01 | Phase 1 | Pending |
+| INT-01 | Phase 1 | Complete |
 | INT-02 | Phase 2 | Pending |
 | INT-03 | Phase 2 | Pending |
 | INT-04 | Phase 2 | Pending |
@@ -307,7 +307,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | API-02 | Phase 5 | Pending |
 | API-03 | Phase 3 | Pending |
 | API-04 | Phase 7 | Pending |
-| SDK-01 | Phase 1 | Pending |
+| SDK-01 | Phase 1 | Complete |
 | SDK-02 | Phase 5 | Pending |
 | SDK-03 | Phase 6 | Pending |
 | SDK-04 | Phase 5 | Pending |

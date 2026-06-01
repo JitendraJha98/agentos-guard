@@ -12,7 +12,7 @@ agentos-guard is a runtime governance and security control plane that intercepts
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Walking Skeleton** - One agent, one tool, one principle proven end-to-end: contract → pipeline → OPA → risk → graduated → hash-chained audit, with a red-team test that breaks CI if the policy is removed
+- [x] **Phase 1: Walking Skeleton** - One agent, one tool, one principle proven end-to-end: contract → pipeline → OPA → risk → graduated → hash-chained audit, with a red-team test that breaks CI if the policy is removed (completed 2026-06-01)
 - [ ] **Phase 2: Full Interception Coverage** - All five action types (tool/model/memory/MCP/delegation) intercepted, normalized, and verified with a no-silent-gaps coverage check
 - [ ] **Phase 3: Constitution, Graduated Response & Approvals** - Human-readable Constitution compiles to OPA/Rego with cited-principle interpreter; full graduated outcome spectrum with policy-driven thresholds, trust-modulates-only, and a working approval workflow
 - [ ] **Phase 4: Tamper-Evident Audit & Operator Containment** - Provenance-rich hash-chained audit with fail-closed redaction and a CI verifier; agent and fleet kill switches
@@ -45,7 +45,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] 01-03-PLAN.md — SEC-01 deterministic prompt-injection detector (RiskScorer + normalize + aggregator)
 - [x] 01-04-PLAN.md — opa-wasmtime human-verify checkpoint + egress-allowlist Rego principle + WasmPolicyEngine (POL-03)
 - [x] 01-05-PLAN.md — 4-stage decision pipeline: identity short-circuit, floor-respecting graduated response, runner (PIPE-01/02/03, IDN-02, TRST-01, POL-06)
-- [ ] 01-06-PLAN.md — LangChain SDK PEP middleware (INT-01/SDK-01), http_get tool, end-to-end slice + D-04 red-team CI gate
+- [x] 01-06-PLAN.md — LangChain SDK PEP middleware (INT-01/SDK-01), http_get tool, end-to-end slice + D-04 red-team CI gate
 
 ### Phase 2: Full Interception Coverage
 **Goal**: Thicken the loop so all five action types are governed, not just tool calls, and prove there are no silent un-instrumented paths.
@@ -206,7 +206,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Walking Skeleton | 5/6 | In Progress|  |
+| 1. Walking Skeleton | 6/6 | Complete   | 2026-06-01 |
 | 2. Full Interception Coverage | 0/TBD | Not started | - |
 | 3. Constitution, Graduated Response & Approvals | 0/TBD | Not started | - |
 | 4. Tamper-Evident Audit & Operator Containment | 0/TBD | Not started | - |
