@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+
+env:
+  # Pinned OPA CLI release (D-06). The exact version is fixed so the WASM bundle
+  # produced in CI is reproducible. opa-wasmtime / the WasmPolicyEngine arrive in
+  # plan 01-04; until policies/ contains Rego, the opa steps below are no-ops.
+  OPA_VERSION: "1.9.0"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.17"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      - name: Install pinned OPA CLI
+        run: |
+          curl -fsSL -o /usr/local/bin/opa \
+            "https://openpolicyagent.org/downloads/v${OPA_VERSION}/opa_linux_amd64_static"
+          chmod +x /usr/local/bin/opa
+          opa version
+
+      - name: OPA policy tests
+        run: |
+          # No-op until plan 01-04 authors policies/*.rego (Wave-1 CI stays green).
+          if compgen -G "policies/*.rego" > /dev/null; then
+            opa test policies/
+          else
+            echo "policies/ has no .rego yet — skipping opa test (added in plan 01-04)."
+          fi
+
+      - name: Pytest
+        run: uv run pytest -q
+
+      - name: Regression-lock gate
+        # Hard-fail gate: any regression_lock test failing breaks the build.
+        # Meaningful once the D-04 red-team test lands in plan 01-06.
+        run: uv run pytest -m regression_lock --maxfail=1
+
+      - name: Detector determinism check
+        # Re-runs detector unit tests 100x to prove the verdict is non-flaky.
+        # Meaningful once the SEC-01 detector tests land in plan 01-03.
+        run: uv run pytest tests/unit -k detector --count=100 -q

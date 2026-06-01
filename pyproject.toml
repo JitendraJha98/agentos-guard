@@ -1,0 +1,42 @@
+[project]
+name = "agentos-guard"
+version = "0.1.0"
+description = "Governance and security control plane for AI agents"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain>=1.3,<2",
+    "langgraph>=1.2,<2",
+    "pydantic>=2.13,<3",
+    "sqlalchemy[asyncio]>=2.0,<3",
+    "asyncpg>=0.31",
+    "alembic>=1.18",
+    "PyJWT>=2.13",
+    "cryptography>=48",
+    "agentos-contract",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-repeat",
+    "pytest-benchmark",
+]
+
+# uv workspace: each package under packages/ has its own pyproject.toml and
+# shares this single lockfile. The `contract` package (PIPE-07 / D-08) is the
+# stable boundary with zero internal dependencies and is built first.
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+agentos-contract = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# pythonpath unnecessary: workspace packages are installed editable by `uv sync`.
+markers = [
+    "regression_lock: safety-regression locks that hard-fail CI (D-04 proof-of-life).",
+    "floor_invariant: asserts risk/trust never relax the deterministic policy floor.",
+    "latency: hot-path latency assertions (informational in Phase 1, gated in Phase 3).",
+]
