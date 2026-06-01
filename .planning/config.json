@@ -8,8 +8,8 @@
   "exa_search": false,
   "git": {
     "branching_strategy": "phase",
-    "phase_branch_template": "gsd/phase-{phase}-{slug}",
-    "milestone_branch_template": "gsd/{milestone}-{slug}",
+    "phase_branch_template": "feature/phase-{phase}-{slug}",
+    "milestone_branch_template": "release/{milestone}-{slug}",
     "quick_branch_template": null,
     "base_branch": "development"
   },
