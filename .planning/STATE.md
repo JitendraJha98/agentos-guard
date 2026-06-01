@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-02-PLAN.md
-last_updated: "2026-06-01T18:38:50.073Z"
+stopped_at: Completed 01-03-PLAN.md
+last_updated: "2026-06-01T18:49:25.206Z"
 last_activity: 2026-06-01
 progress:
   total_phases: 14
   completed_phases: 0
   total_plans: 6
-  completed_plans: 2
+  completed_plans: 3
   percent: 0
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-01)
 ## Current Position
 
 Phase: 1 (Walking Skeleton) — EXECUTING
-Plan: 3 of 6
+Plan: 4 of 6
 Status: Ready to execute
 Last activity: 2026-06-01
 
-Progress: [███░░░░░░░] 33%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
@@ -54,6 +54,7 @@ Progress: [███░░░░░░░] 33%
 *Updated after each plan completion*
 | Phase 01 P01 | 5 | 3 tasks | 13 files |
 | Phase 01 P02 | 25 | 2 tasks | 19 files |
+| Phase 01 P03 | 20 | 1 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -69,6 +70,8 @@ Recent decisions affecting current work:
 - [Phase 1]: [01-01] Audit store seam is SQLite-backed (D-14 no-Docker deviation); opa-wasmtime/wasmtime gated to plan 01-04 (A1), not installed this wave.
 - [Phase 1]: [01-02] EdDSA (Ed25519) JWT identity engine — verify uses explicit algorithms=[EdDSA] allowlist (GHSA-ffqj-6fqr-9h24), iss+sub+registered checks (IDN-01/IDN-02 seed).
 - [Phase 1]: [01-02] Hash-chained audit writer (AUD-01): monotonic hash-covered seq, prev_hash links, canonical JSON, fail-closed redaction (D-15); SQLite Store, Postgres models retained as production target (D-14).
+- [Phase 1]: [01-03] SEC-01 prompt-injection detector is stdlib re + Pydantic only — inline=True, sub-ms, ReDoS-safe, no LLM/model/network on the hot path (P0-killer, D-12); patterns compiled once at construction.
+- [Phase 1]: [01-03] Detector is advisory-only and stateless — normalize() (NFKC + zero-width strip + base64) runs before matching; out-of-scope evasion (typoglycemia/sharded/paraphrase) honestly strict-xfail; 32 KB bounded input with recorded truncation.
 
 ### Pending Todos
 
@@ -93,6 +96,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-01T18:38:50.055Z
-Stopped at: Completed 01-02-PLAN.md
+Last session: 2026-06-01T18:49:25.185Z
+Stopped at: Completed 01-03-PLAN.md
 Resume file: None

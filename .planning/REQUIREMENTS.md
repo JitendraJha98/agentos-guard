@@ -48,7 +48,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 ### Security Engine — Detection / Risk
 
-- [ ] **SEC-01** [P0]: The risk stage scores prompt-injection patterns in tool inputs, retrieved content, and inter-agent messages, contributing to `risk_score` with typed findings
+- [x] **SEC-01** [P0]: The risk stage scores prompt-injection patterns in tool inputs, retrieved content, and inter-agent messages, contributing to `risk_score` with typed findings
 - [ ] **SEC-02** [P0]: Baseline runtime guardrails score PII, unsafe content, and format violations on inputs/outputs
 - [ ] **SEC-03** [P0]: Detectors are pluggable scorers — cheap heuristics run inline, expensive models only when flagged
 - [ ] **SEC-04** [P1]: Data-exfiltration detection scores outbound payloads carrying secrets/PII to untrusted targets
@@ -233,7 +233,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | POL-10 | Phase 13 | Pending |
 | POL-11 | Phase 13 | Pending |
 | POL-12 | Phase 13 | Pending |
-| SEC-01 | Phase 1 | Pending |
+| SEC-01 | Phase 1 | Complete |
 | SEC-02 | Phase 3 | Pending |
 | SEC-03 | Phase 3 | Pending |
 | SEC-04 | Phase 8 | Pending |
