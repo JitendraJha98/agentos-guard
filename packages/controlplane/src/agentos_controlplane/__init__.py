@@ -7,11 +7,15 @@ dialect-agnostic generic types, so the same models run on SQLite now and map to
 Postgres later (a backend swap, not a rewrite).
 """
 
+from agentos_controlplane.audit import AuditWriter, RedactionError, canonical_json
 from agentos_controlplane.identity_engine import IdentityEngine, IdentityResult
 from agentos_controlplane.registry import Registry
 from agentos_controlplane.store.models import Agent, AuditRecord, Base
 
 __all__ = [
+    "AuditWriter",
+    "RedactionError",
+    "canonical_json",
     "IdentityEngine",
     "IdentityResult",
     "Registry",
