@@ -52,14 +52,20 @@ def canonical_json(obj: dict) -> bytes:
 
 
 def _redact_url(url: str) -> str:
-    """Reduce a URL to scheme+host only — drops path/query (where secrets hide).
+    """Reduce a URL to scheme+host(+port) only — drops path/query (where secrets hide).
 
     Keeps the host for forensic value; never persists the query string or path.
+    Rebuilds the host from `parts.hostname` (lowercased, NO userinfo) rather than
+    `parts.netloc`, which retains the `user:password@` segment and would leak
+    embedded credentials into the hash-covered body (D-15 fail-closed redaction).
     """
     parts = urlsplit(url)
-    if not parts.scheme or not parts.netloc:
+    if not parts.scheme or not parts.hostname:
         raise RedactionError(f"unclassifiable url field: {parts.scheme or '<no-scheme>'}")
-    return f"{parts.scheme}://{parts.netloc}"
+    host = parts.hostname  # lowercased, NO userinfo, NO password
+    if parts.port is not None:
+        host = f"{host}:{parts.port}"
+    return f"{parts.scheme}://{host}"
 
 
 def _redact_content(content: str) -> dict:

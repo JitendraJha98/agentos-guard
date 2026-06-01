@@ -116,3 +116,23 @@ def test_redaction_does_not_leak_secret_or_url(audit_writer: AuditWriter) -> Non
     assert "api_key=" not in stored
     # The redacted form should still carry the (safe) host for forensic value.
     assert "api.example.com" in stored
+
+
+def test_redaction_strips_url_userinfo_credentials(audit_writer: AuditWriter) -> None:
+    """CR-01: embedded `user:password@` credentials must NOT survive redaction.
+
+    `urlsplit(...).netloc` retains userinfo and the port, so reducing a URL to
+    scheme+netloc leaked `user:s3cr3t@` into the hash-covered body. The redactor
+    must rebuild from `parts.hostname` (no userinfo) — never `netloc`.
+    """
+    credential_url = "https://user:s3cr3t@evil.example.com:8443/p?token=abc"
+    a1 = _action(url=credential_url)
+    asyncio.run(audit_writer.append(a1, _decision(a1)))
+
+    stored = json.dumps(_rows(audit_writer)[0].body)
+    assert "s3cr3t" not in stored  # password must be gone
+    assert "user:" not in stored  # userinfo must be gone
+    assert "token=abc" not in stored  # query string must be gone
+    # Host (and port) are safe forensic data and should survive.
+    assert "evil.example.com" in stored
+    assert "8443" in stored
