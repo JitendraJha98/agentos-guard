@@ -86,6 +86,10 @@
     "gsd-ui-researcher": "opus",
     "gsd-ui-checker": "opus",
     "gsd-ui-auditor": "opus",
-    "gsd-doc-verifier": "opus"
+    "gsd-doc-verifier": "opus",
+    "gsd-framework-selector": "opus",
+    "gsd-ai-researcher": "opus",
+    "gsd-domain-researcher": "opus",
+    "gsd-eval-planner": "opus"
   }
 }
