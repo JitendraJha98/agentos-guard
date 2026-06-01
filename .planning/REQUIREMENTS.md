@@ -29,7 +29,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [ ] **PIPE-04** [P0]: Pipeline overhead for cached policy/identity stays within a defined p95 latency budget (low single-digit ms), verified by a benchmark test
 - [ ] **PIPE-05** [P0]: Fail-closed vs fail-open on control-plane unavailability is a per-action-class policy decision; high-risk classes default fail-closed; no silent allow
 - [ ] **PIPE-06** [P0]: The control plane maintains its own decision/identity/compiled-policy cache (OPA does not cache), invalidated on policy-version change
-- [ ] **PIPE-07** [P0]: A stable, serializable `contract` package (`AgentAction` + `evaluate() -> Decision`) is the single dependency every PEP form uses
+- [x] **PIPE-07** [P0]: A stable, serializable `contract` package (`AgentAction` + `evaluate() -> Decision`) is the single dependency every PEP form uses
 
 ### Constitution, Policy & Graduated Response
 
@@ -220,7 +220,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | PIPE-04 | Phase 3 | Pending |
 | PIPE-05 | Phase 3 | Pending |
 | PIPE-06 | Phase 3 | Pending |
-| PIPE-07 | Phase 1 | Pending |
+| PIPE-07 | Phase 1 | Complete |
 | POL-01 | Phase 3 | Pending |
 | POL-02 | Phase 3 | Pending |
 | POL-03 | Phase 1 | Pending |

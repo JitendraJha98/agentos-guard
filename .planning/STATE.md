@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 1 context gathered
-last_updated: "2026-06-01T17:58:25.230Z"
-last_activity: 2026-06-01 -- Phase 1 planning complete
+stopped_at: Completed 01-01-PLAN.md
+last_updated: "2026-06-01T18:27:43.464Z"
+last_activity: 2026-06-01
 progress:
   total_phases: 14
   completed_phases: 0
   total_plans: 6
-  completed_plans: 0
+  completed_plans: 1
   percent: 0
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-01)
 
 **Core value:** Every agent action is intercepted at runtime and returned an explainable, graduated decision grounded in policy + a human-readable constitution, with tamper-evident audit evidence — making unsafe agent behavior structurally impossible rather than merely unlikely.
-**Current focus:** Phase 1 — Walking Skeleton (the end-to-end decision loop)
+**Current focus:** Phase 1 — Walking Skeleton
 
 ## Current Position
 
-Phase: 1 of 14 (Walking Skeleton)
-Plan: 0 of TBD in current phase
+Phase: 1 (Walking Skeleton) — EXECUTING
+Plan: 2 of 6
 Status: Ready to execute
-Last activity: 2026-06-01 -- Phase 1 planning complete
+Last activity: 2026-06-01
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██░░░░░░░░] 17%
 
 ## Performance Metrics
 
@@ -52,6 +52,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: —
 
 *Updated after each plan completion*
+| Phase 01 P01 | 5 | 3 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -63,6 +64,8 @@ Recent decisions affecting current work:
 - [Roadmap]: 14 fine-grained vertical-slice phases. Phases 1–6 = Phase-0 parity loop, 7–12 = Phase-1 substrate, 13–14 = hard-gated Phase-2 moonshot.
 - [Roadmap]: P0-killer invariants wired into early phases as acceptance criteria — contract-first (Phase 1), latency budget + no-silent-allow + own-cache + advisory-only interpreter + trust-modulates-only (Phase 3), fail-closed redaction + CI verifier + anchoring (Phase 4).
 - [Roadmap]: Phase 14 is explicitly gated on the full P0/P1 substrate passing verification (latency held, audit externally verifiable, coverage matrix green, red-team gating CI).
+- [Phase 1]: [01-01] Contract package built first with zero internal dependencies (D-08/PIPE-07) — the stable serializable boundary every PEP form plugs into.
+- [Phase 1]: [01-01] Audit store seam is SQLite-backed (D-14 no-Docker deviation); opa-wasmtime/wasmtime gated to plan 01-04 (A1), not installed this wave.
 
 ### Pending Todos
 
@@ -87,6 +90,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-01T16:18:11.418Z
-Stopped at: Phase 1 context gathered
-Resume file: .planning/phases/01-walking-skeleton/01-CONTEXT.md
+Last session: 2026-06-01T18:27:43.444Z
+Stopped at: Completed 01-01-PLAN.md
+Resume file: None

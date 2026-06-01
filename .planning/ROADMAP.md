@@ -40,7 +40,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. An allowed action runs the tool and appends one hash-chained `AuditRecord`; a denied action raises a governed exception carrying the fired reasons.
   4. A pytest red-team test asserts the agent denies a known prompt-injection attack, and removing the Constitution principle makes that test fail the CI build.
 **Plans**: 6 plans
-- [ ] 01-01-PLAN.md — uv workspace scaffold + Wave-0 test infra + the serializable contract package (PIPE-07)
+- [x] 01-01-PLAN.md — uv workspace scaffold + Wave-0 test infra + the serializable contract package (PIPE-07)
 - [ ] 01-02-PLAN.md — Postgres store: agent registry, EdDSA identity engine (IDN-01), hash-chained fail-closed audit (AUD-01)
 - [ ] 01-03-PLAN.md — SEC-01 deterministic prompt-injection detector (RiskScorer + normalize + aggregator)
 - [ ] 01-04-PLAN.md — opa-wasmtime human-verify checkpoint + egress-allowlist Rego principle + WasmPolicyEngine (POL-03)
@@ -206,7 +206,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Walking Skeleton | 0/6 | Planned | - |
+| 1. Walking Skeleton | 1/6 | In Progress|  |
 | 2. Full Interception Coverage | 0/TBD | Not started | - |
 | 3. Constitution, Graduated Response & Approvals | 0/TBD | Not started | - |
 | 4. Tamper-Evident Audit & Operator Containment | 0/TBD | Not started | - |
