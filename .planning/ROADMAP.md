@@ -206,7 +206,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Walking Skeleton | 6/6 | Complete   | 2026-06-01 |
+| 1. Walking Skeleton | 6/6 | Complete    | 2026-06-01 |
 | 2. Full Interception Coverage | 0/TBD | Not started | - |
 | 3. Constitution, Graduated Response & Approvals | 0/TBD | Not started | - |
 | 4. Tamper-Evident Audit & Operator Containment | 0/TBD | Not started | - |
