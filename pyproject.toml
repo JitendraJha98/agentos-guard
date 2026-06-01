@@ -14,6 +14,7 @@ dependencies = [
     "PyJWT>=2.13",
     "cryptography>=48",
     "agentos-contract",
+    "agentos-controlplane",
 ]
 
 [dependency-groups]
@@ -31,6 +32,7 @@ members = ["packages/*"]
 
 [tool.uv.sources]
 agentos-contract = { workspace = true }
+agentos-controlplane = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
