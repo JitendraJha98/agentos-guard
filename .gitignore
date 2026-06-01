@@ -61,6 +61,10 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# agentos-guard: local SQLite control-plane store (D-14 no-Docker dev backend)
+agentos_controlplane.db
+*.db-journal
+
 # Flask stuff:
 instance/
 .webassets-cache
