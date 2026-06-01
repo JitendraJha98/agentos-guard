@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-04-PLAN.md
-last_updated: "2026-06-01T19:07:00.488Z"
+stopped_at: Completed 01-05-PLAN.md
+last_updated: "2026-06-01T19:17:55.747Z"
 last_activity: 2026-06-01
 progress:
   total_phases: 14
   completed_phases: 0
   total_plans: 6
-  completed_plans: 4
-  percent: 0
+  completed_plans: 5
+  percent: 83
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-01)
 ## Current Position
 
 Phase: 1 (Walking Skeleton) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Ready to execute
 Last activity: 2026-06-01
 
-Progress: [███████░░░] 67%
+Progress: [████████░░] 83%
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Progress: [███████░░░] 67%
 | Phase 01 P02 | 25 | 2 tasks | 19 files |
 | Phase 01 P03 | 20 | 1 tasks | 11 files |
 | Phase 01 P04 | 18 | 2 tasks | 8 files |
+| Phase 01 P05 | 5 | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -75,6 +76,9 @@ Recent decisions affecting current work:
 - [Phase 1]: [01-03] Detector is advisory-only and stateless — normalize() (NFKC + zero-width strip + base64) runs before matching; out-of-scope evasion (typoglycemia/sharded/paraphrase) honestly strict-xfail; 32 KB bounded input with recorded truncation.
 - [Phase 1]: [01-04] opa-wasmtime locked (>=0.1.1,<0.2) + wasmtime>=27 after the human-verify checkpoint — the locked opa-wasm was Python-3.12-incompatible (stale wasmer dep); no wasmer in the resolution (POL-03/D-05).
 - [Phase 1]: [01-04] WasmPolicyEngine behind a runtime_checkable PolicyEngine Protocol — OPAPolicy loaded ONCE at construction (Pitfall 2), allowlist injected as a Rego data document (set_data); evaluate() extracts result[0]['result'] and fails closed. egress.rego is deny-by-default; compiled egress.wasm is a gitignored CI/build artifact (D-06).
+- [Phase 1]: [01-05] The 4-stage PDP (Pipeline.evaluate) orders identity->policy->risk->graduated into one Decision with per-stage machine-readable reasons (PIPE-01/02); forged/unknown identity short-circuits to a terminal, audited deny without running later stages (PIPE-03/IDN-02).
+- [Phase 1]: [01-05] graduated_response enforces the floor invariant (POL-05/TRST-02) — a policy deny is terminal; risk/trust may only RESTRICT (proven by a risk x trust property sweep marked floor_invariant). Trust loaded in stage 1 feeds graduated but never overrides policy (TRST-01/POL-06).
+- [Phase 1]: [01-05] agentos-pipeline keeps its single internal dependency on agentos-contract — the identity engine, policy engine, and audit writer are injected and typed via structural Protocols (same toggle discipline as PolicyEngine); no control-plane import in the pipeline package.
 
 ### Pending Todos
 
@@ -99,6 +103,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-01T19:07:00.465Z
-Stopped at: Completed 01-04-PLAN.md
+Last session: 2026-06-01T19:17:37.594Z
+Stopped at: Completed 01-05-PLAN.md
 Resume file: None
