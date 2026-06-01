@@ -15,6 +15,7 @@ dependencies = [
     "cryptography>=48",
     "agentos-contract",
     "agentos-controlplane",
+    "agentos-pipeline",
 ]
 
 [dependency-groups]
@@ -33,6 +34,7 @@ members = ["packages/*"]
 [tool.uv.sources]
 agentos-contract = { workspace = true }
 agentos-controlplane = { workspace = true }
+agentos-pipeline = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

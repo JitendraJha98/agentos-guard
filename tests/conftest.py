@@ -66,10 +66,10 @@ def pipeline_without_principle():
 
 @pytest.fixture
 def prompt_injection_scorer():
-    """The deterministic SEC-01 PromptInjectionScorer.
+    """The deterministic SEC-01 PromptInjectionScorer (plan 01-03)."""
+    from agentos_pipeline.risk import PromptInjectionScorer
 
-    Provided by a later wave (plan 01-03)."""
-    pytest.skip("provided by later wave")
+    return PromptInjectionScorer()
 
 
 @pytest.fixture
