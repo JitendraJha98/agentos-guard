@@ -65,7 +65,12 @@ class WasmPolicyEngine:
         self._policy = OPAPolicy(wasm_path)
         # Supply the concrete hosts as a Rego `data` document (the principle
         # itself stays in Rego; the allowlist is configuration — D-05 note).
-        self._policy.set_data({"allowlist": allowlist})
+        # Canonicalize each entry to a stripped, lowercased host so both sides
+        # of the Rego membership test match: `_host` (urlsplit.hostname) always
+        # lowercases, so an uppercase/mixed-case allowlist entry would otherwise
+        # silently fail-deny. Host comparison on a security floor must be
+        # normalized in code, not left to caller discipline.
+        self._policy.set_data({"allowlist": [h.strip().lower() for h in allowlist]})
 
     def evaluate(self, input: dict) -> PolicyResult:
         allowed = _extract_bool(self._policy.evaluate(input))

@@ -60,6 +60,21 @@ def test_attacker_host_denied(engine: WasmPolicyEngine) -> None:
     assert result.policy_id == "egress.allow"
 
 
+def test_mixed_case_allowlist_entry_matches_lowercased_host() -> None:
+    """CR-02: a mixed-case allowlist entry must still match the host.
+
+    `_host` (urlsplit.hostname) always lowercases, so without canonicalizing the
+    allowlist a mixed-case entry like `API.Example.COM` could never match the
+    lowercased host `api.example.com` — a silent fail-deny. The engine must
+    lowercase (and strip) each allowlist entry at construction.
+    """
+    engine = WasmPolicyEngine(str(WASM_PATH), allowlist=["  API.Example.COM  "])
+    result = engine.evaluate(ALLOW_INPUT)  # host == "api.example.com"
+    assert result.outcome is Outcome.allow
+    assert result.code == "egress_allowlisted"
+    assert result.policy_id == "egress.allow"
+
+
 def test_wasm_loaded_once_not_per_request(monkeypatch: pytest.MonkeyPatch) -> None:
     """Constructing the engine loads OPAPolicy exactly once; evaluate() must not
     reload it (Pitfall 2 — load once at startup, never per request)."""
