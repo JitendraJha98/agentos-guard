@@ -11,7 +11,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 ### Interception & PEP
 
-- [ ] **INT-01** [P0]: A LangChain/LangGraph agent's tool calls are intercepted before execution via SDK middleware and normalized into an `AgentAction`
+- [x] **INT-01** [P0]: A LangChain/LangGraph agent's tool calls are intercepted before execution via SDK middleware and normalized into an `AgentAction`
 - [ ] **INT-02** [P0]: Model invocations are intercepted and normalized into an `AgentAction`
 - [ ] **INT-03** [P0]: Memory-access operations are intercepted and normalized into an `AgentAction`
 - [ ] **INT-04** [P0]: MCP-server calls are intercepted and normalized into an `AgentAction`
@@ -23,22 +23,22 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 ### Decision Pipeline
 
-- [ ] **PIPE-01** [P0]: Each `AgentAction` passes synchronously through ordered stages identity/trust → policy → risk → graduated response, producing one `Decision`
-- [ ] **PIPE-02** [P0]: Every stage contributes machine-readable `reasons` (fired policies/principles) to the `Decision` for explainability
-- [ ] **PIPE-03** [P0]: A stage can short-circuit to a terminal outcome (e.g. forged identity → deny) without running later stages
+- [x] **PIPE-01** [P0]: Each `AgentAction` passes synchronously through ordered stages identity/trust → policy → risk → graduated response, producing one `Decision`
+- [x] **PIPE-02** [P0]: Every stage contributes machine-readable `reasons` (fired policies/principles) to the `Decision` for explainability
+- [x] **PIPE-03** [P0]: A stage can short-circuit to a terminal outcome (e.g. forged identity → deny) without running later stages
 - [ ] **PIPE-04** [P0]: Pipeline overhead for cached policy/identity stays within a defined p95 latency budget (low single-digit ms), verified by a benchmark test
 - [ ] **PIPE-05** [P0]: Fail-closed vs fail-open on control-plane unavailability is a per-action-class policy decision; high-risk classes default fail-closed; no silent allow
 - [ ] **PIPE-06** [P0]: The control plane maintains its own decision/identity/compiled-policy cache (OPA does not cache), invalidated on policy-version change
-- [ ] **PIPE-07** [P0]: A stable, serializable `contract` package (`AgentAction` + `evaluate() -> Decision`) is the single dependency every PEP form uses
+- [x] **PIPE-07** [P0]: A stable, serializable `contract` package (`AgentAction` + `evaluate() -> Decision`) is the single dependency every PEP form uses
 
 ### Constitution, Policy & Graduated Response
 
 - [ ] **POL-01** [P0]: An operator authors a human-readable Constitution of numbered principles as a declarative resource
 - [ ] **POL-02** [P0]: A compiler lowers Constitution principles into structured YAML policies scoped to agents/tools/action types
-- [ ] **POL-03** [P0]: YAML policies compile to OPA/Rego and are evaluated deterministically on the hot path behind a `PolicyEngine` interface (OPA-server in P0, opa-wasm togglable)
+- [x] **POL-03** [P0]: YAML policies compile to OPA/Rego and are evaluated deterministically on the hot path behind a `PolicyEngine` interface (OPA-server in P0, opa-wasm togglable)
 - [ ] **POL-04** [P0]: On no-rule/ambiguous results, an LLM semantic interpreter returns `{outcome, cited principle, rationale}` via structured outputs — never an unexplained verdict
 - [ ] **POL-05** [P0]: The semantic interpreter is advisory-only, runs only on flagged ambiguity, and can never upgrade a high-risk action beyond the deterministic policy floor
-- [ ] **POL-06** [P0]: The graduated-response stage maps {policy, risk, trust} to one outcome in {allow, warn, sandbox, require_consensus, require_approval, deny} with policy-driven thresholds
+- [x] **POL-06** [P0]: The graduated-response stage maps {policy, risk, trust} to one outcome in {allow, warn, sandbox, require_consensus, require_approval, deny} with policy-driven thresholds
 - [ ] **POL-07** [P0]: A `require_approval` outcome parks an `ApprovalRequest` with full action context, fired principles, and risk/trust scores; the action blocks until resolved or times out to a safe default
 - [ ] **POL-08** [P0]: Every `Decision` records the exact Constitution/Policy version that evaluated the action
 - [ ] **POL-09** [P1]: A `require_consensus` outcome requires 2-of-3 agent agreement before the action proceeds
@@ -48,7 +48,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 ### Security Engine — Detection / Risk
 
-- [ ] **SEC-01** [P0]: The risk stage scores prompt-injection patterns in tool inputs, retrieved content, and inter-agent messages, contributing to `risk_score` with typed findings
+- [x] **SEC-01** [P0]: The risk stage scores prompt-injection patterns in tool inputs, retrieved content, and inter-agent messages, contributing to `risk_score` with typed findings
 - [ ] **SEC-02** [P0]: Baseline runtime guardrails score PII, unsafe content, and format violations on inputs/outputs
 - [ ] **SEC-03** [P0]: Detectors are pluggable scorers — cheap heuristics run inline, expensive models only when flagged
 - [ ] **SEC-04** [P1]: Data-exfiltration detection scores outbound payloads carrying secrets/PII to untrusted targets
@@ -72,14 +72,14 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 ### Identity
 
-- [ ] **IDN-01** [P0]: Each `Agent` registers and is issued a signed identity token
-- [ ] **IDN-02** [P0]: The identity stage verifies the token; forged/unknown identity short-circuits to deny
+- [x] **IDN-01** [P0]: Each `Agent` registers and is issued a signed identity token
+- [x] **IDN-02** [P0]: The identity stage verifies the token; forged/unknown identity short-circuits to deny
 - [ ] **IDN-03** [P1]: Agents are issued X.509-style certificates binding identity to keys
 - [ ] **IDN-04** [P2]: SPIFFE/SVID workload identity enables zero-trust mTLS
 
 ### Trust & Reputation
 
-- [ ] **TRST-01** [P0]: Each `Agent` has a 0–1 trust score consumed by the graduated-response stage
+- [x] **TRST-01** [P0]: Each `Agent` has a 0–1 trust score consumed by the graduated-response stage
 - [ ] **TRST-02** [P0]: Trust modulates outcome within a policy-defined band but never overrides a deterministic policy decision
 - [ ] **TRST-03** [P1]: A longitudinal reputation score is derived from violation/approval history
 - [ ] **TRST-04** [P1]: Trust propagates (and decays) across delegation edges as a bounded budget; delegated scope is enforced as an intersection, not a union
@@ -96,7 +96,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 ### Audit
 
-- [ ] **AUD-01** [P0]: Each `Decision` appends an `AuditRecord` to an append-only, hash-chained log (each record includes the prior record's hash)
+- [x] **AUD-01** [P0]: Each `Decision` appends an `AuditRecord` to an append-only, hash-chained log (each record includes the prior record's hash)
 - [ ] **AUD-02** [P0]: Each `AuditRecord` links `AgentAction` → `Decision` → fired policies/principles → outcome
 - [ ] **AUD-03** [P0]: Each `AuditRecord` carries the exact policy/constitution version (policy evidence)
 - [ ] **AUD-04** [P0]: Sensitive payloads are redacted at write time per policy; redaction fails closed (no write if redaction fails)
@@ -158,7 +158,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 ### Python SDK
 
-- [ ] **SDK-01** [P0]: The SDK provides interception decorators/middleware for LangChain/LangGraph (the PEP)
+- [x] **SDK-01** [P0]: The SDK provides interception decorators/middleware for LangChain/LangGraph (the PEP)
 - [ ] **SDK-02** [P0]: The SDK provides agent self-registration returning an identity token
 - [ ] **SDK-03** [P0]: The SDK provides pytest adapters for the red-team layer
 - [ ] **SDK-04** [P0]: The SDK provides a control-plane client for resource CRUD and approvals
@@ -205,7 +205,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INT-01 | Phase 1 | Pending |
+| INT-01 | Phase 1 | Complete |
 | INT-02 | Phase 2 | Pending |
 | INT-03 | Phase 2 | Pending |
 | INT-04 | Phase 2 | Pending |
@@ -214,26 +214,26 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | INT-07 | Phase 10 | Pending |
 | INT-08 | Phase 10 | Pending |
 | INT-09 | Phase 14 | Pending |
-| PIPE-01 | Phase 1 | Pending |
-| PIPE-02 | Phase 1 | Pending |
-| PIPE-03 | Phase 1 | Pending |
+| PIPE-01 | Phase 1 | Complete |
+| PIPE-02 | Phase 1 | Complete |
+| PIPE-03 | Phase 1 | Complete |
 | PIPE-04 | Phase 3 | Pending |
 | PIPE-05 | Phase 3 | Pending |
 | PIPE-06 | Phase 3 | Pending |
-| PIPE-07 | Phase 1 | Pending |
+| PIPE-07 | Phase 1 | Complete |
 | POL-01 | Phase 3 | Pending |
 | POL-02 | Phase 3 | Pending |
-| POL-03 | Phase 1 | Pending |
+| POL-03 | Phase 1 | Complete |
 | POL-04 | Phase 3 | Pending |
 | POL-05 | Phase 3 | Pending |
-| POL-06 | Phase 1 | Pending |
+| POL-06 | Phase 1 | Complete |
 | POL-07 | Phase 3 | Pending |
 | POL-08 | Phase 3 | Pending |
 | POL-09 | Phase 9 | Pending |
 | POL-10 | Phase 13 | Pending |
 | POL-11 | Phase 13 | Pending |
 | POL-12 | Phase 13 | Pending |
-| SEC-01 | Phase 1 | Pending |
+| SEC-01 | Phase 1 | Complete |
 | SEC-02 | Phase 3 | Pending |
 | SEC-03 | Phase 3 | Pending |
 | SEC-04 | Phase 8 | Pending |
@@ -251,11 +251,11 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | RUN-05 | Phase 9 | Pending |
 | RUN-06 | Phase 9 | Pending |
 | RUN-07 | Phase 9 | Pending |
-| IDN-01 | Phase 1 | Pending |
-| IDN-02 | Phase 1 | Pending |
+| IDN-01 | Phase 1 | Complete |
+| IDN-02 | Phase 1 | Complete |
 | IDN-03 | Phase 7 | Pending |
 | IDN-04 | Phase 14 | Pending |
-| TRST-01 | Phase 1 | Pending |
+| TRST-01 | Phase 1 | Complete |
 | TRST-02 | Phase 3 | Pending |
 | TRST-03 | Phase 7 | Pending |
 | TRST-04 | Phase 7 | Pending |
@@ -266,7 +266,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | DISC-04 | Phase 10 | Pending |
 | DISC-05 | Phase 10 | Pending |
 | DISC-06 | Phase 10 | Pending |
-| AUD-01 | Phase 1 | Pending |
+| AUD-01 | Phase 1 | Complete |
 | AUD-02 | Phase 4 | Pending |
 | AUD-03 | Phase 4 | Pending |
 | AUD-04 | Phase 4 | Pending |
@@ -307,7 +307,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | API-02 | Phase 5 | Pending |
 | API-03 | Phase 3 | Pending |
 | API-04 | Phase 7 | Pending |
-| SDK-01 | Phase 1 | Pending |
+| SDK-01 | Phase 1 | Complete |
 | SDK-02 | Phase 5 | Pending |
 | SDK-03 | Phase 6 | Pending |
 | SDK-04 | Phase 5 | Pending |

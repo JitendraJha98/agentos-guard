@@ -1,0 +1,19 @@
+[project]
+name = "agentos-sdk"
+version = "0.1.0"
+description = "The data-plane PEP (INT-01/SDK-01): a LangChain v1 AgentMiddleware that intercepts tool calls, normalizes them to AgentAction, and enforces the pipeline decision (allow runs the tool; deny short-circuits by NOT calling the handler). Depends ONLY on agentos-contract + agentos-pipeline — PEP logic never leaks into the PDP (Anti-Pattern 5)."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "agentos-contract",
+    "agentos-pipeline",
+    "langchain>=1.3,<2",
+    "langgraph>=1.2,<2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentos_sdk"]

@@ -1,0 +1,18 @@
+# Local-dev PostgreSQL for the production audit/control-plane backend (Phase 5).
+# Phase 1 itself runs against a SQLite-backed Store (CONTEXT.md D-14, no-Docker
+# deviation) — this file declares the production target but is NOT exercised by
+# the Phase-1 test suite.
+services:
+  postgres:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: agentos
+      POSTGRES_USER: agentos
+      POSTGRES_PASSWORD: agentos_dev
+    volumes:
+      - agentos_pgdata:/var/lib/postgresql/data
+
+volumes:
+  agentos_pgdata:
