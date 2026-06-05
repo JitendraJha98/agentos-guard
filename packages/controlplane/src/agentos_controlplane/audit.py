@@ -27,7 +27,7 @@ import json
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from agentos_contract import AgentAction, Decision
