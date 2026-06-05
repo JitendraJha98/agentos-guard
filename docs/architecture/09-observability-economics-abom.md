@@ -1,5 +1,11 @@
 # 09 — Observability, Economics & Supply Chain (ABOM)
 
+> **The AGT weakness this kills:** AGT stops at operational SLO/chaos metrics and has no notion
+> of an agent's *cost* or *bill of materials*. We add **semantic** observability (intent drift,
+> conversation reconstruction), govern **spend as policy** through the same graduated-response
+> engine (no parallel budget enforcer), and track an **ABOM** so "which agents use compromised
+> component vX?" is answerable instantly.
+
 Three cross-cutting engines that turn the control plane into a place platform teams *live* —
 seeing behavior, controlling spend, and tracking what each agent is built from.
 

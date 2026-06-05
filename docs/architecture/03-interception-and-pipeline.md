@@ -1,5 +1,12 @@
 # 03 — Interception & the Decision Pipeline
 
+> **The AGT weakness this kills:** AGT's policy engine runs *in-process* with the agent, so a
+> compromised agent can compromise its own governance, and interception is tied to one
+> integration shape. Our PEP is a process boundary behind a single stable contract
+> (`evaluate(AgentAction) -> Decision`) — SDK now, gateway and K8s sidecar later — so the same
+> pipeline governs every agent regardless of framework, and the decision is made outside the
+> agent's reach.
+
 ## Policy Enforcement Points (PEP)
 
 A PEP is anywhere an `AgentAction` is captured before it executes. agentos-guard supports

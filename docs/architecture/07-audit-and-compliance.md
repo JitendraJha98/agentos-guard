@@ -1,5 +1,11 @@
 # 07 — Audit & Compliance (the Proof Layer)
 
+> **The AGT weakness this kills (pillar 7):** AGT's "tamper-evident" means append-only JSON.
+> Whoever controls the host can rewrite the log and recompute the hashes — *evidence without
+> proof*. We add **policy-version provenance** on every record, an **independent CI verifier**
+> and external anchoring of chain checkpoints, and a Phase-2 path to **zero-knowledge proofs**
+> that demonstrate compliance *without disclosing* the underlying data. Proof, not just a log.
+
 Every decision the control plane makes becomes **evidence**. This layer makes that evidence
 **tamper-evident**, queryable, and mapped to the compliance frameworks enterprises must answer
 to.

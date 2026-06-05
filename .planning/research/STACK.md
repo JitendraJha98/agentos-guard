@@ -1,5 +1,10 @@
 # Stack Research
 
+> 📸 **Research snapshot — 2026-06-01. Not authoritative.** Point-in-time stack analysis that fed
+> the design and plan. Authoritative design is [`docs/architecture/`](../../docs/architecture/)
+> (esp. the ADRs); live execution state is [`.planning/`](../). Read this for *why* these libraries
+> were chosen, not for current truth.
+
 **Domain:** AI-agent runtime governance & security control plane (Python-first)
 **Researched:** 2026-06-01
 **Confidence:** HIGH for Phase 0 core (LangChain/LangGraph interception, OPA/Rego, FastAPI/Pydantic/SQLAlchemy/Alembic, OTel, anthropic SDK, pytest red-team). MEDIUM for the in-process Rego path and OTel GenAI conventions (experimental). LOW / speculative for Phase 2 (ZK, SPIFFE, BFT, Rust interop).

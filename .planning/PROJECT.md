@@ -1,5 +1,10 @@
 # agentos-guard
 
+> **This is a planning document — it summarizes, it does not define.** The sections below restate
+> the authoritative design ([`../docs/architecture/`](../docs/architecture/)) in condensed form so
+> the GSD workflow has a self-contained execution brief. On any conflict, **the design docs win**.
+> Pointers to the canonical source are given inline.
+
 ## What This Is
 
 agentos-guard is an open-source **governance and security control plane for AI agents**. It sits between AI agents and everything they touch — tools, memory, MCP servers, models, APIs, and each other — intercepts **every action** at runtime, evaluates it against declarative policy and a human-readable **constitution**, attaches cryptographic identity and a dynamic **trust score**, and returns a **graduated decision** (allow / warn / sandbox / require_consensus / require_approval / deny). Every decision is written to a tamper-evident, hash-chained audit log as compliance evidence, and a pytest-native red-team layer makes safety regressions fail CI like a unit test.
@@ -50,7 +55,7 @@ Building toward the full vision (Phases 0–2). Phase tags reflect the documente
 - [ ] SDK self-registration + authoritative agent inventory (P0)
 - [ ] Reputation scoring, trust propagation, delegation trust chains, agent certificates (P1)
 - [ ] Framework / shadow-agent / rogue-agent discovery; live agent graph + lineage (P1)
-- [ ] SPIFFE/mTLS identity; stake-based accountability + portable decentralized reputation (P2)
+- [ ] SPIFFE/mTLS identity; portable, exportable reputation via an optional pluggable backend (any stake/slashing economics confined to that backend, never required — ADR-0007) (P2)
 
 **Audit & Compliance**
 - [ ] Tamper-evident hash-chained audit log; decision records with policy-version provenance (P0)
@@ -85,16 +90,20 @@ Building toward the full vision (Phases 0–2). Phase tags reflect the documente
 - Replacing existing observability backends — we emit OpenTelemetry and integrate, not replace.
 - Non-Python SDKs (TypeScript, Go) — deferred until the Python surface stabilizes (ADR-0001).
 - Kubernetes as a Phase 0 requirement — Phase 0 runs self-hosted (API + Postgres + dashboard) with no K8s; the K8s-native operator/sidecar is Phase 2.
+- **Crypto-economics in core** — blockchain/on-chain anchoring, token staking/slashing settlement, and MPC are non-goals (ADR-0007). Enterprise audience treats mandatory chain/token dependencies as disqualifiers; "stake-based accountability" may exist only as an optional pluggable reputation backend. Token-free Merkle anchoring + ZK proofs are kept (optional/Phase-2).
 
 ## Context
 
-- **Design is fully documented** in `docs/architecture/` (README + docs 01–10 + 20-roadmap + 30-comparison + ADRs 0001–0006). These are **authoritative** and the source of truth for planning. No implementation exists yet.
-- Directly inspired by, and positioned to **surpass**, Microsoft's **Agent Governance Toolkit (AGT)** and **RAMPART**. Five differentiation dimensions:
-  1. Living semantic **constitution** (vs static YAML rules)
-  2. **Graduated** response (vs binary allow/deny)
-  3. Continuous, pytest-native adversarial **self-play** (vs pre-deployment red team)
-  4. **Zero-knowledge** compliance proofs (vs tamper-evident logs alone)
-  5. Decentralized, stake-based **reputation** (vs SPIFFE/mTLS-only identity)
+- **Design is fully documented** in `docs/architecture/` (00-manifesto + README + docs 01–10 + 20-roadmap + 30-comparison + ADRs 0001–0007). These are **authoritative** and the source of truth for planning. `docs/` is the design layer (*what/why*); `.planning/` is the execution layer (*how/when* — phases, REQ-IDs, plans). They are not duplicates; see `docs/architecture/README.md` → "`docs/` vs `.planning/`". Phase 1 (walking skeleton) is implemented and merged; everything beyond it is design ahead of code.
+- Directly inspired by, and positioned to **surpass**, Microsoft's **Agent Governance Toolkit (AGT)** and **RAMPART**. The paradigm shift is *Distrust→Block→Log* (AGT) → *Trust→Verify→Graduate→Prove* (us). **Seven differentiator pillars** (see `docs/architecture/00-manifesto.md`), none requiring crypto-economics:
+  1. Living semantic **constitution** (vs static YAML grep)
+  2. **Graduated** response — allow/warn/sandbox/consensus/approval/deny (vs binary)
+  3. **Intent-based policy** — catches `rename_then_drop` & novel sequences (vs action-string matching)
+  4. **Cross-agent permission calculus** — confused-deputy / transitive permissions (vs per-agent isolation)
+  5. **Explainable denials with remediation** — cited principle + next steps (vs `GovernanceDenied: rule X`)
+  6. Continuous, pytest-native red-team that **gates CI** + self-play (vs offline pre-deploy scan)
+  7. **Prove, don't just log** — policy-version provenance → Merkle → ZK proofs (vs append-only logs)
+- **Crypto-economics fenced out of core** (ADR-0007): blockchain anchoring, token staking, and MPC are non-goals; only token-free cryptography (Merkle anchoring, ZK proofs) survives as optional/hard-gated Phase-2 research. Differentiation is semantic reasoning + provable governance, not tokenomics.
 - Borrows the **Kubernetes mental model**: a *data plane* (Policy Enforcement Points in the request path) + a *control plane* (engines that decide, store state, observe). Everything is a declarative resource reconciled toward desired state.
 - The **request lifecycle** (intercept → normalize → decide → enforce → record) is the contract every engine plugs into; it stays stable across all three phases.
 - Each documented phase is **independently shippable and demoable**. Phase 0 alone is intended to beat AGT before any moonshot feature is built.

@@ -1,5 +1,10 @@
 # Pitfalls Research
 
+> 📸 **Research snapshot — 2026-06-01. Not authoritative.** Point-in-time catalogue of known
+> failure modes and how the design avoids them. Authoritative design is
+> [`docs/architecture/`](../../docs/architecture/); live execution state is [`.planning/`](../).
+> Read this for *traps to avoid during build*, not for current truth.
+
 **Domain:** Open-source runtime governance & security control plane for AI agents (on the hot path of every agent action; itself security-critical)
 **Researched:** 2026-06-01
 **Confidence:** HIGH for hot-path/interception/policy/audit pitfalls (corroborated by OPA docs, OWASP Agentic Top 10, prompt-injection research, tamper-evidence literature); MEDIUM for self-play/moonshot pitfalls (newer, fewer production references)

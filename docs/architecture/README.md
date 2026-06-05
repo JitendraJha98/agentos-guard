@@ -15,17 +15,22 @@ unit test.
 
 ## What we are beating
 
-Microsoft's **Agent Governance Toolkit (AGT)** and **RAMPART**. They enforce mostly static
-YAML rules with audit logs. agentos-guard differentiates with a *living* semantic
-constitution, *graduated* (non-binary) response, reputation/trust scoring, continuous
-adversarial self-play, and zero-knowledge compliance proofs. See
-[`30-comparison-agt.md`](30-comparison-agt.md).
+Microsoft's **Agent Governance Toolkit (AGT)** and **RAMPART**. They run on one reflex —
+*Distrust → Block → Log* — enforcing static YAML rules with append-only logs. agentos-guard
+runs *Trust → Verify → Graduate → Prove*: a *living* semantic constitution, **intent-based**
+(not string-matching) policy, *graduated* (non-binary) response, **cross-agent permission
+calculus**, explainable denials with remediation, a **CI-gating** red-team, and provable —
+not merely append-only — evidence.
+
+**Start with the [`00-manifesto.md`](00-manifesto.md)** — it states the paradigm and the seven
+pillars. The head-to-head scorecard is in [`30-comparison-agt.md`](30-comparison-agt.md).
 
 ## How to read these docs
 
 | # | Doc | Read it for |
 |---|-----|-------------|
 | — | [`README.md`](README.md) | This overview + glossary |
+| 00 | [`00-manifesto.md`](00-manifesto.md) | **Read first** — the paradigm shift + the seven pillars that beat AGT |
 | 01 | [`01-overview.md`](01-overview.md) | Problem, goals/non-goals, control-plane model, request lifecycle |
 | 02 | [`02-domain-model.md`](02-domain-model.md) | Core entities & data model |
 | 03 | [`03-interception-and-pipeline.md`](03-interception-and-pipeline.md) | How actions are intercepted + the decision pipeline |
@@ -62,7 +67,23 @@ adversarial self-play, and zero-knowledge compliance proofs. See
 - **Trust score:** a dynamic, reputation-based measure of an agent's reliability.
 - **ABOM:** Agent Bill of Materials — the dependency manifest of an agent.
 
+## `docs/` vs `.planning/` — two layers, not a duplicate
+
+These docs and the `.planning/` folder cover the same project but play different roles, on
+purpose. Keep them straight:
+
+| | `docs/architecture/` (here) | `.planning/` |
+|---|------------------------------|--------------|
+| **Role** | **Authoritative design** — *what* we build and *why* | **Execution decomposition** — *how* and *in what order* we build it |
+| **Changes when** | The design itself changes | A phase is planned, executed, or verified (GSD workflow) |
+| **Audience** | Anyone understanding the system | Whoever is building the next slice |
+| **Source of truth for** | Components, contracts, paradigm | Phases, REQ-IDs, plans, traceability |
+
+When they appear to overlap on a topic, `docs/` says what the thing *is*; `.planning/` says
+*when and how* it gets built. The design is upstream; planning is downstream of it.
+
 ---
 
-*This is a design-only document set. No implementation exists yet; see
-[`20-roadmap.md`](20-roadmap.md) for the build sequence.*
+*This document set is **design-authoritative**. Phase 1 (the walking skeleton) is implemented
+and merged; everything beyond it is design ahead of code. See [`20-roadmap.md`](20-roadmap.md)
+for the build sequence and `.planning/ROADMAP.md` for execution status.*

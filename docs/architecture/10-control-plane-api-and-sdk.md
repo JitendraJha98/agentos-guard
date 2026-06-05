@@ -1,5 +1,11 @@
 # 10 — Control-Plane API, SDK & Dashboard
 
+> **The AGT weakness this kills:** AGT's governance logic is centralized and config is
+> imperative per-adapter. We follow the Kubernetes model — **everything is a declarative
+> resource** the API validates, versions, and *reconciles* toward desired state — so the
+> control plane is operable, auditable, and reproducible rather than a pile of per-framework
+> wiring.
+
 How operators configure the system and how agents connect to it.
 
 ## Declarative Control-Plane API

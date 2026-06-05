@@ -1,8 +1,16 @@
 # Roadmap: agentos-guard
 
+> **Two roadmaps, on purpose — this is the *execution-level* one.** This is the GSD decomposition:
+> 14 fine-grained, independently-shippable vertical slices with goals, success criteria, REQ-IDs,
+> and live status. The *design-level* roadmap — the three coarse phases (P0 / P1 / P2) and what
+> they mean — is [`../docs/architecture/20-roadmap.md`](../docs/architecture/20-roadmap.md) and is
+> authoritative for phase *intent*. Mapping: design P0 → Phases 1–6, P1 → Phases 7–12, P2 →
+> Phases 13–14. Read this for *what to build next and its status*; read the design roadmap for
+> *what the phases mean*.
+
 ## Overview
 
-agentos-guard is a runtime governance and security control plane that intercepts every AI-agent action, runs it through a synchronous decision pipeline (identity/trust → policy → risk → graduated response), and writes tamper-evident audit evidence. The journey starts with a rock-solid walking skeleton — one agent, one tool, one Constitution principle, proven end-to-end with a CI-gating red-team test — then thickens that loop into a full Phase-0 parity control plane (five interception types, full graduated outcomes, approvals, kill switch, OWASP/NIST/EU-minimal compliance, SDK, dashboard). Phase 1 builds trust/reputation, containment, the full security engine (including the ASI05/06/07 detectors), the gateway PEP, Merkle audit, economics, ABOM, and reconciliation loops. Phase 2 reaches for the hard-gated moonshot differentiators (amendments, BFT consensus, self-play, ZK proofs, SPIFFE/staking, K8s operator, Rust hot path). Every phase is an independently shippable vertical slice; nothing horizontal ships alone.
+agentos-guard is a runtime governance and security control plane that intercepts every AI-agent action, runs it through a synchronous decision pipeline (identity/trust → policy → risk → graduated response), and writes tamper-evident audit evidence. The paradigm is *Trust→Verify→Graduate→Prove* (vs AGT's *Distrust→Block→Log*), carried by **seven differentiator pillars** (`docs/architecture/00-manifesto.md`): semantic constitution, graduated response, intent-based policy, cross-agent permission calculus, explainable denials with remediation, CI-gating red-team + self-play, and provable audit. The journey starts with a rock-solid walking skeleton — one agent, one tool, one Constitution principle, proven end-to-end with a CI-gating red-team test — then thickens that loop into a full Phase-0 parity control plane (five interception types, full graduated outcomes, explainable-remediation decisions + intent tags, approvals, kill switch, OWASP/NIST/EU-minimal compliance, SDK, dashboard). Phase 1 builds trust/reputation, containment, the full security engine (including the ASI05/06/07 detectors and deeper intent classification), the gateway PEP, Merkle audit, economics, ABOM, and reconciliation loops. Phase 2 reaches for the hard-gated moonshot differentiators (amendments, BFT consensus, self-play, ZK proofs, K8s operator, Rust hot path). **Crypto-economics (blockchain anchoring, token staking, MPC) are fenced out of core** (ADR-0007); only token-free Merkle/ZK cryptography is kept. Every phase is an independently shippable vertical slice; nothing horizontal ships alone.
 
 ## Phases
 
@@ -25,7 +33,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 11: Merkle Audit, Economics, ABOM & Compliance Export** - Merkle DAG audit upgrade, cost/budget governance, Agent Bill of Materials, and one-click EU AI Act + SOC 2 evidence export
 - [ ] **Phase 12: Continuous Adversarial Validation & Rich Dashboard** - Attack-success-rate tracking, scheduled continuous validation, multi-step campaigns, health monitoring, and the rich SLO/graph/attack dashboard
 - [ ] **Phase 13: Constitution Amendments & Conflict Reasoning** - Proposable/ratifiable Constitution amendments, cross-agent transitive-permission conflict resolution, and BFT-backed consensus
-- [ ] **Phase 14: Self-Play, ZK Proofs, Decentralized Identity & Rust Hot Path** - Continuous self-play + runtime patching + threat intel, zero-knowledge compliance proofs, SPIFFE/mTLS + stake-based reputation, K8s sidecar/operator, ROI/ABOM impact analysis, and the profile-driven Rust rewrite
+- [ ] **Phase 14: Self-Play, ZK Proofs, Decentralized Identity & Rust Hot Path** - Continuous self-play + runtime patching + threat intel, zero-knowledge compliance proofs, SPIFFE/mTLS + portable reputation (optional pluggable backend, ADR-0007), K8s sidecar/operator, ROI/ABOM impact analysis, and the profile-driven Rust rewrite
 
 ## Phase Details
 
@@ -62,10 +70,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Goal**: Operators author a human-readable Constitution that compiles to deterministic OPA/Rego, ambiguous cases get a cited-principle rationale, and the full graduated outcome spectrum — including human approval and trust-modulates-only — is enforced.
 **Mode:** mvp
 **Depends on**: Phase 2
-**Requirements**: POL-01, POL-02, POL-04, POL-05, POL-07, POL-08, PIPE-04, PIPE-05, PIPE-06, SEC-02, SEC-03, TRST-02, API-03
+**Requirements**: POL-01, POL-02, POL-04, POL-05, POL-07, POL-08, PIPE-04, PIPE-05, PIPE-06, PIPE-08, SEC-02, SEC-03, SEC-12, TRST-02, API-03
 **Success Criteria** (what must be TRUE):
   1. An operator authors numbered Constitution principles that a compiler lowers to scoped YAML and then to OPA/Rego, evaluated deterministically with the exact policy/constitution version recorded on every `Decision`.
-  2. On a no-rule/ambiguous result the LLM interpreter returns `{outcome, cited principle, rationale}` and can never upgrade a high-risk action beyond the deterministic policy floor (advisory-only).
+  2. On a no-rule/ambiguous result the LLM interpreter returns `{outcome, cited principle, rationale}` and can never upgrade a high-risk action beyond the deterministic policy floor (advisory-only); every `Decision` is an explainable denial carrying `{principle_ref, rationale, evidence}`, `inferred_intent`, and concrete `remediation` paths (PIPE-08), with deterministic intent-class tags mapping actions to a coarse intent (e.g. `DATA_DESTRUCTION`) that feeds risk and policy (SEC-12, advisory to the floor).
   3. The graduated-response stage maps {policy, risk, trust} to allow/warn/sandbox/require_consensus/require_approval/deny with policy-driven thresholds, where trust modulates only within a policy-defined band and never overrides a deterministic policy decision; a `require_approval` outcome parks an `ApprovalRequest` that blocks the action until resolved or times out to a safe default.
   4. The pipeline holds its p95 cached-path latency budget (verified by a benchmark test), keeps its own compiled-policy/identity cache invalidated on policy-version change, and applies per-action-class fail-closed posture with no silent allow on control-plane unavailability.
 **Plans**: TBD
@@ -122,11 +130,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Goal**: Build out the full detection surface — data-exfil, secret-leakage, tool-poisoning, supply-chain — and close the surfaced OWASP-2026 gaps (ASI05/06/07), fronted by an MCP security gateway.
 **Mode:** mvp
 **Depends on**: Phase 7
-**Requirements**: SEC-04, SEC-05, SEC-06, SEC-07, SEC-08, SEC-09, SEC-10, SEC-11, ABOM-01, ABOM-02
+**Requirements**: SEC-04, SEC-05, SEC-06, SEC-07, SEC-08, SEC-09, SEC-10, SEC-11, SEC-13, SEC-14, ABOM-01, ABOM-02
 **Success Criteria** (what must be TRUE):
   1. Outbound payloads carrying secrets/PII to untrusted targets are scored for exfiltration, and credentials/keys in prompts, tool args, or outputs are flagged.
   2. Malicious or drifted tool definitions are flagged (manifest-drift), an MCP security gateway inspects/normalizes MCP interactions and quarantines hostile manifests, and supply-chain checks cross-reference an agent's ABOM against known-bad components.
-  3. The gap detectors fire: memory/context-poisoning (ASI06) flags malicious memory writes/reads, inter-agent comms (ASI07) are authenticated with agent-card verification on delegation, and unsafe dynamic code/command execution (ASI05) is detected.
+  3. The gap detectors fire: memory/context-poisoning (ASI06) flags malicious memory writes/reads, inter-agent comms (ASI07) are authenticated with agent-card verification on delegation, and unsafe dynamic code/command execution (ASI05) is detected; intent classification deepens beyond P0 tags — sequence/lineage analysis catches multi-step evasions like `rename_then_drop` (SEC-13) and an embedding-similarity classifier flags novel actions near a forbidden-intent exemplar when deterministic tags are ambiguous (SEC-14).
   4. Each `Agent` declares a versioned, provenance-tracked Agent Bill of Materials of models, prompts, tools, and MCP servers.
 **Plans**: TBD
 
@@ -188,14 +196,14 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: TBD
 
 ### Phase 14: Self-Play, ZK Proofs, Decentralized Identity & Rust Hot Path
-**Goal**: Deliver the hard-gated moonshot layer — continuous adversarial self-play with ratifiable patches, zero-knowledge compliance proofs, decentralized stake-based identity, a K8s data plane, deeper analytics, and a profile-driven Rust hot path.
+**Goal**: Deliver the hard-gated moonshot layer — continuous adversarial self-play with ratifiable patches, zero-knowledge compliance proofs, SPIFFE/mTLS + portable reputation (optional pluggable backend, no required crypto-economics — ADR-0007), a K8s data plane, deeper analytics, and a profile-driven Rust hot path.
 **Mode:** mvp
 **Depends on**: Phase 13 (and the whole P0/P1 substrate passing verification: latency budget held, audit externally verifiable, coverage matrix green, red-team gating CI)
 **Requirements**: TEST-10, TEST-11, AUD-07, IDN-04, TRST-05, INT-09, PERF-01, ECON-04, ABOM-03
 **Success Criteria** (what must be TRUE):
   1. Continuous adversarial self-play generates novel attacks, scores defenses, and proposes Constitution/policy patches (human-ratified, held-out eval), and a runtime-patching path rolls out ratified defenses while a threat-intel feed imports emerging attack patterns.
   2. Zero-knowledge compliance proofs prove properties (e.g. "no PII exfiltrated") without revealing underlying data over the Merkle-anchored chain.
-  3. SPIFFE/SVID workload identity enables zero-trust mTLS, agents stake on behavior with slashing and portable reputation, and a Kubernetes sidecar/operator PEP intercepts at the network layer behind the same contract.
+  3. SPIFFE/SVID workload identity enables zero-trust mTLS, portable reputation is exportable across deployments via an optional pluggable backend (any stake/slashing economics confined to that backend, never required — ADR-0007), and a Kubernetes sidecar/operator PEP intercepts at the network layer behind the same contract.
   4. ROI analytics present value-vs-cost per agent/workflow, ABOM vulnerability impact analysis answers "which agents use compromised component vX?" instantly, and hot-path enforcement components are rewritten in Rust (PyO3) where profiling justifies it.
 **Plans**: TBD
 

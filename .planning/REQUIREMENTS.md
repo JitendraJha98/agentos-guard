@@ -30,6 +30,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [ ] **PIPE-05** [P0]: Fail-closed vs fail-open on control-plane unavailability is a per-action-class policy decision; high-risk classes default fail-closed; no silent allow
 - [ ] **PIPE-06** [P0]: The control plane maintains its own decision/identity/compiled-policy cache (OPA does not cache), invalidated on policy-version change
 - [x] **PIPE-07** [P0]: A stable, serializable `contract` package (`AgentAction` + `evaluate() -> Decision`) is the single dependency every PEP form uses
+- [ ] **PIPE-08** [P0]: Every `Decision` is an *explainable denial with remediation* (pillar 5) — `reasons` carry `{principle_ref, rationale, evidence}`, plus `inferred_intent` and concrete `remediation` paths, not just a rule id
 
 ### Constitution, Policy & Graduated Response
 
@@ -59,6 +60,9 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [ ] **SEC-09** [P1]: A memory/context-poisoning detector flags malicious memory writes/reads (OWASP ASI06)
 - [ ] **SEC-10** [P1]: Inter-agent communication is authenticated and agent identity/card is verified on delegation (OWASP ASI07)
 - [ ] **SEC-11** [P1]: A code-execution detector flags unsafe dynamic code/command execution by agents (OWASP ASI05)
+- [ ] **SEC-12** [P0]: Intent-based policy (pillar 3) — deterministic intent-class tags map single actions to a coarse intent class (e.g. `DATA_DESTRUCTION`), contributing to `risk_score` and populating `Decision.inferred_intent`; advisory to the policy floor, never a substitute for it
+- [ ] **SEC-13** [P1]: Sequence/lineage intent analysis over delegation chains catches multi-step evasions (e.g. `rename_then_drop`, copy-then-delete) that no single action string matches
+- [ ] **SEC-14** [P1]: An embedding-similarity intent classifier flags novel actions semantically close to a forbidden-intent exemplar, running only when deterministic tags are ambiguous
 
 ### Runtime Security — Containment
 
@@ -83,7 +87,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [ ] **TRST-02** [P0]: Trust modulates outcome within a policy-defined band but never overrides a deterministic policy decision
 - [ ] **TRST-03** [P1]: A longitudinal reputation score is derived from violation/approval history
 - [ ] **TRST-04** [P1]: Trust propagates (and decays) across delegation edges as a bounded budget; delegated scope is enforced as an intersection, not a union
-- [ ] **TRST-05** [P2]: Agents stake on behavior; violations slash stake; reputation is portable across deployments
+- [ ] **TRST-05** [P2]: Portable, longitudinal reputation is exportable across deployments via an **optional, deployment-pluggable** reputation backend; any stake/slashing economics live *only* in that optional backend and are **never required** to run the control plane (ADR-0007 — crypto-economics fenced out of core)
 
 ### Discovery & Agent Graph
 
@@ -221,6 +225,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | PIPE-05 | Phase 3 | Pending |
 | PIPE-06 | Phase 3 | Pending |
 | PIPE-07 | Phase 1 | Complete |
+| PIPE-08 | Phase 3 | Pending |
 | POL-01 | Phase 3 | Pending |
 | POL-02 | Phase 3 | Pending |
 | POL-03 | Phase 1 | Complete |
@@ -244,6 +249,9 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | SEC-09 | Phase 8 | Pending |
 | SEC-10 | Phase 8 | Pending |
 | SEC-11 | Phase 8 | Pending |
+| SEC-12 | Phase 3 | Pending |
+| SEC-13 | Phase 8 | Pending |
+| SEC-14 | Phase 8 | Pending |
 | RUN-01 | Phase 4 | Pending |
 | RUN-02 | Phase 4 | Pending |
 | RUN-03 | Phase 9 | Pending |
@@ -318,10 +326,10 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | PERF-01 | Phase 14 | Pending |
 
 **Coverage:**
-- v1 requirements: 111 total
-- Mapped to phases: 111 ✓
+- v1 requirements: 115 total
+- Mapped to phases: 115 ✓
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-01*
-*Last updated: 2026-06-01 after roadmap creation (traceability populated, 111/111 mapped)*
+*Last updated: 2026-06-05 — added pillar-explicit requirements PIPE-08 (explainable remediation) + SEC-12/13/14 (intent-based policy); 115/115 mapped*

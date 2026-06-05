@@ -1,105 +1,48 @@
 # Architecture Research
 
-**Domain:** Runtime governance & security control plane for AI agents (Kubernetes-style data plane + control plane; synchronous decision pipeline on the hot path)
+> 📸 **Research snapshot — 2026-06-01. Not authoritative.** The live, authoritative architecture
+> is [`docs/architecture/`](../../docs/architecture/). This file's job is to **validate** that
+> design against real-world 2026 patterns and to recommend a concrete, dependency-ordered **build
+> sequence** and **code layout**. It does *not* re-specify the design — where you want "what the
+> system is," read `docs/architecture/`; read here for "is the design sound, and in what order do
+> we build it."
+
+**Domain:** Runtime governance & security control plane for AI agents (PEP/PDP split; synchronous decision pipeline on the hot path)
 **Researched:** 2026-06-01
 **Confidence:** HIGH (locked ADRs + 2026 ecosystem patterns corroborate the design; build-order recommendations are MEDIUM where they extend beyond documented decisions)
 
-> This document validates the existing design in `docs/architecture/` against 2026 real-world
-> patterns and recommends a concrete, dependency-ordered build sequence. It is **consistent with
-> the locked ADRs**: Python-first (ADR-0001), SDK-interception-first (ADR-0002), Constitution→YAML→
-> OPA/Rego (ADR-0003), hash-chained audit (ADR-0004), graduated response (ADR-0005). Where research
-> *adds* a recommendation beyond the docs, it is flagged inline.
+Consistent with the locked ADRs: Python-first (ADR-0001), SDK-interception-first (ADR-0002),
+Constitution→YAML→OPA/Rego (ADR-0003), hash-chained audit (ADR-0004), graduated response
+(ADR-0005), no crypto-economics in core (ADR-0007). Where research *adds* a recommendation beyond
+the docs, it is flagged inline.
 
 ---
 
-## Standard Architecture
+## Standard Architecture (validation)
 
 The 2026 ecosystem has converged on a **PEP / PDP split** for runtime AI-agent governance — the
-exact mental model the design already uses. The arxiv paper *"Runtime Governance for AI Agents:
+exact mental model the design already uses. The arXiv paper *"Runtime Governance for AI Agents:
 Policies on Paths"* (Mar 2026) and Microsoft's *"Authorization and Governance for AI Agents:
 Runtime Authorization Beyond Identity"* both describe a reusable **Authorization Fabric**: a PEP
 that gatekeeps every tool/action and a PDP that evaluates policy. Google Cloud's *"case for Envoy
 networking in the agentic AI era"* and the OPA-Envoy `ext_authz` integration confirm the contract
 shape: a **single request/response authorization protocol** that stays stable while the enforcement
 point changes form (in-process → proxy → mesh sidecar). This is precisely the agentos-guard
-"one pipeline contract, three PEP forms" thesis (`03-interception-and-pipeline.md`).
+"one pipeline contract, three PEP forms" thesis.
 
-### System Overview
+**Finding:** the design is sound and matches where the industry landed. No structural change
+recommended.
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                     DATA PLANE  (in the request path)                  │
-│                                                                        │
-│   PEP form by phase — all emit the SAME normalized AgentAction:        │
-│   ┌────────────────┐   ┌────────────────┐   ┌─────────────────────┐    │
-│   │ P0 SDK shim    │   │ P1 gateway/    │   │ P2 K8s sidecar /    │    │
-│   │ (LangGraph     │   │    proxy       │   │    operator         │    │
-│   │  decorators)   │   │ (framework-    │   │ (Envoy ext_authz    │    │
-│   │                │   │  agnostic)     │   │  data plane)        │    │
-│   └───────┬────────┘   └───────┬────────┘   └─────────┬───────────┘    │
-│           └───────── normalize → AgentAction ─────────┘                │
-│                              │                                         │
-│        ════════ STABLE PIPELINE CONTRACT (PEP ↔ PDP) ════════          │
-│                              │ evaluate(AgentAction) → Decision         │
-└──────────────────────────────┼─────────────────────────────────────────┘
-                                ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                  CONTROL PLANE  (decide · store · observe)             │
-│                                                                        │
-│   Decision Pipeline (PDP, synchronous, ordered, short-circuiting):     │
-│   ┌──────────┐  ┌───────────┐  ┌──────────┐  ┌────────────────────┐   │
-│   │1 Identity│→ │2 Policy   │→ │3 Risk    │→ │4 Graduated Response│   │
-│   │ & Trust  │  │ (OPA/Rego)│  │ (security│  │ {policy,risk,trust}│   │
-│   │          │  │  +LLM int)│  │  engine) │  │   → outcome        │   │
-│   └────┬─────┘  └─────┬─────┘  └────┬─────┘  └─────────┬──────────┘   │
-│        │ reads        │ reads       │ reads (flagged)  │ → Decision    │
-│   ┌────▼──────────────▼─────────────▼──────────────────▼──────────┐   │
-│   │              HOT-PATH CACHES (warmed by reconcilers)           │   │
-│   │   compiled Rego · resolved identities · trust scores · thresholds │
-│   └───────────────────────────┬───────────────────────────────────┘   │
-│                                │ compile-on-write (P0) / loops (P1+)    │
-│   ┌─────────────────┐   ┌──────▼──────────┐   ┌─────────────────────┐  │
-│   │ Control-Plane   │   │ Reconcilers     │   │ Proof & Audit       │  │
-│   │ API (declarative│──▶│ compile C→Y→Rego│   │ hash-chained log    │  │
-│   │ resource CRUD)  │   │ refresh trust   │   │ + redaction at write│  │
-│   └────────┬────────┘   │ materialize graph│   └──────────┬──────────┘  │
-│            │            └─────────────────┘              │             │
-│   ┌────────▼───────────────────────────────────────────▼──────────┐   │
-│   │                        PostgreSQL                              │   │
-│   │  resources (Agent/Policy/Constitution/TrustProfile/...)        │   │
-│   │  + append-only hash-chained audit table                       │   │
-│   └───────────────────────────────────────────────────────────────┘   │
-│                                │ async, off hot path                    │
-│                                ▼                                        │
-│                      OpenTelemetry → user's backend                     │
-└──────────────────────────────────────────────────────────────────────┘
-                                │ async
-              ┌─────────────────▼──────────────────┐
-              │ CI / Dev plane (out of request path)│
-              │ pytest red-team layer · attack libs │
-              └─────────────────────────────────────┘
-```
-
-### Component Responsibilities
-
-| Component | Responsibility (what it owns) | Typical 2026 implementation |
-|-----------|-------------------------------|------------------------------|
-| **PEP (data plane)** | Capture an action *before execution*, normalize to `AgentAction`, call the pipeline synchronously, realize the returned outcome (allow/sandbox/deny/...). Owns enforcement, not decisions. | P0: Python decorators/middleware over LangGraph. P1: network proxy. P2: Envoy `ext_authz` sidecar + operator. |
-| **Decision Pipeline (PDP)** | The synchronous ordered stages that turn one `AgentAction` into one `Decision` + reasons. Stateless per call; reads hot-path caches. | In-process Python module (P0) callable both as a library and behind a local HTTP/gRPC endpoint (P1+). |
-| **Identity & Trust (stage 1)** | Resolve and verify the acting `Agent`; load `TrustProfile`. Forged/unknown → short-circuit `deny`. | Signed tokens (P0) → certs (P1) → SPIFFE/SVID (P2). |
-| **Policy engine (stage 2)** | Evaluate compiled Rego for the action; route ambiguity to the LLM semantic interpreter. | OPA as a library/sidecar (CNCF-graduated, deterministic, side-effect-free). |
-| **Constitution compiler** | Lower human-readable Constitution → YAML → Rego; attach policy-version provenance. | Reconciler job; compile-on-write in P0. |
-| **Security engine (stage 3)** | Score `risk_score` + typed findings. Cheap heuristics inline; expensive models only on flagged cases. | Pluggable scorers; prompt-injection + baseline guardrails (P0). |
-| **Graduated response (stage 4)** | Map `{policy, risk, trust}` → one outcome via policy-driven thresholds. | Pure function over the three signals; thresholds are configurable resources. |
-| **Control-Plane API** | Validate, version, and persist declarative resources; trigger reconciliation. | FastAPI/ASGI over Postgres; Kubernetes-style resource semantics. |
-| **Reconcilers** | Drive derived state: compile constitutions, refresh trust, materialize graph, **warm hot-path caches**. | Compile-on-write (P0) → continuous loops (P1+). |
-| **Proof & Audit layer** | Append signed, hash-chained `AuditRecord`s with policy-version provenance; redact payloads at write time. | Append-only Postgres table; Merkle DAG (P1); ZK (P2). |
-| **Observability emitter** | Emit every action/decision as OTel spans + metrics. **Off the hot path.** | OpenTelemetry SDK → user's backend. |
-| **Red-team / testing plane** | pytest-native attack suites with statistical thresholds; a failing safety test breaks CI. | Out of the request path entirely; consumes the same pipeline as a fixture. |
+> **The system overview, component responsibilities, request/state data-flow diagrams, and the
+> control-plane model are defined authoritatively in the design — not duplicated here:**
+> - Control-plane / data-plane model + request lifecycle → [`docs/architecture/01-overview.md`](../../docs/architecture/01-overview.md)
+> - Domain entities + `AgentAction`/`Decision` shapes → [`docs/architecture/02-domain-model.md`](../../docs/architecture/02-domain-model.md)
+> - PEP forms + the 4-stage pipeline → [`docs/architecture/03-interception-and-pipeline.md`](../../docs/architecture/03-interception-and-pipeline.md)
+> - Per-engine responsibilities → docs `04`–`10`.
 
 ---
 
-## Recommended Project Structure
+## Recommended Project Structure  *(research add — not in the design docs)*
 
 A single Python package (monorepo-friendly) with a hard internal boundary between **data plane**
 (PEP/SDK) and **control plane** (pipeline + engines + API). The boundary is the pipeline contract.
@@ -129,7 +72,7 @@ agentos_guard/
 ├── engines/               # Control-plane engines the stages call into
 │   ├── identity/          # token issue/verify, trust load
 │   ├── policy/            # constitution compiler, OPA wrapper, interpreter
-│   ├── security/          # pluggable risk scorers (injection, guardrails)
+│   ├── security/          # pluggable risk scorers (injection, guardrails, intent tags)
 │   ├── audit/             # hash-chain writer + verifier + redaction
 │   └── discovery/         # self-registration, inventory (graph materialized later)
 │
@@ -158,8 +101,8 @@ tests/
 - **`pipeline/` is separate from `engines/`** so stages stay thin orchestrators and the expensive
   logic (OPA, interpreter, scorers) is independently testable and independently optimizable
   (the P2 Rust candidates are `pipeline/runner.py` + `stage_policy.py`, per ADR-0001).
-- **`controlplane/cache/` is explicitly its own module** because — see the critical finding below
-  — **OPA does not cache decisions across queries**, so the caching that hits the single-digit-ms
+- **`controlplane/cache/` is explicitly its own module** because — see Pattern 3 below —
+  **OPA does not cache decisions across queries**, so the caching that hits the single-digit-ms
   budget must live in agentos-guard, not in OPA.
 - **`testing/` and `observability/` sit outside the request path** by construction, reinforcing the
   async/sync boundary at the directory level.
@@ -202,13 +145,12 @@ async def run_tool(tool, args, ctx, pipeline: PipelineProtocol):
 
 **What:** Order the pipeline cheapest-and-most-decisive first. Stage 1 (identity) and stage 2
 (compiled-Rego policy) run against in-memory caches in low single-digit ms. The **LLM semantic
-interpreter** (stage 2 fallback) and **heavy anomaly/ML models** (stage 3) run *only* when a cheaper
-stage flags ambiguity or elevated risk. A clear `deny` from identity or policy short-circuits before
-any model is ever invoked.
+interpreter** (stage 2 fallback) and **heavy anomaly/ML models** (stage 3, incl. the embedding
+intent classifier) run *only* when a cheaper stage flags ambiguity or elevated risk. A clear `deny`
+from identity or policy short-circuits before any model is ever invoked.
 
 **When to use:** From P0, to hold the latency budget. This is the documented design
-(`03` performance section) and is the standard PDP-performance posture in 2026 (PDPs cache metadata
-locally for sub-ms; expensive evaluation is the exception path).
+(`docs/architecture/03` performance section) and is the standard PDP-performance posture in 2026.
 
 **Trade-offs:** (+) p50 latency is dominated by cache hits, not model calls. (+) Cost is bounded —
 LLM only on the ambiguous minority. (−) Two evaluation modes (deterministic + LLM) add complexity
@@ -231,7 +173,7 @@ affected cache entries (the WSO2/PlainID PDP-cache-invalidation pattern).
 front of a deliberately-stateless engine reintroduces the invalidation problem OPA avoided — get
 invalidation wrong and you enforce stale policy. Mitigation: cache keyed by `(action signature,
 policy_version)` so a new compile naturally produces new keys; never serve a cached decision whose
-`policy_version` is no longer current.
+`policy_version` is no longer current. *(Wired as REQ PIPE-06.)*
 
 ### Pattern 4: Declarative resources + reconciliation (compile-on-write → loops)
 
@@ -241,8 +183,8 @@ TrustProfile/ApprovalRequest/ABOM). The API persists desired state; reconcilers 
 (synchronous, simple, correct for one node); **P1+ adds continuous loops** for scale and self-heal.
 
 **When to use:** P0 for compile-on-write; defer loops until there is a scale/robustness need (multi-
-node, drift). This matches the documented phasing (`10`) and avoids building a reconciliation
-framework before it earns its keep.
+node, drift). This matches the documented phasing (`docs/architecture/10`) and avoids building a
+reconciliation framework before it earns its keep.
 
 **Trade-offs:** (+) Kubernetes-familiar operator UX; clean upgrade path. (−) Compile-on-write can
 miss out-of-band drift — acceptable single-node in P0, which is why loops arrive with the gateway.
@@ -256,70 +198,31 @@ and the entire red-team plane are async / out-of-band.
 **When to use:** Always. Keeps the budget achievable and the request path minimal.
 
 **Trade-offs:** (+) Predictable latency. (−) The audit write is a genuine tension: a hash chain is
-inherently serial (each record needs the previous hash). See the anti-pattern below.
+inherently serial (each record needs the previous hash). See Anti-Pattern + Scaling below.
 
 ---
 
 ## Data Flow
 
-### Request Flow (how one AgentAction moves through the system)
-
-```
-Agent attempts action (tool/memory/MCP/model/delegation)
-    │
-    ▼  PEP intercepts BEFORE execution
-[normalize] ──────────────────────────────► AgentAction (id, agent_id, type, target, payload, context)
-    │
-    ▼  pipeline.evaluate(action)   ══ STABLE CONTRACT ══
-┌─ Stage 1  Identity & Trust ─ resolve+verify agent, load TrustProfile (cache hit ~sub-ms)
-│     └─ forged/unknown ─────────────────────────────────► short-circuit DENY ─┐
-├─ Stage 2  Policy ─ prepared Rego eval (cache hit, low-ms)                     │
-│     ├─ clear allow/deny ──────────────────────────────────────────────┐      │
-│     └─ ambiguous / no rule ─► LLM semantic interpreter (slow, rare) ──►│      │
-├─ Stage 3  Risk ─ cheap heuristics inline; heavy models ONLY if flagged │      │
-└─ Stage 4  Graduated Response ─ map {policy, risk, trust} → outcome ◄────┘      │
-    │                                                                            │
-    ▼  Decision (outcome, risk_score, trust_score, reasons[], evidence_ref) ◄────┘
-    │
-    ├──► [SYNC] append hash-chained AuditRecord (redact payload at write) → evidence_ref returned
-    │
-    ▼  PEP enforces:
-    allow → run tool   |   warn → run + advisory log   |   sandbox → isolated run (P1)
-    require_approval → park ApprovalRequest, block/timeout   |   deny → governed exception w/ reasons
-    │
-    └──► [ASYNC] OTel spans+metrics · graph materialization · dashboard projection
-```
-
-### State Management (control-plane side)
-
-```
-Operator ──apply resource──► Control-Plane API ──validate+version──► Postgres (desired state)
-                                      │
-                                      ▼ trigger
-                               Reconciler: compile Constitution→YAML→Rego,
-                                           refresh trust, materialize graph
-                                      │
-                                      ▼ write derived state + INVALIDATE
-                               Hot-path caches (compiled Rego, identities, thresholds)
-                                      ▲
-                                      └── read by pipeline stages on every request
-```
-
-### Key Data Flows
+The authoritative request lifecycle and state-management flows are in
+[`docs/architecture/03`](../../docs/architecture/03-interception-and-pipeline.md) (pipeline) and
+[`docs/architecture/10`](../../docs/architecture/10-control-plane-api-and-sdk.md) (reconciliation).
+The research-specific observations that are *not* in the design docs:
 
 1. **Decision flow (hot path):** `AgentAction → 4 stages → Decision → audit write → enforce`. The
-   only synchronous DB writes are the audit append; reads are cache-first.
+   only synchronous DB write is the audit append; reads are cache-first.
 2. **Provenance flow:** every `Decision`/`AuditRecord` carries the exact `policy_version` that
-   evaluated it, so evidence is replayable and the audit cache key is correct.
+   evaluated it, so evidence is replayable **and** the audit cache key (Pattern 3) is correct.
 3. **Lineage flow (derived, async):** `AgentAction.context.parent_action_id` chains build the
-   delegation graph and decision provenance — materialized from relations, not stored as a graph DB
-   in P0 (see graph decision below).
-4. **Red-team flow (CI, off path):** attack library drives the *same* pipeline via a test fixture;
-   `attack_success_rate` asserted against a statistical threshold; regression failure breaks CI.
+   delegation graph and decision provenance — materialized from relations, not a graph DB in P0
+   (see Anti-Pattern 4).
+4. **Red-team flow (CI, off path):** the attack library drives the *same* pipeline via a test
+   fixture; `attack_success_rate` is asserted against a statistical threshold; a regression failure
+   breaks CI. This shared-pipeline reuse is *why* removing a policy can fail CI.
 
 ---
 
-## Suggested Build Order (with dependencies)
+## Suggested Build Order (with dependencies)  *(research add)*
 
 Ordered so each step is independently testable and the **Phase-0 vertical slice closes first**.
 Arrows = hard dependency.
@@ -337,7 +240,7 @@ Arrows = hard dependency.
 4. engines/policy   (Constitution→YAML→Rego compiler + OPA client + compile-on-write + Rego cache)
         │           └─ interpreter router can be a stub returning "ambiguous→escalate" first
         ▼
-5. engines/security   (prompt-injection + baseline guardrails → risk_score)   [parallel-able w/ 4]
+5. engines/security   (prompt-injection + baseline guardrails + intent tags → risk_score)  [‖ w/ 4]
         │
         ▼
 6. pipeline/   (runner + 4 stages wired to 3,4,5; short-circuit + reason accumulation)
@@ -360,7 +263,8 @@ Arrows = hard dependency.
         ═══════════ PHASE 0 COMPLETE ═══════════
         ▼
 P1: reconciliation loops · gateway PEP · Merkle DAG audit · trust propagation/chains ·
-    full security engine · sandbox runtime · consensus · economics/ABOM/lineage · graph DB (if needed)
+    full security engine (incl. sequence/embedding intent) · sandbox runtime · consensus ·
+    economics/ABOM/lineage · graph DB (if needed)
         ▼
 P2: K8s operator+sidecar (Envoy ext_authz) · self-play · ZK proofs · SPIFFE/mTLS · BFT · Rust hot path
 ```
@@ -375,7 +279,10 @@ P2: K8s operator+sidecar (Envoy ext_authz) · self-play · ZK proofs · SPIFFE/m
 - Red-team (10) last in P0 because it consumes the *finished* pipeline as a fixture — and it is the
   literal definition of Phase-0 done ("a failing safety test breaks CI").
 
-### Phase-0 Minimal End-to-End Vertical Slice (the thing to build first)
+> **Status:** this sequence was executed as Phase 1 (the walking skeleton) — steps 1–10 are
+> implemented and merged. See `.planning/phases/01-walking-skeleton/` and `.planning/ROADMAP.md`.
+
+### Phase-0 Minimal End-to-End Vertical Slice (the thing built first)
 
 > **Goal:** one LangGraph agent, one tool, one Constitution principle, proven end to end. This is the
 > walking skeleton; breadth (more detectors, more frameworks, dashboard polish) comes after it walks.
@@ -401,9 +308,7 @@ ONE pytest red-team test:
 
 **Acceptance = the documented Phase-0 success criterion verbatim:** a LangGraph agent's action is
 intercepted → policy- and risk-checked → graduated-response-enforced → written to a verifiable
-hash-chained audit log — **and a failing safety test breaks CI.** Everything else in Phase 0
-(inventory, approvals, kill switch, more detectors, OWASP/NIST mapping, dashboard) is breadth layered
-on top of this proven loop.
+hash-chained audit log — **and a failing safety test breaks CI.**
 
 ### Where the pipeline contract MUST stay stable across PEP forms
 
@@ -419,7 +324,7 @@ when the PEP changes form. Concretely, design for these now even though P0 only 
 
 ---
 
-## Scaling Considerations
+## Scaling Considerations  *(research add)*
 
 | Scale | Architecture adjustments |
 |-------|--------------------------|
@@ -444,7 +349,7 @@ when the PEP changes form. Concretely, design for these now even though P0 only 
 
 ---
 
-## Anti-Patterns
+## Anti-Patterns  *(research add — the traps to avoid in build)*
 
 ### Anti-Pattern 1: Relying on OPA to cache decisions
 
@@ -464,7 +369,7 @@ bake it into the PEP.
 control-plane blip into a governance bypass; fail-closed on a trivial read needlessly breaks agents.
 **Do this instead:** Make **fail-safe vs fail-open a per-agent / per-action-class policy decision**
 (documented posture). High-risk classes default fail-closed; low-risk classes may fail-open with a
-logged warning. The PEP reads the posture from policy, it does not decide it.
+logged warning. The PEP reads the posture from policy, it does not decide it. *(REQ PIPE-05.)*
 
 ### Anti-Pattern 3: Putting non-critical work on the synchronous hot path
 
@@ -482,10 +387,10 @@ graph" and "lineage."
 **Why it's wrong:** In P0 the graph is small and fully derivable from relational rows
 (`AgentAction.context.parent_action_id`, registered tools, delegation edges). A graph DB is premature
 operational weight and a second source of truth.
-**Do this instead:** **Materialize** the graph from Postgres relations (documented choice: "derived/
-materialized from resources + actions"). Introduce a real graph store only in P1+ when query patterns
-(transitive permission sets for cross-agent conflict resolution, deep lineage traversal) make
-relational recursion the bottleneck — i.e. let evidence, not anticipation, trigger the switch.
+**Do this instead:** **Materialize** the graph from Postgres relations. Introduce a real graph store
+only in P1+ when query patterns (transitive permission sets for cross-agent conflict resolution, deep
+lineage traversal) make relational recursion the bottleneck — let evidence, not anticipation, trigger
+the switch.
 
 ### Anti-Pattern 5: Letting the gateway/sidecar leak into the pipeline
 
@@ -499,7 +404,7 @@ gracefully.
 
 ---
 
-## Integration Points
+## Integration Points  *(research add)*
 
 ### External Services
 
@@ -538,5 +443,5 @@ gracefully.
 - [Tamper-evident audit trails in PostgreSQL with hash chaining (AppMaster)](https://appmaster.io/blog/tamper-evident-audit-trails-postgresql) and [immutable audit log with HMAC hash chaining (Tracehold)](https://tracehold.ai/blog/immutable-audit-log-hmac-hash-chain/) — append-only ≠ tamper-evident; advisory lock for serial chaining; recompute-to-verify; external anchoring. **MEDIUM**
 
 ---
-*Architecture research for: runtime AI-agent governance & security control plane (agentos-guard)*
-*Researched: 2026-06-01*
+*Architecture **validation** research for agentos-guard — authoritative design lives in [`docs/architecture/`](../../docs/architecture/).*
+*Researched: 2026-06-01 · trimmed to validation + pointers 2026-06-05*
