@@ -17,6 +17,7 @@ to.
 | **Immutable audit logs** | 0 | Append-only table where each `AuditRecord` includes the hash of the previous record (**hash chain**). Any retroactive edit breaks the chain and is detectable. |
 | **Decision records** | 0 | Each record links `AgentAction` → `Decision` → fired policies/principles → outcome. |
 | **Policy evidence** | 0 | Records carry the exact policy/constitution version that evaluated the action. |
+| **Per-record signatures** | 0 | Each `AuditRecord` carries a detached control-plane signature (EdDSA, reusing the identity keys of [`06`](06-identity-trust-discovery.md)) so any *single* record verifies on its own — proof that *this* decision was issued by the control plane, independent of the chain links and complementing the externally-anchored checkpoints. |
 | **Merkle DAG logs** | 1 | Upgrade the hash chain to a Merkle DAG for efficient inclusion proofs and partial disclosure. |
 | **Zero-knowledge compliance proofs** | 2 | Prove properties (*"no PII was exfiltrated", "all actions were policy-compliant"*) **without revealing** the underlying prompts/data, via RISC Zero / SP1. The flagship audit differentiator. |
 
@@ -32,6 +33,20 @@ flowchart LR
 Sensitive payloads are redacted *at write time* per policy, so the log is safe to retain and
 share. The hash chain covers the redacted record; ZK proofs (Phase 2) let auditors verify
 compliance over data they never see.
+
+## Evidence graph (forensic reconstruction)
+
+For incident forensics — *"reconstruct the causal chain that led to this exfiltration"* — the
+evidence is a graph: actions, decisions, fired policies, approvals, delegation edges, and
+security events, linked by `parent_action_id`, `conversation_id`, and `trace_id`. We get this
+**without a separate graph database**: the hash-chained audit log (this doc) and the
+materialized agent graph ([`06`](06-identity-trust-discovery.md)) are **joined at query time**
+on those keys to walk the causal chain. Postgres recursive CTEs traverse the lineage; the
+materialized graph short-cuts the hot paths. This keeps the Phase-0 footprint to one datastore
+(no Neo4j to operate) while still answering causal-reconstruction, explainability, and
+trust-derivation queries; a dedicated graph backend stays an *optional* later optimization, not
+a requirement. Conversation tracing ([`09`](09-observability-economics-abom.md), Phase 1)
+builds on the same join.
 
 ## Compliance mapping
 

@@ -38,7 +38,7 @@ Building toward the full vision (Phases 0–2). Phase tags reflect the documente
 **Constitution & Policy**
 - [ ] Human-readable Constitution → compiled YAML → OPA/Rego deterministic enforcement (P0)
 - [ ] LLM semantic interpreter for ambiguous/novel cases, returning cited-principle rationale (P0)
-- [ ] Graduated response engine mapping {policy, risk, trust} → outcome with policy-driven thresholds (P0)
+- [ ] Graduated response engine mapping {policy, risk, trust} → outcome with policy-driven thresholds; outcomes include allow/warn/sandbox/require_consensus/require_approval/temporary_exception (human-ratified, time-boxed)/governance_review (async, non-blocking)/deny, plus composable `side_effects` (notify/additional_monitoring/risk_flag/create_incident) orthogonal to the outcome (P0)
 - [ ] Human approval workflow via `ApprovalRequest` (P0)
 - [ ] 2-of-3 multi-agent consensus outcome (P1)
 - [ ] Constitution amendment proposals + cross-agent conflict-resolution / legal reasoning (P2)
@@ -58,7 +58,7 @@ Building toward the full vision (Phases 0–2). Phase tags reflect the documente
 - [ ] SPIFFE/mTLS identity; portable, exportable reputation via an optional pluggable backend (any stake/slashing economics confined to that backend, never required — ADR-0007) (P2)
 
 **Audit & Compliance**
-- [ ] Tamper-evident hash-chained audit log; decision records with policy-version provenance (P0)
+- [ ] Tamper-evident hash-chained audit log with per-record EdDSA signatures (single-record verifiable); decision records with policy-version provenance; forensic evidence graph by joining the audit log with the agent graph at query time — no separate graph DB (P0 log/signing; P1 evidence-graph join) (P0)
 - [ ] OWASP Agentic Top 10 + NIST AI RMF baseline compliance mapping (P0)
 - [ ] Merkle DAG audit upgrade; EU AI Act + SOC 2 mapping; one-click compliance report export (P1)
 - [ ] Zero-knowledge compliance proofs (RISC Zero / SP1) (P2)
@@ -97,7 +97,7 @@ Building toward the full vision (Phases 0–2). Phase tags reflect the documente
 - **Design is fully documented** in `docs/architecture/` (00-manifesto + README + docs 01–10 + 20-roadmap + 30-comparison + ADRs 0001–0007). These are **authoritative** and the source of truth for planning. `docs/` is the design layer (*what/why*); `.planning/` is the execution layer (*how/when* — phases, REQ-IDs, plans). They are not duplicates; see `docs/architecture/README.md` → "`docs/` vs `.planning/`". Phase 1 (walking skeleton) is implemented and merged; everything beyond it is design ahead of code.
 - Directly inspired by, and positioned to **surpass**, Microsoft's **Agent Governance Toolkit (AGT)** and **RAMPART**. The paradigm shift is *Distrust→Block→Log* (AGT) → *Trust→Verify→Graduate→Prove* (us). **Seven differentiator pillars** (see `docs/architecture/00-manifesto.md`), none requiring crypto-economics:
   1. Living semantic **constitution** (vs static YAML grep)
-  2. **Graduated** response — allow/warn/sandbox/consensus/approval/deny (vs binary)
+  2. **Graduated** response — allow/warn/sandbox/consensus/approval/temporary-exception/governance-review/deny + composable side-effects (vs binary)
   3. **Intent-based policy** — catches `rename_then_drop` & novel sequences (vs action-string matching)
   4. **Cross-agent permission calculus** — confused-deputy / transitive permissions (vs per-agent isolation)
   5. **Explainable denials with remediation** — cited principle + next steps (vs `GovernanceDenied: rule X`)

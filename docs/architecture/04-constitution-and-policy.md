@@ -54,11 +54,22 @@ The pipeline's final stage maps `{policy result, risk score, trust score}` to on
 | **warn** | Minor/advisory concern | Executes, logged as an advisory finding. |
 | **sandbox** | Moderate risk or untrusted agent | Executes in an isolated context ([`05`](05-security-and-runtime.md)); effects quarantined. |
 | **require_consensus** | High-impact, ambiguous | Needs 2-of-3 agent agreement (Phase 1+). |
-| **require_approval** | High risk / sensitive scope | Parks an `ApprovalRequest`; human decides with full context. |
+| **require_approval** | High risk / sensitive scope | Parks an `ApprovalRequest`; human decides with full context (blocking). |
+| **temporary_exception** | Otherwise-denied, but a human ratifies a time-boxed exception | Action is allowed until `expires_at`, then auto-revokes; recorded as evidence. **Human-ratified only — the semantic interpreter may *recommend* one but can never grant it** (this preserves the deterministic policy floor; an LLM must never relax a hard denial). |
+| **governance_review** | Allowed to proceed, but warrants scrutiny | Action executes and an **asynchronous, non-blocking** governance review is opened — unlike `require_approval`, work is not held. |
 | **deny** | Clear violation or forged identity | Blocked; governed exception with cited reasons. |
 
 The mapping itself is policy-driven (configurable thresholds), so teams tune strictness per
 agent class without code changes.
+
+### Composable side-effects
+
+The outcome above is the single *gating* verdict. Orthogonal to it, a `Decision` may carry any
+subset of **side-effects** — `notify`, `additional_monitoring`, `risk_flag`, `create_incident` —
+that ride alongside *any* outcome (e.g. `allow + additional_monitoring + risk_flag`, or
+`deny + create_incident`). This keeps the gating spectrum deliberately small while letting one
+decision both permit work *and* escalate observation/incident response, instead of inventing a
+combinatorial explosion of outcome variants.
 
 ## Amendments & conflict resolution (Phase 2)
 

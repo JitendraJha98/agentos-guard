@@ -47,7 +47,10 @@ AgentAction:
 ```yaml
 Decision:
   action_id: uuid
-  outcome: allow | warn | sandbox | require_consensus | require_approval | deny
+  outcome: allow | warn | sandbox | require_consensus | require_approval | temporary_exception | governance_review | deny
+  side_effects:               # composable directives layered on the outcome (any subset)
+    - notify | additional_monitoring | risk_flag | create_incident
+  expires_at: rfc3339         # set only for temporary_exception — the allow auto-revokes at this time
   risk_score: 0.0–1.0
   trust_score: 0.0–1.0
   inferred_intent: string     # intent class the action maps to (e.g. DATA_DESTRUCTION); see 05
@@ -60,6 +63,15 @@ Decision:
   policy_version: string      # exact Constitution/Policy version that decided (provenance)
   evidence_ref: audit_record_id
 ```
+
+`outcome` is the single *gating* verdict (does the action proceed, and how); `side_effects`
+are independent, composable directives that ride alongside any outcome — e.g. `allow` +
+`additional_monitoring` + `risk_flag`, or `deny` + `create_incident`. This keeps the gating
+spectrum small while letting one decision both permit *and* escalate observation.
+`temporary_exception` is a **human-ratified, time-boxed** `allow` (see [`04`](04-constitution-and-policy.md));
+`governance_review` lets an action proceed while opening an *asynchronous*, non-blocking review
+(unlike `require_approval`, which blocks). A `create_incident` side-effect opens an incident
+linked to the originating `AuditRecord`.
 
 The `reasons` + `remediation` + `inferred_intent` fields are what turn a denial into an
 *explainable denial with a path forward* — the difference between a firewall and a governor.

@@ -62,13 +62,13 @@ flowchart LR
     end
     P -->|Decision + reasons| PEP
     P -.->|tamper-evident| AUD[(Hash-chained<br/>audit log)]
-    PEP -->|allow · warn · sandbox · consensus · approval · deny| T[Tools · MCP · Models · Memory]
+    PEP -->|allow · warn · sandbox · consensus · approval · exception · review · deny<br/>+ side-effects| T[Tools · MCP · Models · Memory]
 ```
 
 1. **Intercept** — a Policy Enforcement Point captures the action before it runs.
 2. **Normalize** — it becomes one `AgentAction` event, regardless of framework.
 3. **Decide** — the synchronous pipeline runs `identity/trust → policy → risk → graduated response`.
-4. **Enforce** — allow, warn, sandbox, require consensus, escalate to a human, or deny.
+4. **Enforce** — allow, warn, sandbox, require consensus, escalate to a human, grant a time-boxed exception, open an async governance review, or deny — with composable side-effects (notify · monitor · risk-flag · open-incident).
 5. **Record** — a signed, hash-chained audit record + OpenTelemetry spans.
 
 ## 🚀 Why agentos-guard — the seven pillars
@@ -79,7 +79,7 @@ or tokens** ([ADR-0007](docs/architecture/adr/0007-no-crypto-economics-in-core.m
 | # | Instead of… | agentos-guard gives you | |
 |---|-------------|--------------------------|---|
 | 1 | static YAML rules | a **living semantic constitution** agents can query | [04](docs/architecture/04-constitution-and-policy.md) |
-| 2 | binary allow/deny | **graduated response** — allow · warn · sandbox · consensus · approval · deny | [04](docs/architecture/04-constitution-and-policy.md) |
+| 2 | binary allow/deny | **graduated response** — allow · warn · sandbox · consensus · approval · time-boxed exception · async review · deny + composable side-effects | [04](docs/architecture/04-constitution-and-policy.md) |
 | 3 | action-string matching | **intent-based policy** — catches `rename_then_drop` & novel sequences | [05](docs/architecture/05-security-and-runtime.md) |
 | 4 | per-agent isolation | **cross-agent permission calculus** — catches the confused-deputy in delegation | [06](docs/architecture/06-identity-trust-discovery.md) |
 | 5 | `GovernanceDenied: rule X` | **explainable denials with remediation paths** | [02](docs/architecture/02-domain-model.md) |

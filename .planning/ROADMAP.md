@@ -70,11 +70,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Goal**: Operators author a human-readable Constitution that compiles to deterministic OPA/Rego, ambiguous cases get a cited-principle rationale, and the full graduated outcome spectrum — including human approval and trust-modulates-only — is enforced.
 **Mode:** mvp
 **Depends on**: Phase 2
-**Requirements**: POL-01, POL-02, POL-04, POL-05, POL-07, POL-08, PIPE-04, PIPE-05, PIPE-06, PIPE-08, SEC-02, SEC-03, SEC-12, TRST-02, API-03
+**Requirements**: POL-01, POL-02, POL-04, POL-05, POL-07, POL-08, POL-13, POL-14, PIPE-04, PIPE-05, PIPE-06, PIPE-08, PIPE-09, SEC-02, SEC-03, SEC-12, TRST-02, API-03
 **Success Criteria** (what must be TRUE):
   1. An operator authors numbered Constitution principles that a compiler lowers to scoped YAML and then to OPA/Rego, evaluated deterministically with the exact policy/constitution version recorded on every `Decision`.
   2. On a no-rule/ambiguous result the LLM interpreter returns `{outcome, cited principle, rationale}` and can never upgrade a high-risk action beyond the deterministic policy floor (advisory-only); every `Decision` is an explainable denial carrying `{principle_ref, rationale, evidence}`, `inferred_intent`, and concrete `remediation` paths (PIPE-08), with deterministic intent-class tags mapping actions to a coarse intent (e.g. `DATA_DESTRUCTION`) that feeds risk and policy (SEC-12, advisory to the floor).
-  3. The graduated-response stage maps {policy, risk, trust} to allow/warn/sandbox/require_consensus/require_approval/deny with policy-driven thresholds, where trust modulates only within a policy-defined band and never overrides a deterministic policy decision; a `require_approval` outcome parks an `ApprovalRequest` that blocks the action until resolved or times out to a safe default.
+  3. The graduated-response stage maps {policy, risk, trust} to allow/warn/sandbox/require_consensus/require_approval/temporary_exception/governance_review/deny with policy-driven thresholds, where trust modulates only within a policy-defined band and never overrides a deterministic policy decision; a `require_approval` outcome parks an `ApprovalRequest` that blocks the action until resolved or times out to a safe default; a `temporary_exception` is a human-ratified, time-boxed allow that auto-revokes at `expires_at` (the interpreter may recommend but never grant one); a `governance_review` proceeds while opening an async non-blocking review; and every `Decision` can carry composable `side_effects` (notify/additional_monitoring/risk_flag/create_incident) orthogonal to its outcome (PIPE-09).
   4. The pipeline holds its p95 cached-path latency budget (verified by a benchmark test), keeps its own compiled-policy/identity cache invalidated on policy-version change, and applies per-action-class fail-closed posture with no silent allow on control-plane unavailability.
 **Plans**: TBD
 
@@ -82,11 +82,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Goal**: Make audit evidence genuinely tamper-evident and verifiable, and give operators an immediate halt for a single agent or the whole fleet.
 **Mode:** mvp
 **Depends on**: Phase 3
-**Requirements**: AUD-02, AUD-03, AUD-04, AUD-05, RUN-01, RUN-02
+**Requirements**: AUD-02, AUD-03, AUD-04, AUD-05, AUD-08, RUN-01, RUN-02
 **Success Criteria** (what must be TRUE):
   1. Each `AuditRecord` links `AgentAction` → `Decision` → fired policies/principles → outcome and carries the exact policy/constitution version as evidence.
   2. Sensitive payloads are redacted at write time per policy and redaction fails closed — no record is written if redaction fails.
-  3. A CI-runnable verifier re-validates the hash chain and detects any retroactive edit; chain checkpoints are externally anchored/signed.
+  3. A CI-runnable verifier re-validates the hash chain and detects any retroactive edit; chain checkpoints are externally anchored/signed; each `AuditRecord` also carries a detached per-record EdDSA signature so a single record verifies independently of the chain (AUD-08).
   4. An operator can kill-switch a single agent or the entire fleet and the targeted agents' actions halt immediately.
 **Plans**: TBD
 
@@ -176,10 +176,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Goal**: Move red-team from one-shot CI to continuous validation with trend tracking and campaign-style attacks, backed by health monitoring, conversation tracing, and a rich operator dashboard.
 **Mode:** mvp
 **Depends on**: Phase 11
-**Requirements**: TEST-07, TEST-08, TEST-09, OBS-04, OBS-05, OBS-06, DASH-04
+**Requirements**: TEST-07, TEST-08, TEST-09, OBS-04, OBS-05, OBS-06, AUD-09, DASH-04
 **Success Criteria** (what must be TRUE):
   1. Attack-success-rate is tracked over time per agent/attack class, continuous validation re-runs suites against the live agent on a schedule, and multi-step adversarial simulations run campaign-style attacks.
-  2. Agent health monitoring tracks liveness/error-rate/circuit-breaker state per agent, and conversation tracing reconstructs a full conversation across tools and delegations.
+  2. Agent health monitoring tracks liveness/error-rate/circuit-breaker state per agent, and conversation tracing reconstructs a full conversation across tools and delegations over a forensic evidence graph that joins the audit log with the materialized agent graph at query time — no separate graph DB (AUD-09).
   3. The dashboard adds the live agent graph, per-agent SLOs/violations, and attack visualization.
 **Plans**: TBD
 **UI hint**: yes

@@ -26,7 +26,7 @@ that delivers it, and the build phase. Pillars 1–7 are the [manifesto](00-mani
 | # | AGT weakness | Why it matters | agentos-guard counter | Where | Phase |
 |---|--------------|----------------|------------------------|-------|-------|
 | 1 | **Static policy** frozen at deploy | An agent can't query *why* a rule exists or how to comply | **Living semantic constitution** — human-readable principles, deterministic compiled core, queryable rationale (pillar 1) | [`04`](04-constitution-and-policy.md) | P0 |
-| 2 | **Binary enforcement** | Complex workflows either pass or crash; no middle ground | **Graduated response** — allow · warn · sandbox · consensus · approval · deny (pillar 2) | [`04`](04-constitution-and-policy.md) | P0 |
+| 2 | **Binary enforcement** | Complex workflows either pass or crash; no middle ground | **Graduated response** — allow · warn · sandbox · consensus · approval · time-boxed exception · async review · deny, + composable side-effects (pillar 2) | [`04`](04-constitution-and-policy.md) | P0 |
 | 3 | **No semantic understanding** | `action.type in [...]` is grep; intent is invisible | **Intent-based policy** — classifies intent, catches `rename_then_drop` & novel sequences (pillar 3) | [`05`](05-security-and-runtime.md) | P0→P1 |
 | 4 | **Single-process boundary** | Compromised agent = compromised governance | **PEP process boundary** behind one `evaluate()` contract; SDK → gateway → K8s sidecar | [`03`](03-interception-and-pipeline.md) | P0→P2 |
 | 5 | **No composed-risk view** | Per-agent rules miss the confused-deputy / delegation chain | **Cross-agent permission calculus** — transitive permissions, emergent-capability flagging (pillar 4) | [`06`](06-identity-trust-discovery.md) | P1→P2 |

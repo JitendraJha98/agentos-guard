@@ -31,6 +31,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [ ] **PIPE-06** [P0]: The control plane maintains its own decision/identity/compiled-policy cache (OPA does not cache), invalidated on policy-version change
 - [x] **PIPE-07** [P0]: A stable, serializable `contract` package (`AgentAction` + `evaluate() -> Decision`) is the single dependency every PEP form uses
 - [ ] **PIPE-08** [P0]: Every `Decision` is an *explainable denial with remediation* (pillar 5) — `reasons` carry `{principle_ref, rationale, evidence}`, plus `inferred_intent` and concrete `remediation` paths, not just a rule id
+- [ ] **PIPE-09** [P0]: A `Decision` carries a set of composable `side_effects` (`notify`, `additional_monitoring`, `risk_flag`, `create_incident`) orthogonal to its gating `outcome`, so one decision can both permit and escalate (e.g. `allow + risk_flag`, `deny + create_incident`)
 
 ### Constitution, Policy & Graduated Response
 
@@ -46,6 +47,8 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [ ] **POL-10** [P2]: Agents or the self-play trainer can propose Constitution amendments; humans review and ratify; the Constitution is versioned like a legal document
 - [ ] **POL-11** [P2]: A conflict-resolution engine computes transitive permissions across delegation chains and flags emergent capability conflicts
 - [ ] **POL-12** [P2]: BFT consensus backs multi-agent agreement for `require_consensus` at scale
+- [ ] **POL-13** [P0]: A `temporary_exception` outcome grants a **human-ratified, time-boxed** `allow` (carries `expires_at`) that auto-revokes on expiry; the semantic interpreter may recommend but can never grant one (upholds POL-05's policy-floor invariant)
+- [ ] **POL-14** [P0]: A `governance_review` outcome lets the action proceed while opening an **asynchronous, non-blocking** governance review (distinct from `require_approval`, which blocks)
 
 ### Security Engine — Detection / Risk
 
@@ -107,6 +110,8 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [ ] **AUD-05** [P0]: A verifier (runnable in CI) detects any retroactive edit by re-validating the hash chain; chain checkpoints are externally anchored/signed
 - [ ] **AUD-06** [P1]: The hash chain is upgraded to a Merkle DAG enabling inclusion proofs and partial disclosure
 - [ ] **AUD-07** [P2]: Zero-knowledge compliance proofs prove properties (e.g. "no PII exfiltrated") without revealing underlying data
+- [ ] **AUD-08** [P0]: Each `AuditRecord` carries a detached per-record EdDSA signature (reusing identity keys) so a single record verifies independently of the chain — proving the control plane authored that decision
+- [ ] **AUD-09** [P1]: A forensic "evidence graph" reconstructs causal chains by joining the audit log with the materialized agent graph at query time (`parent_action_id`/`conversation_id`/`trace_id`, Postgres recursive CTEs) — no separate graph database
 
 ### Compliance
 
@@ -226,6 +231,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | PIPE-06 | Phase 3 | Pending |
 | PIPE-07 | Phase 1 | Complete |
 | PIPE-08 | Phase 3 | Pending |
+| PIPE-09 | Phase 3 | Pending |
 | POL-01 | Phase 3 | Pending |
 | POL-02 | Phase 3 | Pending |
 | POL-03 | Phase 1 | Complete |
@@ -238,6 +244,8 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | POL-10 | Phase 13 | Pending |
 | POL-11 | Phase 13 | Pending |
 | POL-12 | Phase 13 | Pending |
+| POL-13 | Phase 3 | Pending |
+| POL-14 | Phase 3 | Pending |
 | SEC-01 | Phase 1 | Complete |
 | SEC-02 | Phase 3 | Pending |
 | SEC-03 | Phase 3 | Pending |
@@ -281,6 +289,8 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | AUD-05 | Phase 4 | Pending |
 | AUD-06 | Phase 11 | Pending |
 | AUD-07 | Phase 14 | Pending |
+| AUD-08 | Phase 4 | Pending |
+| AUD-09 | Phase 12 | Pending |
 | CMP-01 | Phase 6 | Pending |
 | CMP-02 | Phase 6 | Pending |
 | CMP-03 | Phase 6 | Pending |
@@ -326,10 +336,10 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | PERF-01 | Phase 14 | Pending |
 
 **Coverage:**
-- v1 requirements: 115 total
-- Mapped to phases: 115 ✓
+- v1 requirements: 120 total
+- Mapped to phases: 120 ✓
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-01*
-*Last updated: 2026-06-05 — added pillar-explicit requirements PIPE-08 (explainable remediation) + SEC-12/13/14 (intent-based policy); 115/115 mapped*
+*Last updated: 2026-06-06 — added graduated-response extensions PIPE-09 (composable side-effects), POL-13 (temporary_exception), POL-14 (governance_review), AUD-08 (per-record signatures), AUD-09 (query-time evidence graph); 120/120 mapped*

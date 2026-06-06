@@ -36,7 +36,7 @@ blockchain, tokens, or any crypto-economic apparatus — see **[Deliberately out
 | # | AGT does | agentos-guard does | Lives in |
 |---|----------|--------------------|----------|
 | 1 | **Static YAML rules** frozen at deploy | A **living semantic constitution** agents query, that compiles to deterministic policy and reasons about novel cases | [`04`](04-constitution-and-policy.md) |
-| 2 | **Binary allow/deny** | **Graduated response** — allow · warn · sandbox · consensus · approval · deny — tuned by risk + trust | [`04`](04-constitution-and-policy.md) · [ADR-0005](adr/0005-graduated-response-model.md) |
+| 2 | **Binary allow/deny** | **Graduated response** — allow · warn · sandbox · consensus · approval · time-boxed exception · async review · deny, plus composable side-effects (notify · monitor · risk-flag · open-incident) — tuned by risk + trust | [`04`](04-constitution-and-policy.md) · [ADR-0005](adr/0005-graduated-response-model.md) |
 | 3 | **Action-string matching** (`action.type == 'drop_table'`) | **Intent-based policy** — catches `rename_then_drop`, copy-then-delete, and novel sequences that reach the same outcome | [`05`](05-security-and-runtime.md) |
 | 4 | **Per-agent isolated policy** | **Cross-agent permission calculus** — computes transitive permissions across delegation and catches the confused-deputy problem static rules miss | [`06`](06-identity-trust-discovery.md) · [`04`](04-constitution-and-policy.md) |
 | 5 | **`GovernanceDenied: rule X`** | **Explainable denials with remediation paths** — cited principle, evidence, and concrete next steps as a first-class `Decision` output | [`02`](02-domain-model.md) · [`04`](04-constitution-and-policy.md) |
