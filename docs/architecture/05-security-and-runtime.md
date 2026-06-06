@@ -1,7 +1,44 @@
 # 05 — Security Engine & Runtime Security
 
+> **The AGT weakness this kills (pillar 3):** AGT matches action *strings* —
+> `action.type in ['drop', 'delete', 'truncate']`. An agent that renames a table then drops it,
+> or copies rows then deletes, sails straight through: composition defeats string matching. Our
+> security engine classifies **intent**, not surface form, so novel sequences that reach a
+> forbidden *outcome* are caught even when no single step matches a known-bad string.
+
 Two cooperating concerns: the **Security Engine** scores *risk* during the Decision Pipeline
 (stage 3), and **Runtime Security** *contains* execution when an outcome is `sandbox` or worse.
+
+## Intent-based policy (the pillar-3 differentiator)
+
+Static rules ask *"is this action on the blocklist?"* The security engine instead asks
+*"what is this action **trying to do**, and does that intent violate a principle?"* Each action
+(and, where lineage exists, each *sequence* of actions) is mapped to an **intent class**:
+
+```
+Intent: DATA_DESTRUCTION
+  matches:  drop_table · delete_all_records · overwrite_with_nulls
+            · rename_then_drop · copy_then_delete · rm -rf equivalents
+            · any novel sequence achieving the same outcome
+```
+
+Classification combines cheap deterministic signals (verb/target heuristics, tool-capability
+tags) with, when those are ambiguous, **embedding similarity** to known intent exemplars and
+**behavioral analysis** over the action's lineage chain
+([`06`](06-identity-trust-discovery.md) supplies `parent_action_id`). The inferred class lands
+on the `Decision` as `inferred_intent` ([`02`](02-domain-model.md)) and feeds the policy and
+graduated-response stages — so a constitution principle can say *"never DATA_DESTRUCTION on a
+PII table without an approved ticket"* and have it hold against sequences no one enumerated.
+
+| Capability | Phase | Notes |
+|------------|-------|-------|
+| **Deterministic intent tags** | 0 | Verb/target/capability heuristics map single actions to a coarse intent class; cheap, inline, on the hot path. |
+| **Sequence/lineage intent** | 1 | Behavioral analysis over delegation/lineage chains catches multi-step `rename_then_drop`-style evasions. |
+| **Embedding-similarity classifier** | 1 | Flags novel actions semantically close to a forbidden intent exemplar; runs only when deterministic tags are ambiguous. |
+
+Intent classification is **advisory to policy, never a substitute for it**: it raises
+`risk_score` and supplies `inferred_intent`, but the deterministic policy floor
+([`04`](04-constitution-and-policy.md)) still governs the final outcome.
 
 ## Security Engine (detection / risk scoring)
 

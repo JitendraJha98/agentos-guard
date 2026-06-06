@@ -1,5 +1,12 @@
 # 08 — Testing & Red-Team (pytest-native, RAMPART-inspired)
 
+> **The AGT weakness this kills (pillar 6):** AGT/RAMPART red-team **offline, before
+> deployment** — `agt red-team scan ./prompts/`, run by hand, against static rules. Novel
+> attacks discovered in production hit the same frozen rules until someone re-scans. We make
+> red-teaming a **continuous, pytest-native gate that breaks the CI build** like any failing
+> test, and (Phase 2) a **self-play** loop that keeps generating novel attacks against the
+> live system and proposes ratified patches.
+
 agentos-guard treats **safety like correctness**: a safety regression should break the build
 exactly like a failing unit test. This layer is what engineers use *in development and CI*, as
 opposed to the runtime layers that govern production.

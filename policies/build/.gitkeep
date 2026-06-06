@@ -1,0 +1,3 @@
+# The compiled egress.wasm is a CI/build artifact (opa build -t wasm), not a
+# committed source file (D-06). This .gitkeep keeps the directory in the tree so
+# the build step has a stable output path: policies/build/egress.wasm.

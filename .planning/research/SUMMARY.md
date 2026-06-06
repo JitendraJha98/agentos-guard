@@ -1,5 +1,10 @@
 # Project Research Summary
 
+> 📸 **Research snapshot — 2026-06-01. Not authoritative.** Point-in-time research that fed the
+> design and plan. Authoritative design is [`docs/architecture/`](../../docs/architecture/);
+> live execution state is [`.planning/`](../) (PROJECT/REQUIREMENTS/ROADMAP/STATE). Read this for
+> *why we chose what we chose*, not for current truth.
+
 **Project:** agentos-guard
 **Domain:** Open-source runtime governance & security control plane for AI agents (Kubernetes-style PEP/PDP split; synchronous decision pipeline on the hot path of every agent action)
 **Researched:** 2026-06-01

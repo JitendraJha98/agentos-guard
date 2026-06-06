@@ -1,8 +1,14 @@
 # 04 — Constitution, Policy & Graduated Response
 
-This is agentos-guard's signature differentiator. AGT enforces static YAML rules and a binary
-allow/deny. We give agents a **living constitution** they can reason about, compiled to a
-deterministic policy core, with a **graduated** range of outcomes.
+> **The AGT weakness this kills (pillars 1 & 2):** AGT freezes rules as static YAML at deploy
+> time and enforces a binary allow/deny — string-matching with no rationale and no middle
+> ground, so complex workflows either pass or crash. We give agents a **living constitution**
+> they can reason about, compiled to a deterministic policy core, with a **graduated** range of
+> outcomes tuned by risk and trust.
+
+This is agentos-guard's signature differentiator. We give agents a **living constitution** they
+can reason about, compiled to a deterministic policy core, with a **graduated** range of
+outcomes.
 
 ## The three-layer policy stack
 

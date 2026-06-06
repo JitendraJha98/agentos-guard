@@ -61,6 +61,28 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# agentos-guard: local SQLite control-plane store (D-14 no-Docker dev backend)
+agentos_controlplane.db
+*.db-journal
+
+# agentos-guard: pinned OPA CLI binary (a downloaded toolchain artifact, not source;
+# pinned to v1.17.0 — see scripts/smoke_opa_wasmtime.py / 01-04 plan)
+tools/opa/opa.exe
+tools/opa/opa.exe.sha256
+# agentos-guard: throwaway WASM build output from the 01-04 Task-1 smoke script
+scripts/_smoke_build/
+# agentos-guard: compiled egress WASM bundle is a CI/build artifact (opa build
+# -t wasm), produced from policies/egress.rego at build time — NOT committed (D-06).
+# policies/build/ stays in the tree via its .gitkeep; the .wasm is regenerated.
+# (The generic `build/` rule above would hide the whole dir — re-include .gitkeep.)
+!policies/build/
+!policies/build/.gitkeep
+policies/build/*.wasm
+policies/build/bundle.tar.gz
+# agentos-guard: throwaway venv holding opa-wasmtime/wasmtime for the 01-04 smoke
+# test ONLY (these are NOT locked until the human-verify checkpoint is approved)
+.smoke-venv/
+
 # Flask stuff:
 instance/
 .webassets-cache

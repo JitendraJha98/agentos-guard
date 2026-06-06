@@ -1,5 +1,12 @@
 # 06 — Identity, Trust, Discovery & the Agent Graph
 
+> **The AGT weakness this kills (pillar 4):** AGT gives each agent its own policy and SPIFFE/mTLS
+> identity, but has no notion of *composed* risk. When Agent A (can *read* email) delegates to
+> Agent B (can *send* email), neither agent's policy sees that the **chain** can now forward
+> internal mail externally — the classic *confused deputy*. Our trust layer is dynamic
+> (reputation, not a static allowlist) and the agent graph powers a **cross-agent permission
+> calculus** that computes transitive permissions and flags the emergent capability.
+
 This layer answers *who is acting, how much do we trust them, and what exists in our fleet?*
 
 ## Agent Identity
@@ -25,7 +32,7 @@ identity.
 | **Reputation score** | 1 | Longitudinal reputation from violation/approval history. |
 | **Trust propagation** | 1 | Trust flows (and decays) across delegation edges. |
 | **Delegation trust chains** | 1 | A delegated action inherits a bounded trust budget from its parent. |
-| **Stake-based accountability** | 2 | Agents stake on their behavior; violations slash stake; reputation is portable across deployments. |
+| **Portable reputation** | 2 | Longitudinal reputation is exportable across deployments. Any stake/slashing economics live in an **optional, deployment-pluggable** backend only — never required to run the control plane ([ADR-0007](adr/0007-no-crypto-economics-in-core.md)). |
 
 ## Discovery
 
@@ -53,11 +60,37 @@ flowchart LR
     A -. lineage .-> B
 ```
 
-**Cross-agent legal reasoning** (Phase 2, with [`04`](04-constitution-and-policy.md)'s
-conflict engine): when A (can read) delegates to B (can send), the transitive permission set
-might enable *external forwarding* that neither agent should have. The graph supplies the
-edges; the conflict-resolution engine computes and flags the emergent capability.
-
 **Lineage** (parent/child relationships, delegation tracking, agent family trees) is derived
 from `AgentAction.context.parent_action_id` and drives root-cause analysis and decision
 provenance during incidents.
+
+## Cross-agent permission calculus (the pillar-4 differentiator)
+
+Static, per-agent rules are blind to *composition*. The classic failure is the **confused
+deputy**: each agent in a delegation chain is individually compliant, yet the chain as a whole
+acquires a capability none of them should have.
+
+```
+Agent A.read_email  ──delegates──▶  Agent B.send_email
+        └────────── effective capability: forward_email_externally ──────────┘
+```
+
+The agent graph supplies the delegation edges and information-flow paths; the **permission
+calculus** walks them to compute each chain's *effective* (transitive) permission set, then
+checks that set against the constitution:
+
+1. Build the transitive permission graph from delegation edges.
+2. Identify information-flow paths (who can move what, to where).
+3. Compute effective permissions across the chain (`A.read + B.send → forward_externally`).
+4. Check the effective set against constitutional principles
+   ([`04`](04-constitution-and-policy.md)'s conflict engine).
+5. On a violation, require explicit approval or **block the delegation** — before it executes.
+
+| Capability | Phase | Notes |
+|------------|-------|-------|
+| **Delegation lineage + bounded trust budget** | 1 | Delegated scope is an **intersection** (never a union) of parent and child scope; trust decays across the edge. |
+| **Transitive permission computation** | 2 | The conflict-resolution engine computes effective permissions across full delegation chains. |
+| **Emergent-capability flagging** | 2 | Chains whose effective set violates a principle are flagged/blocked with the offending path cited in `reasons`. |
+
+This is the catch static rules structurally cannot make: the danger lives in the *edge between*
+agents, not in any single agent's policy.

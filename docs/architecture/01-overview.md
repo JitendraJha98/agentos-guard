@@ -1,5 +1,12 @@
 # 01 — Overview
 
+> **The AGT weakness this kills:** AGT governs *before* deployment (red-team) or *after* the
+> fact (logs), with the policy engine sharing the agent's process. There is no runtime control
+> plane that intercepts *every* action and makes unsafe behavior structurally impossible. This
+> doc establishes that control plane — and the process boundary AGT lacks.
+>
+> *New here? Read [`00-manifesto.md`](00-manifesto.md) first for the paradigm and the seven pillars.*
+
 ## The problem
 
 Enterprises are deploying thousands of AI agents that call tools, query databases, hold

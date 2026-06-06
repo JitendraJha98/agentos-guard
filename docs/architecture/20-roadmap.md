@@ -1,5 +1,12 @@
 # 20 — Roadmap (Phased Build)
 
+> **Two roadmaps, on purpose — this is the *design-level* one.** This doc defines the three
+> coarse design phases (**P0 / P1 / P2**) and what each delivers. The *execution-level* roadmap —
+> the 14 fine-grained, independently-shippable vertical slices that actually get built — lives in
+> [`.planning/ROADMAP.md`](../../.planning/ROADMAP.md). Mapping: P0 → planning Phases 1–6, P1 →
+> Phases 7–12, P2 → Phases 13–14. Read this for *what the phases mean*; read the planning roadmap
+> for *what to build next and its status*.
+
 The architecture describes the full vision, but it is built in three phases. **Phase 0 alone
 already beats Microsoft AGT**; Phases 1–2 deliver the moonshot differentiators.
 
@@ -41,15 +48,35 @@ failing safety test breaks CI.
 - **Constitution:** amendment proposals + conflict-resolution / cross-agent legal reasoning.
 - **Self-defense:** continuous adversarial self-play, runtime patching, threat-intel feed.
 - **Proof:** zero-knowledge compliance proofs (RISC Zero / SP1).
-- **Identity & economics:** SPIFFE/mTLS; stake-based accountability + reputation slashing;
-  portable decentralized reputation.
+- **Identity & economics:** SPIFFE/mTLS; portable, exportable reputation. Any stake/slashing
+  economics live in an **optional, deployment-pluggable** backend only — never required to run
+  the control plane ([`adr/0007-no-crypto-economics-in-core.md`](adr/0007-no-crypto-economics-in-core.md)).
 - **Consensus:** BFT for multi-agent agreement.
 - **Platform:** Kubernetes-native operator + sidecars.
 - **Performance:** Rust rewrite of hot-path enforcement where profiling justifies it
   ([`adr/0001-python-first.md`](adr/0001-python-first.md)).
 
+## Deliberately deferred / out-of-core
+
+To keep contributors from silently promoting research-grade or off-strategy features into the
+MVP, these are **fenced**. The seven [manifesto](00-manifesto.md) pillars beat AGT *without any
+of them*.
+
+| Feature | Status | Why fenced |
+|---------|--------|------------|
+| **Merkle DAG anchoring** | Phase 1, optional | Defensible, token-free; an upgrade to the hash chain, not a dependency. |
+| **Zero-knowledge compliance proofs** | Phase 2, hard-gated research | Strong differentiator (prove without disclose), but research-grade; gated on the P0/P1 substrate. |
+| **BFT consensus / self-play patching / decentralized reputation** | Phase 2, hard-gated research | High-value, high-risk; never gate the MVP on them. |
+| **Blockchain / Ethereum / on-chain anchoring** | **Non-goal (core)** | Enterprise security teams treat a mandatory chain dependency as a disqualifier. |
+| **Token staking (USDC/ETH/project token), slashing settlement** | **Non-goal (core)** | Financialized trust is off-strategy; "stake-based accountability" may exist only as a deployment-optional, pluggable reputation backend — never required to run the control plane. |
+| **Multi-party computation (MPC) for sensitive workflows** | **Non-goal (core)** | Heavy cryptographic machinery with no clear adoption demand; revisit only on concrete user pull. |
+
+See [ADR-0007](adr/0007-no-crypto-economics-in-core.md) for the decision and rationale.
+
 ## Sequencing principle
 
 Each phase is independently shippable and demoable. We never build a moonshot feature before
 the runtime loop it plugs into is solid — the pipeline contract from
-[`03`](03-interception-and-pipeline.md) stays stable across all three phases.
+[`03`](03-interception-and-pipeline.md) stays stable across all three phases. Pillars before
+moonshot: we reach AGT parity and ship the seven differentiator pillars before reaching for any
+hard-gated research feature.

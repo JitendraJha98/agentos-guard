@@ -1,5 +1,11 @@
 # Feature Research
 
+> 📸 **Research snapshot — 2026-06-01. Not authoritative.** Point-in-time competitor/feature
+> analysis (vs Microsoft AGT, OWASP, EU AI Act) that fed the design and plan. Authoritative design
+> is [`docs/architecture/`](../../docs/architecture/) (esp. [`30-comparison-agt.md`](../../docs/architecture/30-comparison-agt.md));
+> committed scope is [`.planning/REQUIREMENTS.md`](../REQUIREMENTS.md). Read this for *why* features
+> were scoped the way they were, not for current truth.
+
 **Domain:** Runtime governance & security control plane for AI agents (AgentOps / agent security)
 **Researched:** 2026-06-01
 **Confidence:** HIGH for the competitor/market landscape and compliance frameworks (verified against Microsoft AGT GitHub + docs, OWASP GenAI, EU AI Act primary sources); MEDIUM for the precise novelty boundary of agentos-guard's differentiators (AGT's roadmap is moving fast and some internals are undocumented).
