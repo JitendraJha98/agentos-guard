@@ -158,7 +158,7 @@ issue to discuss before a PR. Feature work happens on the `development` branch (
 
 ## 📄 License
 
-[MIT](LICENSE) © 2026 Jitendra Jha — open-source, self-hosted first.
+[MIT](LICENSE) © 2026 Jitendra Jha, Siddhant Nikumbh — open-source, self-hosted first.
 
 <div align="center">
 <sub>Governance as a collaborative, evolving system — not a static firewall.</sub>
