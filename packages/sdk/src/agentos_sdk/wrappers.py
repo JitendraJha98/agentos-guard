@@ -36,12 +36,16 @@ async def governed_memory_access(
     *,
     operation: str,
     key: str,
-    value: str,
+    value: str = "",
     run: Callable[[], Awaitable[_T]],
     parent_action_id: UUID | None = None,
     conversation_id: str | None = None,
 ) -> _T:
-    """Govern a memory read/write (INT-03). Allow runs `run`; deny raises GovernanceDenied."""
+    """Govern a memory read/write (INT-03). Allow runs `run`; deny raises GovernanceDenied.
+
+    `value` defaults to "" because a READ supplies no value at the access boundary
+    (the read result is not known pre-execution); a WRITE passes the value to govern.
+    """
     action = normalize_memory_access(
         operation, key, value, token,
         parent_action_id=parent_action_id, conversation_id=conversation_id,
