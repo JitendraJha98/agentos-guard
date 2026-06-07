@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: ready_to_plan
-stopped_at: Phase 1 complete (6/6) — ready to discuss Phase 2
-last_updated: 2026-06-01T19:58:52.279Z
-last_activity: 2026-06-01
+stopped_at: Phase 2 complete (1/1) — ready to discuss Phase 3
+last_updated: 2026-06-07
+last_activity: 2026-06-07
 progress:
   total_phases: 14
-  completed_phases: 1
-  total_plans: 6
-  completed_plans: 6
-  percent: 7
+  completed_phases: 2
+  total_plans: 7
+  completed_plans: 7
+  percent: 14
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-01)
 
 **Core value:** Every agent action is intercepted at runtime and returned an explainable, graduated decision grounded in policy + a human-readable constitution, with tamper-evident audit evidence — making unsafe agent behavior structurally impossible rather than merely unlikely.
-**Current focus:** Phase 2 — full interception coverage
+**Current focus:** Phase 3 — Constitution, graduated response & approvals
 
 ## Current Position
 
-Phase: 2
+Phase: 3
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-06-01
+Last activity: 2026-06-07
 
-Progress: [██████████] 100%
+Progress: [██████████] 100% (Phase 2 complete)
 
 ## Performance Metrics
 
@@ -45,6 +45,7 @@ Progress: [██████████] 100%
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 1 | 6 | - | - |
+| 2 | 1 | - | - |
 
 **Recent Trend:**
 
@@ -83,6 +84,12 @@ Recent decisions affecting current work:
 - [Phase 1]: [01-06] The SDK PEP (GovernanceMiddleware.awrap_tool_call) intercepts http_get tool calls, normalizes to AgentAction, awaits the 4-stage pipeline, and enforces allow (run handler) / deny (ToolMessage WITHOUT calling handler => no egress, D-03). INT-01/SDK-01.
 - [Phase 1]: [01-06] Open Q2 RESOLVED — langchain 1.3.2 exposes awrap_tool_call (async); chose the async path so the pipeline + async audit write run in the LangGraph loop with no nested asyncio.run. SDK depends on contract + pipeline only (no PEP-in-PDP leak, Anti-Pattern 5).
 - [Phase 1]: [01-06] D-04 red-team regression lock GREEN — WITH the egress principle the exfil probe is denied (egress_allowlist_violation); deleting the principle (allow-all engine, since an empty allowlist still denies by default) flips the same-host probe (benign body, to isolate floor from the risk stage) to allow and turns the deny test RED (CI-break proof verified). The Walking Skeleton is closed.
+
+- [Phase 2]: Five action types governed via TWO interception shapes — LangChain native middleware hooks for tool (`awrap_tool_call`) + model (`awrap_model_call`, INT-02), and SDK async wrappers for memory/MCP/delegation (INT-03/04/05) since LangChain v1 exposes no middleware hook for those boundaries (matches docs/architecture/03 "middleware/decorators").
+- [Phase 2]: All five forms share ONE enforcement core (`agentos_sdk/enforce.governed_call`) so allow/deny never diverges; deny raises `GovernanceDenied` (governed exception carrying the Decision) WITHOUT running the operation (no side effect / no egress).
+- [Phase 2]: INT-06 coverage = a `@covers(ActionType)` registry populated at import (static gap -> `verify_coverage()` raises) PLUS a runtime bypass test (no-identity action -> fail-closed deny via IDN-02). No silent gaps.
+- [Phase 2]: Egress principle scoped to `tool_call` egress (egress.rego + rebuilt WASM); non-tool types pass the floor (`no_egress_policy_applicable`) and get real policies in Phase 3 — Phase-1 deny-by-default tool gate (D-04) untouched.
+- [Phase 2]: Audit redactor (D-15 fail-closed) extended to the four new payload shapes — identifiers verbatim, free-text/secret fields (messages/value/args/task) digested; `parent_action_id`+`conversation_id` persisted in the audit body (INT-05 lineage; AUD-09 seed).
 
 ### Pending Todos
 

@@ -27,21 +27,23 @@ the audit writer it was constructed with.
 
 from __future__ import annotations
 
-from langchain.agents.middleware import AgentMiddleware, ToolCallRequest
-from langchain.messages import ToolMessage
+from langchain.agents.middleware import AgentMiddleware, ModelRequest, ToolCallRequest
+from langchain.messages import AIMessage, ToolMessage
 
 from agentos_contract import Outcome, PipelineProtocol
 
-from agentos_sdk.normalize import normalize_action
-
-
-def _format_reasons(decision) -> str:
-    """A compact, machine-readable summary of the fired reasons (NEVER raw payload)."""
-    return "; ".join(f"{r.stage}:{r.code}" for r in decision.reasons)
+from agentos_sdk.enforce import format_reasons
+from agentos_sdk.normalize import normalize_action, normalize_model_call
 
 
 class GovernanceMiddleware(AgentMiddleware):
-    """The PEP: intercept -> normalize -> evaluate -> enforce (allow runs / deny blocks)."""
+    """The PEP: intercept -> normalize -> evaluate -> enforce (allow runs / deny blocks).
+
+    Two native LangChain hooks are governed here: tool calls (INT-01) and model
+    invocations (INT-02). Memory, MCP, and delegation are not LangChain middleware
+    hooks — they are governed by the SDK wrappers in `agentos_sdk.wrappers`, sharing
+    the same enforcement core (`agentos_sdk.enforce`).
+    """
 
     def __init__(self, pipeline: PipelineProtocol, token: str) -> None:
         self._pipeline = pipeline  # the in-process PDP (D-07); satisfies PipelineProtocol
@@ -54,7 +56,21 @@ class GovernanceMiddleware(AgentMiddleware):
         if decision.outcome == Outcome.deny:
             # SHORT-CIRCUIT: do NOT call handler() -> the tool never executes (D-03).
             return ToolMessage(
-                content=f"Blocked by agentos-guard: {_format_reasons(decision)}",
+                content=f"Blocked by agentos-guard: {format_reasons(decision)}",
                 tool_call_id=request.tool_call["id"],
             )
         return await handler(request)  # allow -> the tool executes
+
+    async def awrap_model_call(self, request: ModelRequest, handler):
+        """Async PEP hook (INT-02). Allow invokes the model; deny blocks the call.
+
+        On deny the provider is NEVER called (handler is not awaited) — no prompt
+        leaves the process — and an AIMessage carrying the fired reasons is returned in
+        place of the model's response, so the agent loop sees an explainable block.
+        """
+        action = normalize_model_call(request, self._token)
+        decision = await self._pipeline.evaluate(action)
+        if decision.outcome == Outcome.deny:
+            # SHORT-CIRCUIT: the model is never invoked (no prompt egress to the provider).
+            return AIMessage(content=f"Blocked by agentos-guard: {format_reasons(decision)}")
+        return await handler(request)  # allow -> the model is invoked

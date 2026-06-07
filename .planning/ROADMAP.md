@@ -21,7 +21,7 @@ agentos-guard is a runtime governance and security control plane that intercepts
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Walking Skeleton** - One agent, one tool, one principle proven end-to-end: contract → pipeline → OPA → risk → graduated → hash-chained audit, with a red-team test that breaks CI if the policy is removed (completed 2026-06-01)
-- [ ] **Phase 2: Full Interception Coverage** - All five action types (tool/model/memory/MCP/delegation) intercepted, normalized, and verified with a no-silent-gaps coverage check
+- [x] **Phase 2: Full Interception Coverage** - All five action types (tool/model/memory/MCP/delegation) intercepted, normalized, and verified with a no-silent-gaps coverage check (completed 2026-06-07)
 - [ ] **Phase 3: Constitution, Graduated Response & Approvals** - Human-readable Constitution compiles to OPA/Rego with cited-principle interpreter; full graduated outcome spectrum with policy-driven thresholds, trust-modulates-only, and a working approval workflow
 - [ ] **Phase 4: Tamper-Evident Audit & Operator Containment** - Provenance-rich hash-chained audit with fail-closed redaction and a CI verifier; agent and fleet kill switches
 - [ ] **Phase 5: Control Plane, SDK & Minimal Dashboard** - Declarative resource API on Postgres with compile-on-write, the full Python SDK surface, and a read-only dashboard with approvals and kill switch
@@ -64,7 +64,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   1. Model invocations, memory-access operations, and MCP-server calls are each intercepted and normalized into an `AgentAction` that flows through the same pipeline.
   2. Agent-to-agent delegation is intercepted and normalized with a `parent_action_id` capturing lineage.
   3. An interception-coverage check confirms all five action types are hooked and an adversarial bypass-attempt test (undecorated tool / direct model call) is detected rather than silently allowed.
-**Plans**: TBD
+**Plans**: delivered as one slice (see `.planning/phases/02-full-interception/02-SUMMARY.md`)
+- [x] Model interception via LangChain `awrap_model_call` (INT-02); normalizers for all four new types
+- [x] Governed wrappers for memory/MCP/delegation sharing one enforcement core (INT-03/04/05), delegation captures `parent_action_id` lineage
+- [x] Interception-coverage registry + bypass-attempt fail-closed detection (INT-06)
+- [x] Egress principle scoped to tool egress so non-tool types flow the pipeline; audit redactor + lineage extended for the four new payload shapes
 
 ### Phase 3: Constitution, Graduated Response & Approvals
 **Goal**: Operators author a human-readable Constitution that compiles to deterministic OPA/Rego, ambiguous cases get a cited-principle rationale, and the full graduated outcome spectrum — including human approval and trust-modulates-only — is enforced.
@@ -215,7 +219,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Walking Skeleton | 6/6 | Complete    | 2026-06-01 |
-| 2. Full Interception Coverage | 0/TBD | Not started | - |
+| 2. Full Interception Coverage | 1/1 | Complete    | 2026-06-07 |
 | 3. Constitution, Graduated Response & Approvals | 0/TBD | Not started | - |
 | 4. Tamper-Evident Audit & Operator Containment | 0/TBD | Not started | - |
 | 5. Control Plane, SDK & Minimal Dashboard | 0/TBD | Not started | - |

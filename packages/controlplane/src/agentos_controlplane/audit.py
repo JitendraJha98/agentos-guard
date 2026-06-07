@@ -33,10 +33,24 @@ from sqlalchemy.orm import Session, sessionmaker
 from agentos_contract import AgentAction, Decision
 from agentos_controlplane.store.models import AuditRecord
 
-# Payload keys the Phase-1 redactor knows how to classify. A key NOT in this
-# allowlist is unclassifiable -> fail closed (D-15). This is intentionally
-# minimal; the Presidio-grade redactor is Phase 4.
-_KNOWN_PAYLOAD_KEYS = frozenset({"url", "content"})
+# Payload keys the redactor knows how to classify. A key NOT classified here is
+# unclassifiable -> fail closed (D-15). This is intentionally minimal; the
+# Presidio-grade redactor is Phase 4.
+#
+# Phase 1 governed only tool_call ({url, content}). Phase 2 (INT-02..05) adds the
+# four remaining action types, each with a small fixed payload shape:
+#   model_invocation : {"model", "messages"}
+#   memory_access    : {"operation", "key", "value"}
+#   mcp_call         : {"server", "tool", "args"}
+#   delegation       : {"to_agent", "task"}
+# Free-text / secret-bearing fields are reduced to a length+SHA-256 digest (never
+# persisted raw); short identifier fields are safe to keep verbatim for forensics.
+_DIGEST_KEYS = frozenset({"content", "messages", "value", "args", "task"})
+_VERBATIM_KEYS = frozenset(
+    {"model", "operation", "key", "server", "tool", "to_agent", "from_agent"}
+)
+# `url` is special-cased (host-only redaction). The full set of classifiable keys:
+_KNOWN_PAYLOAD_KEYS = frozenset({"url"}) | _DIGEST_KEYS | _VERBATIM_KEYS
 
 
 class RedactionError(Exception):
@@ -80,14 +94,14 @@ def _redact_or_raise(payload: dict) -> dict:
     for key, value in payload.items():
         if key not in _KNOWN_PAYLOAD_KEYS:
             raise RedactionError(f"unclassifiable payload field: {key!r}")
+        if not isinstance(value, str):
+            raise RedactionError(f"payload field {key!r} is not a string")
         if key == "url":
-            if not isinstance(value, str):
-                raise RedactionError("url field is not a string")
             redacted["url"] = _redact_url(value)
-        elif key == "content":
-            if not isinstance(value, str):
-                raise RedactionError("content field is not a string")
-            redacted["content"] = _redact_content(value)
+        elif key in _DIGEST_KEYS:
+            redacted[key] = _redact_content(value)
+        else:  # _VERBATIM_KEYS — short identifiers, safe to keep
+            redacted[key] = value
     return redacted
 
 
@@ -116,6 +130,16 @@ class AuditWriter:
                 "prev_hash": prev_hash,
                 "action_id": str(action.id),
                 "agent_id": action.agent_id,
+                "action_type": action.type.value,
+                # Lineage (INT-05): persist the delegation/conversation edges so the
+                # Phase-12 evidence graph (AUD-09) can reconstruct causal chains. These
+                # are ids, not payload, so they need no redaction.
+                "parent_action_id": (
+                    str(action.context.parent_action_id)
+                    if action.context.parent_action_id
+                    else None
+                ),
+                "conversation_id": action.context.conversation_id,
                 "outcome": decision.outcome.value,
                 "risk_score": decision.risk_score,
                 "trust_score": decision.trust_score,
