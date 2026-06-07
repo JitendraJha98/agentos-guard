@@ -13,16 +13,16 @@ from pydantic import BaseModel, Field
 
 
 class ActionType(str, Enum):
-    tool_call = "tool_call"                # only this is in Phase-1 scope (D-01)
-    memory_access = "memory_access"        # Phase 2
-    mcp_call = "mcp_call"                  # Phase 2
-    model_invocation = "model_invocation"  # Phase 2
-    delegation = "delegation"              # Phase 2
+    tool_call = "tool_call"                # Phase 1 (D-01)
+    memory_access = "memory_access"        # Phase 2 (INT-03)
+    mcp_call = "mcp_call"                  # Phase 2 (INT-04)
+    model_invocation = "model_invocation"  # Phase 2 (INT-02)
+    delegation = "delegation"              # Phase 2 (INT-05)
 
 
 class ActionContext(BaseModel):
     conversation_id: str | None = None
-    parent_action_id: UUID | None = None   # delegation/lineage (populated in Phase 2)
+    parent_action_id: UUID | None = None   # delegation/lineage (populated Phase 2, INT-05)
     trace_id: str | None = None            # OTel correlation (emitted in Phase 6)
 
 

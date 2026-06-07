@@ -18,3 +18,13 @@ allow if {
 	input.type == "tool_call"
 	input.host in data.allowlist
 }
+
+# Phase 2 (INT-02..05): the egress principle governs OUTBOUND TOOL egress only.
+# Model / memory / MCP / delegation actions are not outbound HTTP egress, so this
+# principle does not apply to them — they pass this floor and are still fully
+# intercepted, risk-scored, graduated, and audited through the same pipeline.
+# Their own deterministic policies arrive in Phase 3 (Constitution → YAML → Rego).
+# tool_call stays deny-by-default above, so the D-04 red-team gate is unchanged.
+allow if {
+	input.type != "tool_call"
+}

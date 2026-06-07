@@ -74,6 +74,18 @@ class WasmPolicyEngine:
 
     def evaluate(self, input: dict) -> PolicyResult:
         allowed = _extract_bool(self._policy.evaluate(input))
+        # The egress principle governs OUTBOUND TOOL egress only (Phase 2, INT-02..05).
+        # For other action types the WASM floor returns allow (the principle does not
+        # apply); report a type-appropriate reason rather than the egress-allowlist one,
+        # so the Decision never claims an egress check it did not perform. Phase 3 adds
+        # the deterministic per-type policies for these action classes.
+        if input.get("type") != "tool_call":
+            return PolicyResult(
+                outcome=Outcome.allow if allowed else Outcome.deny,
+                code="no_egress_policy_applicable",
+                policy_id="egress.allow",
+                detail=f"egress principle does not govern action type {input.get('type')!r}",
+            )
         if allowed:
             return PolicyResult(
                 outcome=Outcome.allow,

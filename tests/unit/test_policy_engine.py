@@ -102,3 +102,29 @@ def test_wasm_loaded_once_not_per_request(monkeypatch: pytest.MonkeyPatch) -> No
 def test_satisfies_policy_engine_protocol(engine: WasmPolicyEngine) -> None:
     """WasmPolicyEngine is usable wherever the PolicyEngine Protocol is expected."""
     assert isinstance(engine, PolicyEngine)
+
+
+@pytest.mark.parametrize(
+    "action_type", ["model_invocation", "memory_access", "mcp_call", "delegation"]
+)
+def test_non_tool_action_types_pass_egress_floor(
+    engine: WasmPolicyEngine, action_type: str
+) -> None:
+    """Phase 2 (INT-02..05): the egress principle governs tool egress only.
+
+    Non-tool action types pass this floor (with NO host, even against an allowlist
+    they are not on) and carry a type-appropriate reason — never the egress-allowlist
+    claim, which the engine did not actually check for them. Their own deterministic
+    policies arrive in Phase 3.
+    """
+    result = engine.evaluate({"type": action_type})
+    assert result.outcome is Outcome.allow
+    assert result.code == "no_egress_policy_applicable"
+    assert result.policy_id == "egress.allow"
+
+
+def test_tool_call_still_deny_by_default_after_phase2(engine: WasmPolicyEngine) -> None:
+    """The non-tool clause must not weaken the tool_call deny-by-default floor (D-04)."""
+    result = engine.evaluate({"type": "tool_call", "host": "attacker.example"})
+    assert result.outcome is Outcome.deny
+    assert result.code == "egress_allowlist_violation"
