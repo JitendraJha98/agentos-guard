@@ -9,7 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![CI](https://github.com/JitendraJha98/agentos-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/JitendraJha98/agentos-guard/actions/workflows/ci.yml)
-[![Status: alpha](https://img.shields.io/badge/status-alpha%20·%20phase%201%2F14-orange.svg)](.planning/ROADMAP.md)
+[![Status: alpha](https://img.shields.io/badge/status-alpha%20·%20phase%202%2F14-orange.svg)](.planning/ROADMAP.md)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#-contributing)
 
 [**Manifesto**](docs/architecture/00-manifesto.md) · [**Architecture**](docs/architecture/) · [**Roadmap**](.planning/ROADMAP.md) · [**vs Microsoft AGT**](docs/architecture/30-comparison-agt.md)
@@ -110,8 +110,15 @@ constitution principle, proven **end-to-end** — interception → `AgentAction`
 OPA/Rego policy → prompt-injection risk → graduated response → hash-chained fail-closed audit — with
 a red-team test that **breaks CI if the policy is removed**.
 
-**🛠️ Next:** full five-action interception coverage → authoring constitution + approvals → verifiable
-audit + kill switches → control-plane API + SDK + dashboard → compliance + the CI red-team gate.
+**✅ Shipped (Phase 2 — full interception coverage):** all five action types
+(**tool · model · memory · MCP · delegation**) intercepted and run through the same pipeline — model
+calls governed via the LangChain `awrap_model_call` hook, memory/MCP/delegation via SDK wrappers
+sharing one enforcement core, delegation capturing `parent_action_id` lineage. An interception-coverage
+check proves **no silent gaps**, and a bypass attempt (un-instrumented / no-identity action) is
+fail-closed denied, not silently allowed.
+
+**🛠️ Next (Phase 3):** authoring a human-readable constitution + approvals → verifiable audit + kill
+switches → control-plane API + SDK + dashboard → compliance + the CI red-team gate.
 See the 14-phase [roadmap](.planning/ROADMAP.md).
 
 ## ⚡ Explore from source

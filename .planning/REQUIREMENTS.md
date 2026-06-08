@@ -12,11 +12,11 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 ### Interception & PEP
 
 - [x] **INT-01** [P0]: A LangChain/LangGraph agent's tool calls are intercepted before execution via SDK middleware and normalized into an `AgentAction`
-- [ ] **INT-02** [P0]: Model invocations are intercepted and normalized into an `AgentAction`
-- [ ] **INT-03** [P0]: Memory-access operations are intercepted and normalized into an `AgentAction`
-- [ ] **INT-04** [P0]: MCP-server calls are intercepted and normalized into an `AgentAction`
-- [ ] **INT-05** [P0]: Agent-to-agent delegation is intercepted and normalized into an `AgentAction` with `parent_action_id` lineage
-- [ ] **INT-06** [P0]: An interception-coverage check verifies all five action types are hooked and detects un-instrumented paths (no silent gaps)
+- [x] **INT-02** [P0]: Model invocations are intercepted and normalized into an `AgentAction`
+- [x] **INT-03** [P0]: Memory-access operations are intercepted and normalized into an `AgentAction`
+- [x] **INT-04** [P0]: MCP-server calls are intercepted and normalized into an `AgentAction`
+- [x] **INT-05** [P0]: Agent-to-agent delegation is intercepted and normalized into an `AgentAction` with `parent_action_id` lineage
+- [x] **INT-06** [P0]: An interception-coverage check verifies all five action types are hooked and detects un-instrumented paths (no silent gaps)
 - [ ] **INT-07** [P1]: A framework-agnostic network gateway/proxy PEP intercepts actions without SDK changes, behind the same pipeline contract
 - [ ] **INT-08** [P1]: At least one additional framework adapter (e.g. CrewAI or OpenAI Agents SDK) intercepts actions
 - [ ] **INT-09** [P2]: A Kubernetes sidecar/operator PEP intercepts at the network layer behind the same contract
@@ -215,11 +215,11 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | INT-01 | Phase 1 | Complete |
-| INT-02 | Phase 2 | Pending |
-| INT-03 | Phase 2 | Pending |
-| INT-04 | Phase 2 | Pending |
-| INT-05 | Phase 2 | Pending |
-| INT-06 | Phase 2 | Pending |
+| INT-02 | Phase 2 | Complete |
+| INT-03 | Phase 2 | Complete |
+| INT-04 | Phase 2 | Complete |
+| INT-05 | Phase 2 | Complete |
+| INT-06 | Phase 2 | Complete |
 | INT-07 | Phase 10 | Pending |
 | INT-08 | Phase 10 | Pending |
 | INT-09 | Phase 14 | Pending |
