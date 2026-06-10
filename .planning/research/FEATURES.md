@@ -6,6 +6,25 @@
 > committed scope is [`.planning/REQUIREMENTS.md`](../REQUIREMENTS.md). Read this for *why* features
 > were scoped the way they were, not for current truth.
 
+> ⚠️ **Correction — 2026-06-10 re-verification (AGT v4.1.0).** This snapshot **over-credits AGT
+> on exactly our strongest differentiator.** Verified against AGT's live repo, docs site, and
+> `LIMITATIONS.md`:
+>
+> - **AGT has NO semantic/LLM layer.** The "semantic intent classifier" claim below is wrong as
+>   of v4.1.0: enforcement is purely deterministic (CEL/Rego/Cedar + regex content policies);
+>   their docs state AGT governs *"actions, not reasoning."* Semantic/constitutional reasoning
+>   is **not** table stakes — it remains our primary durable differentiator.
+> - **AGT's graduated decisions are allow / deny / require_approval** (plus execution rings) —
+>   three outcomes, not the four-plus-trust-downgrade spectrum described below.
+> - Confirmed accurate: Merkle audit, 0–1000 trust scoring, SPIFFE/DID/mTLS, privilege rings,
+>   MCP gateway, multi-language SDKs. Also new since this snapshot: 19+ framework integrations
+>   (not 4), and AGT's own `LIMITATIONS.md` now admits a **memory/knowledge governance gap**,
+>   **raw unredacted audit parameters**, a **default-allow bypass risk**, and **no cross-action
+>   correlation** — see `docs/architecture/30-comparison-agt.md` for the corrected scorecard and
+>   the durable-vs-incidental gap analysis.
+> - **Process rule going forward:** AGT releases monthly; re-verify its feature set at the start
+>   of every roadmap phase before citing this file.
+
 **Domain:** Runtime governance & security control plane for AI agents (AgentOps / agent security)
 **Researched:** 2026-06-01
 **Confidence:** HIGH for the competitor/market landscape and compliance frameworks (verified against Microsoft AGT GitHub + docs, OWASP GenAI, EU AI Act primary sources); MEDIUM for the precise novelty boundary of agentos-guard's differentiators (AGT's roadmap is moving fast and some internals are undocumented).

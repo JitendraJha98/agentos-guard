@@ -63,8 +63,10 @@ produced on demand.
 
 ## Why this beats AGT
 
-AGT provides tamper-evident logs. agentos-guard adds (a) **policy-version provenance** on every
-record, (b) **framework mapping** so evidence is audit-ready, and (c) the Phase 2
-**zero-knowledge** capability to prove compliance in regulated industries *without disclosing
-sensitive context* — something static-log approaches cannot do. See
+AGT provides tamper-evident (Merkle-chained) logs — but stores tool-call parameters **raw and
+unredacted**, publicly criticized as a data-leak pathway. agentos-guard adds (a) **fail-closed
+PII redaction before hashing** (no record is written if redaction fails), (b) **policy-version
+provenance** on every record, (c) **framework mapping** so evidence is audit-ready, and (d) the
+Phase 2 **zero-knowledge** capability to prove compliance in regulated industries *without
+disclosing sensitive context* — something log-disclosure approaches cannot do. See
 [`30-comparison-agt.md`](30-comparison-agt.md).

@@ -12,6 +12,8 @@
 
 agentos-guard is a runtime governance and security control plane that intercepts every AI-agent action, runs it through a synchronous decision pipeline (identity/trust → policy → risk → graduated response), and writes tamper-evident audit evidence. The paradigm is *Trust→Verify→Graduate→Prove* (vs AGT's *Distrust→Block→Log*), carried by **seven differentiator pillars** (`docs/architecture/00-manifesto.md`): semantic constitution, graduated response, intent-based policy, cross-agent permission calculus, explainable denials with remediation, CI-gating red-team + self-play, and provable audit. The journey starts with a rock-solid walking skeleton — one agent, one tool, one Constitution principle, proven end-to-end with a CI-gating red-team test — then thickens that loop into a full Phase-0 parity control plane (five interception types, full graduated outcomes, explainable-remediation decisions + intent tags, approvals, kill switch, OWASP/NIST/EU-minimal compliance, SDK, dashboard). Phase 1 builds trust/reputation, containment, the full security engine (including the ASI05/06/07 detectors and deeper intent classification), the gateway PEP, Merkle audit, economics, ABOM, and reconciliation loops. Phase 2 reaches for the hard-gated moonshot differentiators (amendments, BFT consensus, self-play, ZK proofs, K8s operator, Rust hot path). **Crypto-economics (blockchain anchoring, token staking, MPC) are fenced out of core** (ADR-0007); only token-free Merkle/ZK cryptography is kept. Every phase is an independently shippable vertical slice; nothing horizontal ships alone.
 
+**Wedge-first ordering (2026-06-10, AGT v4.1.0 re-verification):** the roadmap front-loads the *durable* AGT gaps — the semantic constitution and cross-action sequence-intent correlation (SEC-13, pulled forward into Phase 3), which AGT's deterministic-only philosophy and stateless kernel make structurally hard to copy — and deliberately defers parity features AGT already does well (privilege rings, SPIFFE/mTLS, multi-language SDKs, budget governance). Incidental gaps we already hold (memory interception, fail-closed redacted audit, deny-by-default, CI-gating red-team) are claimed loudly while they last but never bet a phase on. Positioning is *layer-first* ("the semantic-judgment and memory-governance layer deterministic enforcers admit they lack"), with an optional AGT adapter tracked alongside the Phase-10 gateway PEP. Re-verify AGT's feature set at the start of every phase — see `docs/architecture/30-comparison-agt.md`.
+
 ## Phases
 
 **Phase Numbering:**
@@ -22,9 +24,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Walking Skeleton** - One agent, one tool, one principle proven end-to-end: contract → pipeline → OPA → risk → graduated → hash-chained audit, with a red-team test that breaks CI if the policy is removed (completed 2026-06-01)
 - [x] **Phase 2: Full Interception Coverage** - All five action types (tool/model/memory/MCP/delegation) intercepted, normalized, and verified with a no-silent-gaps coverage check (completed 2026-06-07)
-- [ ] **Phase 3: Constitution, Graduated Response & Approvals** - Human-readable Constitution compiles to OPA/Rego with cited-principle interpreter; full graduated outcome spectrum with policy-driven thresholds, trust-modulates-only, and a working approval workflow
+- [ ] **Phase 3: Constitution, Graduated Response, Approvals & Sequence Intent** - Human-readable Constitution compiles to OPA/Rego with cited-principle interpreter; full graduated outcome spectrum with policy-driven thresholds, trust-modulates-only, a working approval workflow, and sequence/lineage intent correlation (SEC-13, pulled forward — the durable AGT gap) proven by a 5-minute `rename_then_drop` wedge demo
 - [ ] **Phase 4: Tamper-Evident Audit & Operator Containment** - Provenance-rich hash-chained audit with fail-closed redaction and a CI verifier; agent and fleet kill switches
-- [ ] **Phase 5: Control Plane, SDK & Minimal Dashboard** - Declarative resource API on Postgres with compile-on-write, the full Python SDK surface, and a read-only dashboard with approvals and kill switch
+- [ ] **Phase 5: Control Plane, SDK & Minimal Dashboard** - Declarative resource API on Postgres with compile-on-write, the full Python SDK surface, a zero-infra quickstart (SQLite + in-process opa-wasm, single `pip install` — SDK-05), and a read-only dashboard with approvals and kill switch
 - [ ] **Phase 6: Observability, Compliance & Red-Team Gate** - OTel spans/metrics, OWASP/NIST/EU-minimal compliance mapping, and the pytest-native red-team layer that statistically gates CI (closes Phase 0)
 - [ ] **Phase 7: Trust, Reputation & Identity Hardening** - Longitudinal reputation, bounded delegation trust chains, agent certificates, and reconciliation loops
 - [ ] **Phase 8: Full Security Engine & MCP Gateway** - Data-exfil, secret-leakage, tool-poisoning, supply-chain, plus the ASI05/06/07 gap detectors and an MCP security gateway
@@ -70,16 +72,17 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] Interception-coverage registry + bypass-attempt fail-closed detection (INT-06)
 - [x] Egress principle scoped to tool egress so non-tool types flow the pipeline; audit redactor + lineage extended for the four new payload shapes
 
-### Phase 3: Constitution, Graduated Response & Approvals
-**Goal**: Operators author a human-readable Constitution that compiles to deterministic OPA/Rego, ambiguous cases get a cited-principle rationale, and the full graduated outcome spectrum — including human approval and trust-modulates-only — is enforced.
+### Phase 3: Constitution, Graduated Response, Approvals & Sequence Intent
+**Goal**: Operators author a human-readable Constitution that compiles to deterministic OPA/Rego, ambiguous cases get a cited-principle rationale, the full graduated outcome spectrum — including human approval and trust-modulates-only — is enforced, and sequence/lineage intent correlation catches multi-step evasions no single action reveals (SEC-13, pulled forward from Phase 8: cross-action correlation is the durable AGT gap — their stateless kernel can't retrofit it — and the demoable wedge; see `docs/architecture/30-comparison-agt.md`).
 **Mode:** mvp
 **Depends on**: Phase 2
-**Requirements**: POL-01, POL-02, POL-04, POL-05, POL-07, POL-08, POL-13, POL-14, PIPE-04, PIPE-05, PIPE-06, PIPE-08, PIPE-09, SEC-02, SEC-03, SEC-12, TRST-02, API-03
+**Requirements**: POL-01, POL-02, POL-04, POL-05, POL-07, POL-08, POL-13, POL-14, PIPE-04, PIPE-05, PIPE-06, PIPE-08, PIPE-09, SEC-02, SEC-03, SEC-12, SEC-13, TRST-02, API-03
 **Success Criteria** (what must be TRUE):
   1. An operator authors numbered Constitution principles that a compiler lowers to scoped YAML and then to OPA/Rego, evaluated deterministically with the exact policy/constitution version recorded on every `Decision`.
   2. On a no-rule/ambiguous result the LLM interpreter returns `{outcome, cited principle, rationale}` and can never upgrade a high-risk action beyond the deterministic policy floor (advisory-only); every `Decision` is an explainable denial carrying `{principle_ref, rationale, evidence}`, `inferred_intent`, and concrete `remediation` paths (PIPE-08), with deterministic intent-class tags mapping actions to a coarse intent (e.g. `DATA_DESTRUCTION`) that feeds risk and policy (SEC-12, advisory to the floor).
   3. The graduated-response stage maps {policy, risk, trust} to allow/warn/sandbox/require_consensus/require_approval/temporary_exception/governance_review/deny with policy-driven thresholds, where trust modulates only within a policy-defined band and never overrides a deterministic policy decision; a `require_approval` outcome parks an `ApprovalRequest` that blocks the action until resolved or times out to a safe default; a `temporary_exception` is a human-ratified, time-boxed allow that auto-revokes at `expires_at` (the interpreter may recommend but never grant one); a `governance_review` proceeds while opening an async non-blocking review; and every `Decision` can carry composable `side_effects` (notify/additional_monitoring/risk_flag/create_incident) orthogonal to its outcome (PIPE-09).
   4. The pipeline holds its p95 cached-path latency budget (verified by a benchmark test), keeps its own compiled-policy/identity cache invalidated on policy-version change, and applies per-action-class fail-closed posture with no silent allow on control-plane unavailability.
+  5. Sequence/lineage intent analysis over `parent_action_id` chains (SEC-13) catches multi-step evasions — e.g. `rename_then_drop`, copy-then-delete — where every individual action would be allowed, and a scripted 5-minute wedge demo shows the Constitution denying such a sequence with a cited principle and remediation (the demoable proof of the two durable differentiators over AGT).
 **Plans**: TBD
 
 ### Phase 4: Tamper-Evident Audit & Operator Containment
@@ -98,11 +101,12 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Goal**: Wrap the proven engines in a declarative resource API on Postgres, a complete Python SDK, and a minimal operator dashboard so the whole system is usable end-to-end by an outside team.
 **Mode:** mvp
 **Depends on**: Phase 4
-**Requirements**: API-01, API-02, SDK-02, SDK-04, DISC-01, DISC-02, DASH-01, DASH-02, DASH-03
+**Requirements**: API-01, API-02, SDK-02, SDK-04, SDK-05, DISC-01, DISC-02, DASH-01, DASH-02, DASH-03
 **Success Criteria** (what must be TRUE):
   1. A declarative API validates, versions, and stores Agent/Constitution/Policy/TrustProfile/ApprovalRequest/ABOM resources in PostgreSQL, compiling a Constitution to Policy/Rego on write.
   2. The SDK lets an agent self-register and receive an identity token, and provides a control-plane client for resource CRUD and approvals; self-registered agents appear in an authoritative inventory tracking agents, tools, prompts, and memories.
   3. An operator views the agent inventory and recent decisions/audit, resolves pending approval requests, and triggers agent/fleet kill switches from the dashboard.
+  4. A zero-infra quickstart runs the full governed loop with SQLite + in-process opa-wasm from a single `pip install` — no Docker, Postgres, or OPA server — so first-run friction matches AGT's one-decorator pitch (SDK-05).
 **Plans**: TBD
 **UI hint**: yes
 
@@ -134,11 +138,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Goal**: Build out the full detection surface — data-exfil, secret-leakage, tool-poisoning, supply-chain — and close the surfaced OWASP-2026 gaps (ASI05/06/07), fronted by an MCP security gateway.
 **Mode:** mvp
 **Depends on**: Phase 7
-**Requirements**: SEC-04, SEC-05, SEC-06, SEC-07, SEC-08, SEC-09, SEC-10, SEC-11, SEC-13, SEC-14, ABOM-01, ABOM-02
+**Requirements**: SEC-04, SEC-05, SEC-06, SEC-07, SEC-08, SEC-09, SEC-10, SEC-11, SEC-14, ABOM-01, ABOM-02
 **Success Criteria** (what must be TRUE):
   1. Outbound payloads carrying secrets/PII to untrusted targets are scored for exfiltration, and credentials/keys in prompts, tool args, or outputs are flagged.
   2. Malicious or drifted tool definitions are flagged (manifest-drift), an MCP security gateway inspects/normalizes MCP interactions and quarantines hostile manifests, and supply-chain checks cross-reference an agent's ABOM against known-bad components.
-  3. The gap detectors fire: memory/context-poisoning (ASI06) flags malicious memory writes/reads, inter-agent comms (ASI07) are authenticated with agent-card verification on delegation, and unsafe dynamic code/command execution (ASI05) is detected; intent classification deepens beyond P0 tags — sequence/lineage analysis catches multi-step evasions like `rename_then_drop` (SEC-13) and an embedding-similarity classifier flags novel actions near a forbidden-intent exemplar when deterministic tags are ambiguous (SEC-14).
+  3. The gap detectors fire: memory/context-poisoning (ASI06) flags malicious memory writes/reads, inter-agent comms (ASI07) are authenticated with agent-card verification on delegation, and unsafe dynamic code/command execution (ASI05) is detected; intent classification deepens beyond the Phase-3 sequence analysis (SEC-13, delivered in Phase 3) — an embedding-similarity classifier flags novel actions near a forbidden-intent exemplar when deterministic tags are ambiguous (SEC-14).
   4. Each `Agent` declares a versioned, provenance-tracked Agent Bill of Materials of models, prompts, tools, and MCP servers.
 **Plans**: TBD
 
@@ -220,7 +224,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 |-------|----------------|--------|-----------|
 | 1. Walking Skeleton | 6/6 | Complete    | 2026-06-01 |
 | 2. Full Interception Coverage | 1/1 | Complete    | 2026-06-07 |
-| 3. Constitution, Graduated Response & Approvals | 0/TBD | Not started | - |
+| 3. Constitution, Graduated Response, Approvals & Sequence Intent | 0/TBD | Not started | - |
 | 4. Tamper-Evident Audit & Operator Containment | 0/TBD | Not started | - |
 | 5. Control Plane, SDK & Minimal Dashboard | 0/TBD | Not started | - |
 | 6. Observability, Compliance & Red-Team Gate | 0/TBD | Not started | - |

@@ -64,7 +64,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [ ] **SEC-10** [P1]: Inter-agent communication is authenticated and agent identity/card is verified on delegation (OWASP ASI07)
 - [ ] **SEC-11** [P1]: A code-execution detector flags unsafe dynamic code/command execution by agents (OWASP ASI05)
 - [ ] **SEC-12** [P0]: Intent-based policy (pillar 3) — deterministic intent-class tags map single actions to a coarse intent class (e.g. `DATA_DESTRUCTION`), contributing to `risk_score` and populating `Decision.inferred_intent`; advisory to the policy floor, never a substitute for it
-- [ ] **SEC-13** [P1]: Sequence/lineage intent analysis over delegation chains catches multi-step evasions (e.g. `rename_then_drop`, copy-then-delete) that no single action string matches
+- [ ] **SEC-13** [P0]: Sequence/lineage intent analysis over delegation chains catches multi-step evasions (e.g. `rename_then_drop`, copy-then-delete) that no single action string matches — *pulled forward from P1 (2026-06-10): cross-action correlation is a durable AGT gap (their stateless kernel can't retrofit it) and the demoable wedge; see `docs/architecture/30-comparison-agt.md`*
 - [ ] **SEC-14** [P1]: An embedding-similarity intent classifier flags novel actions semantically close to a forbidden-intent exemplar, running only when deterministic tags are ambiguous
 
 ### Runtime Security — Containment
@@ -171,6 +171,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [ ] **SDK-02** [P0]: The SDK provides agent self-registration returning an identity token
 - [ ] **SDK-03** [P0]: The SDK provides pytest adapters for the red-team layer
 - [ ] **SDK-04** [P0]: The SDK provides a control-plane client for resource CRUD and approvals
+- [ ] **SDK-05** [P0]: A zero-infra quickstart runs the full governed loop with SQLite + in-process opa-wasm from a single `pip install` — no Docker, Postgres, or OPA server required (first-run friction must match AGT's one-decorator pitch)
 
 ### Dashboard
 
@@ -258,7 +259,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | SEC-10 | Phase 8 | Pending |
 | SEC-11 | Phase 8 | Pending |
 | SEC-12 | Phase 3 | Pending |
-| SEC-13 | Phase 8 | Pending |
+| SEC-13 | Phase 3 | Pending |
 | SEC-14 | Phase 8 | Pending |
 | RUN-01 | Phase 4 | Pending |
 | RUN-02 | Phase 4 | Pending |
@@ -329,6 +330,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | SDK-02 | Phase 5 | Pending |
 | SDK-03 | Phase 6 | Pending |
 | SDK-04 | Phase 5 | Pending |
+| SDK-05 | Phase 5 | Pending |
 | DASH-01 | Phase 5 | Pending |
 | DASH-02 | Phase 5 | Pending |
 | DASH-03 | Phase 5 | Pending |
@@ -336,10 +338,11 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | PERF-01 | Phase 14 | Pending |
 
 **Coverage:**
-- v1 requirements: 120 total
-- Mapped to phases: 120 ✓
+- v1 requirements: 121 total
+- Mapped to phases: 121 ✓
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-01*
-*Last updated: 2026-06-06 — added graduated-response extensions PIPE-09 (composable side-effects), POL-13 (temporary_exception), POL-14 (governance_review), AUD-08 (per-record signatures), AUD-09 (query-time evidence graph); 120/120 mapped*
+*Last updated: 2026-06-10 — AGT v4.1.0 re-verification: pulled SEC-13 (sequence/lineage intent correlation) forward P1→P0 / Phase 8→Phase 3 (durable AGT gap, demoable wedge); added SDK-05 (zero-infra SQLite + opa-wasm quickstart, Phase 5); 121/121 mapped*
+*Previous: 2026-06-06 — added graduated-response extensions PIPE-09 (composable side-effects), POL-13 (temporary_exception), POL-14 (governance_review), AUD-08 (per-record signatures), AUD-09 (query-time evidence graph)*

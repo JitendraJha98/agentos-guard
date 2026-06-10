@@ -9,6 +9,11 @@ AGT/RAMPART and most policy engines return a binary allow/deny. Real governance 
 options: an action may be acceptable if observed, sandboxed, peer-confirmed, or human-approved.
 A binary model forces a false choice between blocking useful work and permitting risk.
 
+> **Note (2026-06-10):** the context above is stale on one fact — AGT now returns
+> allow / deny / require_approval, not a binary. The decision stands unchanged: an
+> eight-outcome spectrum with composable side-effects remains well beyond AGT's three-outcome
+> ceiling. Current comparison: [`../30-comparison-agt.md`](../30-comparison-agt.md).
+
 ## Decision
 
 The Decision Pipeline's terminal stage produces a **graduated outcome** on the spectrum

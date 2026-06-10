@@ -16,11 +16,12 @@ unit test.
 ## What we are beating
 
 Microsoft's **Agent Governance Toolkit (AGT)** and **RAMPART**. They run on one reflex —
-*Distrust → Block → Log* — enforcing static YAML rules with append-only logs. agentos-guard
-runs *Trust → Verify → Graduate → Prove*: a *living* semantic constitution, **intent-based**
-(not string-matching) policy, *graduated* (non-binary) response, **cross-agent permission
-calculus**, explainable denials with remediation, a **CI-gating** red-team, and provable —
-not merely append-only — evidence.
+*Distrust → Block → Log* — deterministic rules with no semantic layer, per-action stateless
+evaluation, and raw unredacted audit. agentos-guard runs *Trust → Verify → Graduate → Prove*:
+a *living* semantic constitution, **intent-based** policy that correlates across actions
+(their stateless kernel cannot), *graduated* response beyond their three-outcome ceiling,
+**cross-agent permission calculus**, explainable denials with remediation, a **CI-gating**
+red-team, and provable — redacted, fail-closed — evidence.
 
 **Start with the [`00-manifesto.md`](00-manifesto.md)** — it states the paradigm and the seven
 pillars. The head-to-head scorecard is in [`30-comparison-agt.md`](30-comparison-agt.md).
@@ -49,7 +50,7 @@ pillars. The head-to-head scorecard is in [`30-comparison-agt.md`](30-comparison
 
 - **Name:** agentos-guard
 - **Stack:** Python-first; Rust reserved for hot enforcement paths in a later phase
-- **Ambition:** phased — MVP that beats AGT → roadmap to moonshot features
+- **Ambition:** phased — MVP reaching AGT parity + the durable wedge (semantic constitution, sequence-intent correlation) → roadmap to moonshot features
 - **v1 enforcement:** SDK interception (LangChain / LangGraph first); gateway + K8s later
 - **Policy substrate:** human-readable Constitution → compiled YAML → OPA/Rego, with an
   LLM semantic interpreter for ambiguous / graduated cases

@@ -21,7 +21,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-01)
 
 **Core value:** Every agent action is intercepted at runtime and returned an explainable, graduated decision grounded in policy + a human-readable constitution, with tamper-evident audit evidence — making unsafe agent behavior structurally impossible rather than merely unlikely.
-**Current focus:** Phase 3 — Constitution, graduated response & approvals
+**Current focus:** Phase 3 — Constitution, graduated response, approvals & sequence intent (SEC-13 pulled forward 2026-06-10; see ROADMAP.md)
 
 ## Current Position
 

@@ -33,7 +33,7 @@ PII table without an approved ticket"* and have it hold against sequences no one
 | Capability | Phase | Notes |
 |------------|-------|-------|
 | **Deterministic intent tags** | 0 | Verb/target/capability heuristics map single actions to a coarse intent class; cheap, inline, on the hot path. |
-| **Sequence/lineage intent** | 1 | Behavioral analysis over delegation/lineage chains catches multi-step `rename_then_drop`-style evasions. |
+| **Sequence/lineage intent** | 0 | Behavioral analysis over delegation/lineage chains catches multi-step `rename_then_drop`-style evasions. Pulled forward from P1 (2026-06-10): cross-action correlation is a durable AGT gap and the demoable wedge — see [`30-comparison-agt.md`](30-comparison-agt.md). Roadmap Phase 3 (SEC-13). |
 | **Embedding-similarity classifier** | 1 | Flags novel actions semantically close to a forbidden intent exemplar; runs only when deterministic tags are ambiguous. |
 
 Intent classification is **advisory to policy, never a substitute for it**: it raises

@@ -27,7 +27,7 @@ If everything else fails, the runtime **Decision Pipeline** (intercept → norma
 
 ### Active
 
-Building toward the full vision (Phases 0–2). Phase tags reflect the documented build sequence: **P0** = MVP that beats AGT, **P1** = trust / sandbox / scale, **P2** = moonshot differentiators.
+Building toward the full vision (Phases 0–2). Phase tags reflect the documented build sequence: **P0** = MVP reaching AGT parity + the durable wedge (semantic constitution, sequence-intent correlation), **P1** = trust / sandbox / scale, **P2** = moonshot differentiators.
 
 **Interception & Pipeline**
 - [ ] Intercept every agent action via Python SDK shim for LangChain/LangGraph; normalize to a single `AgentAction` event (P0)
@@ -77,6 +77,7 @@ Building toward the full vision (Phases 0–2). Phase tags reflect the documente
 **Control Plane, API, SDK & Dashboard**
 - [ ] Declarative Control-Plane API (Agent / Constitution / Policy / TrustProfile / ApprovalRequest / ABOM) on Postgres; compile-on-write (P0)
 - [ ] Python SDK: interception decorators/middleware, registration, pytest adapters, control-plane client (P0)
+- [ ] Zero-infra quickstart: full governed loop on SQLite + in-process opa-wasm from a single `pip install` — no Docker/Postgres/OPA server (P0)
 - [ ] Minimal dashboard: read-only views + approvals + kill switch (P0)
 - [ ] Reconciliation loops; richer dashboard (live graph, SLOs, attack visualization) (P1)
 - [ ] BFT consensus; Rust rewrite of hot-path enforcement where profiling justifies it (P2)
@@ -95,10 +96,10 @@ Building toward the full vision (Phases 0–2). Phase tags reflect the documente
 ## Context
 
 - **Design is fully documented** in `docs/architecture/` (00-manifesto + README + docs 01–10 + 20-roadmap + 30-comparison + ADRs 0001–0007). These are **authoritative** and the source of truth for planning. `docs/` is the design layer (*what/why*); `.planning/` is the execution layer (*how/when* — phases, REQ-IDs, plans). They are not duplicates; see `docs/architecture/README.md` → "`docs/` vs `.planning/`". Phase 1 (walking skeleton) is implemented and merged; everything beyond it is design ahead of code.
-- Directly inspired by, and positioned to **surpass**, Microsoft's **Agent Governance Toolkit (AGT)** and **RAMPART**. The paradigm shift is *Distrust→Block→Log* (AGT) → *Trust→Verify→Graduate→Prove* (us). **Seven differentiator pillars** (see `docs/architecture/00-manifesto.md`), none requiring crypto-economics:
+- Directly inspired by Microsoft's **Agent Governance Toolkit (AGT)** and **RAMPART**, and positioned **layer-first**: agentos-guard is *the semantic-judgment and memory-governance layer that deterministic enforcers — by their own documentation — do not provide*, with full-replacement positioning available later. The paradigm shift is *Distrust→Block→Log* (AGT) → *Trust→Verify→Graduate→Prove* (us). **Competitive facts re-verified 2026-06-10 (AGT v4.1.0)** — AGT has **no semantic/LLM layer** ("actions, not reasoning"), **no cross-action correlation** (stateless kernel), an admitted **memory/knowledge governance gap**, **raw unredacted audit parameters**, and a **default-allow posture**; it *does* ship Merkle audit, 0–1000 trust, SPIFFE/DID/mTLS, privilege rings, an MCP gateway, 5 language SDKs, and 19+ framework integrations. The durable gaps (semantic constitution, sequence-intent correlation) are front-loaded in the roadmap; parity features AGT does well are deliberately late. AGT releases monthly — **re-verify its feature set at the start of every phase** (`docs/architecture/30-comparison-agt.md` is the corrected scorecard). **Seven differentiator pillars** (see `docs/architecture/00-manifesto.md`), none requiring crypto-economics:
   1. Living semantic **constitution** (vs static YAML grep)
   2. **Graduated** response — allow/warn/sandbox/consensus/approval/temporary-exception/governance-review/deny + composable side-effects (vs binary)
-  3. **Intent-based policy** — catches `rename_then_drop` & novel sequences (vs action-string matching)
+  3. **Intent-based policy** — catches `rename_then_drop` & novel sequences (vs per-action stateless evaluation; sequence analysis pulled forward to roadmap Phase 3 as the demoable wedge)
   4. **Cross-agent permission calculus** — confused-deputy / transitive permissions (vs per-agent isolation)
   5. **Explainable denials with remediation** — cited principle + next steps (vs `GovernanceDenied: rule X`)
   6. Continuous, pytest-native red-team that **gates CI** + self-play (vs offline pre-deploy scan)
@@ -134,6 +135,10 @@ Building toward the full vision (Phases 0–2). Phase tags reflect the documente
 | Product name: agentos-guard | — | — Pending (ADR-0006) |
 | Milestone scope = full vision (Phases 0–2) | User chose to roadmap the entire documented vision now | — Pending (this session) |
 | Do not gate the MVP on moonshot features | Phase 0 competes with AGT on its own turf before reaching for research-grade features | — Pending |
+| Layer-first positioning vs AGT | AGT wins on breadth (5 SDKs, 19+ frameworks); we lead as the semantic-judgment + memory-governance layer it admits it lacks, with an optional AGT adapter (tracked with the Phase-10 gateway PEP); full-replacement later | — Decided 2026-06-10 |
+| SEC-13 (sequence-intent correlation) pulled P1→P0, Phase 8→Phase 3 | Cross-action correlation is a *durable* AGT gap (stateless kernel can't retrofit it) and the demoable wedge; incidental gaps (redaction, memory hooks) AGT can close in a sprint | — Decided 2026-06-10 |
+| Zero-infra quickstart is a P0 requirement (SDK-05) | AGT's pitch is one decorator with zero cloud deps; demanding Docker+Postgres+OPA for first run loses the OSS adoption race | — Decided 2026-06-10 |
+| Re-verify AGT's feature set at every phase start | AGT releases monthly (v3.2.0→v4.1.0 in 7 weeks); the 2026-06-01 research over-credited it a semantic layer it doesn't have — stale competitor intel distorts roadmap bets in both directions | — Decided 2026-06-10 |
 
 ## Evolution
 
@@ -153,4 +158,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-01 after initialization*
+*Last updated: 2026-06-10 — AGT v4.1.0 re-verification: corrected competitive facts, layer-first positioning, SEC-13 pull-forward, SDK-05 zero-infra quickstart, per-phase AGT re-verification rule*
