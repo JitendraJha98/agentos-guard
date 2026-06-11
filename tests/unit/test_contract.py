@@ -122,3 +122,16 @@ def test_side_effect_members():
     assert {s.value for s in SideEffect} == {
         "notify", "additional_monitoring", "risk_flag", "create_incident",
     }
+
+
+def test_reason_carries_explainable_denial_fields():
+    r = Reason(
+        stage="policy", code="pii_egress_violation", detail="PII to non-allowlisted host",
+        policy_id="constitution.3_2", principle_ref="3.2",
+        rationale="Principle 3.2 forbids sending user PII to unapproved hosts.",
+        evidence={"matched": "email_address", "host": "attacker.example"},
+    )
+    restored = Reason.model_validate_json(r.model_dump_json())
+    assert restored == r
+    assert restored.principle_ref == "3.2"
+    assert restored.evidence == {"matched": "email_address", "host": "attacker.example"}

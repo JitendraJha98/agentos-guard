@@ -35,6 +35,9 @@ class Reason(BaseModel):
     code: str                        # e.g. "egress_allowlist_violation", "forged_identity"
     detail: str = ""                 # short human string; NEVER raw attacker payload
     policy_id: str | None = None     # fired principle / policy id (Phase 1: the egress rule id)
+    principle_ref: str | None = None   # constitution principle id (e.g. "3.2") — PIPE-08
+    rationale: str = ""                # short human rationale — PIPE-08 (NEVER raw payload)
+    evidence: dict | None = None       # small structured evidence — PIPE-08
 
 
 class Decision(BaseModel):
