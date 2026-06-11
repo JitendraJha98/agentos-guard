@@ -16,11 +16,48 @@ Phase 3 — the SDK only acts on allow (run) / deny (block) this phase.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from agentos_contract import Outcome
 
-# Risk thresholds on a policy-ALLOWED action (the band, applied only above the floor).
-_DENY_THRESHOLD = 0.7   # high risk on an allowed action -> block
-_SANDBOX_THRESHOLD = 0.4  # mid risk -> sandbox vocabulary (enforcement is Phase 3)
+
+@dataclass(frozen=True)
+class GraduatedThresholds:
+    """Policy-driven graduated thresholds (POL-06). Defaults preserve the Phase-1 risk
+    bands (sandbox at 0.4, deny at 0.7) and realize the TRST-02 trust band as
+    conservative hardening-only (low trust tightens; trust never relaxes risk)."""
+
+    sandbox_at: float = 0.4
+    deny_at: float = 0.7
+    trust_harden_at: float = 0.2   # trust <= this -> tighten one risk step (TRST-02, conservative)
+
+
+# Restrictiveness ladder for the floor clamp (higher = more restrictive). The graduated
+# stage NEVER returns a result less restrictive than the policy floor.
+_RANK: dict[Outcome, int] = {
+    Outcome.allow: 0,
+    Outcome.warn: 1,
+    Outcome.governance_review: 2,
+    Outcome.temporary_exception: 2,
+    Outcome.sandbox: 3,
+    Outcome.require_consensus: 4,
+    Outcome.require_approval: 5,
+    Outcome.deny: 6,
+}
+# The subset risk alone can produce, ordered least->most restrictive (for trust stepping).
+_RISK_LADDER = [Outcome.allow, Outcome.sandbox, Outcome.deny]
+
+
+def _more_restrictive(a: Outcome, b: Outcome) -> Outcome:
+    return a if _RANK[a] >= _RANK[b] else b
+
+
+def _risk_to_outcome(risk_score: float, t: GraduatedThresholds) -> Outcome:
+    if risk_score >= t.deny_at:
+        return Outcome.deny
+    if risk_score >= t.sandbox_at:
+        return Outcome.sandbox
+    return Outcome.allow
 
 
 def graduated_response(policy_outcome: Outcome, risk_score: float, trust: float) -> Outcome:

@@ -52,3 +52,21 @@ def test_mid_risk_on_allowed_action_lands_in_sandbox_band() -> None:
 def test_low_risk_on_allowed_action_stays_allow() -> None:
     assert graduated_response(Outcome.allow, risk_score=0.0, trust=0.9) is Outcome.allow
     assert graduated_response(Outcome.allow, risk_score=0.39, trust=1.0) is Outcome.allow
+
+
+from agentos_pipeline.graduated import GraduatedThresholds, _more_restrictive, _risk_to_outcome
+
+
+def test_risk_to_outcome_default_bands():
+    t = GraduatedThresholds()
+    assert _risk_to_outcome(0.0, t) is Outcome.allow
+    assert _risk_to_outcome(0.39, t) is Outcome.allow
+    assert _risk_to_outcome(0.4, t) is Outcome.sandbox
+    assert _risk_to_outcome(0.69, t) is Outcome.sandbox
+    assert _risk_to_outcome(0.7, t) is Outcome.deny
+
+
+def test_more_restrictive_picks_higher_rank():
+    assert _more_restrictive(Outcome.allow, Outcome.require_approval) is Outcome.require_approval
+    assert _more_restrictive(Outcome.deny, Outcome.sandbox) is Outcome.deny
+    assert _more_restrictive(Outcome.warn, Outcome.allow) is Outcome.warn
