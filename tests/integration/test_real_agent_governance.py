@@ -21,15 +21,12 @@ from agentos_controlplane.registry import Registry
 from agentos_controlplane.store.engine import create_all, create_session_factory
 from agentos_controlplane.store.models import AuditRecord
 from agentos_pipeline.identity import IdentityStage
-from agentos_pipeline.policy import WasmPolicyEngine
+from agentos_pipeline.policy import ConstitutionPolicyEngine
 from agentos_pipeline.risk import PromptInjectionScorer
 from agentos_pipeline.runner import Pipeline
 from agentos_sdk import GovernanceMiddleware
 from agentos_sdk.tools import http_get
 from langchain.agents import create_agent
-
-EGRESS_WASM = "policies/build/egress.wasm"
-ALLOWLIST = ["api.example.com"]
 
 
 class _ToolCapableFake(GenericFakeChatModel):
@@ -39,7 +36,7 @@ class _ToolCapableFake(GenericFakeChatModel):
         return self
 
 
-def _wire():
+def _wire(constitution_wasm):
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_all(engine)
     sf = create_session_factory(engine)
@@ -47,7 +44,12 @@ def _wire():
     token = registry.register("test-agent")
     pipeline = Pipeline(
         identity=IdentityStage(registry.identity),
-        policy=WasmPolicyEngine(EGRESS_WASM, allowlist=ALLOWLIST),
+        policy=ConstitutionPolicyEngine(
+            wasm_path=str(constitution_wasm.wasm_path),
+            lists=constitution_wasm.bundle.lists,
+            constitution_version=constitution_wasm.bundle.constitution_version,
+            principles_meta=constitution_wasm.principles_meta,
+        ),
         scorers=[PromptInjectionScorer()],
         audit=AuditWriter(sf),
     )
@@ -59,9 +61,9 @@ def _rows(sf) -> list[AuditRecord]:
         return list(session.scalars(select(AuditRecord).order_by(AuditRecord.seq)))
 
 
-def test_real_agent_governs_both_model_and_tool_calls() -> None:
+def test_real_agent_governs_both_model_and_tool_calls(constitution_wasm) -> None:
     """create_agent loop: model->allow, attacker tool->deny (no egress), model->allow."""
-    pipeline, token, sf = _wire()
+    pipeline, token, sf = _wire(constitution_wasm)
     scripted = iter([
         AIMessage(
             content="",
@@ -93,9 +95,9 @@ def test_real_agent_governs_both_model_and_tool_calls() -> None:
         assert cur.prev_hash == prev.record_hash
 
 
-def test_real_agent_model_deny_terminates_cleanly() -> None:
+def test_real_agent_model_deny_terminates_cleanly(constitution_wasm) -> None:
     """Injection in the user turn -> model call DENIED; provider never called; clean stop."""
-    pipeline, token, sf = _wire()
+    pipeline, token, sf = _wire(constitution_wasm)
     # If governance failed open, this scripted reply would surface; it must NOT.
     agent = create_agent(
         model=_ToolCapableFake(messages=iter([AIMessage(content="LEAKED SECRET")])),

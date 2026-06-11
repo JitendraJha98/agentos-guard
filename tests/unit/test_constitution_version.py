@@ -12,7 +12,7 @@ def _principles(statement_suffix=""):
             "statement": "Only allowlisted hosts." + statement_suffix,
             "applies_to": ["tool_call"],
             "effect": "deny",
-            "when": {"field": "egress.host", "op": "not_in", "list_ref": "egress_allowlist"},
+            "when": {"field": "egress.host", "op": "not_in", "list_ref": "approved_hosts"},
         },
         {
             "id": "2.1",
@@ -34,7 +34,7 @@ def small_constitution_factory():
             hosts = list(reversed(hosts))
         return Constitution(
             schema_version=1, name="small",
-            principles=principles, lists={"egress_allowlist": hosts},
+            principles=principles, lists={"approved_hosts": hosts},
         )
 
     return make

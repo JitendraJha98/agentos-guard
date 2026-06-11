@@ -6,9 +6,9 @@ on:
   pull_request:
 
 env:
-  # Pinned OPA CLI release (D-06). The exact version is fixed so the WASM bundle
-  # produced in CI is reproducible. opa-wasmtime / the WasmPolicyEngine arrive in
-  # plan 01-04; until policies/ contains Rego, the opa steps below are no-ops.
+  # Pinned OPA CLI release (D-06). The exact version is fixed so the WASM bundles
+  # the test fixtures compile (tests/_opa.py builds the test constitutions at
+  # session start) are reproducible.
   OPA_VERSION: "1.9.0"
 
 jobs:
@@ -29,6 +29,9 @@ jobs:
         run: uv sync --all-packages
 
       - name: Install pinned OPA CLI
+        # Load-bearing for pytest: tests/_opa.py finds OPA on PATH and compiles
+        # the test constitutions (the D-04 with/without-principle WASM pair) at
+        # session start. Without it those tests skip instead of gating.
         run: |
           curl -fsSL -o /usr/local/bin/opa \
             "https://openpolicyagent.org/downloads/v${OPA_VERSION}/opa_linux_amd64_static"
@@ -37,28 +40,12 @@ jobs:
 
       - name: OPA policy tests
         run: |
-          # No-op until plan 01-04 authors policies/*.rego (Wave-1 CI stays green).
+          # Hand-written Rego is gone (the constitution compiler's golden/behavioral
+          # tests cover policy logic now); guard stays in case .rego returns.
           if compgen -G "policies/*.rego" > /dev/null; then
             opa test policies/
           else
-            echo "policies/ has no .rego yet — skipping opa test (added in plan 01-04)."
-          fi
-
-      - name: Build egress policy WASM (D-06)
-        # The WasmPolicyEngine + the e2e / red-team fixtures load policies/build/egress.wasm,
-        # which is a build PRODUCT (gitignored). CI MUST compile it from the tracked Rego
-        # BEFORE pytest, or the e2e + regression-lock tests error at fixture construction
-        # (missing WASM) — which would break the gate for the wrong reason and means
-        # "delete the principle -> CI fails" (D-04 / success criterion 4) is not truly enforced.
-        run: |
-          if compgen -G "policies/*.rego" > /dev/null; then
-            mkdir -p policies/build
-            opa build -t wasm -e 'agentos/egress/allow' policies/egress.rego -o policies/build/bundle.tar.gz
-            tar -xzf policies/build/bundle.tar.gz -C policies/build /policy.wasm
-            mv policies/build/policy.wasm policies/build/egress.wasm
-            test -f policies/build/egress.wasm && echo "Built policies/build/egress.wasm"
-          else
-            echo "policies/ has no .rego yet — skipping WASM build."
+            echo "policies/ has no hand-written .rego — policy logic is covered by the constitution compiler tests."
           fi
 
       - name: Pytest

@@ -19,8 +19,8 @@ def _p(**kw):
 
 def test_minimal_constitution_parses():
     c = Constitution(**BASE, principles=[_p(applies_to=["tool_call"],
-                                            when={"field": "egress.host", "op": "not_in", "list_ref": "egress_allowlist"})],
-                     lists={"egress_allowlist": ["api.example.com"]})
+                                            when={"field": "egress.host", "op": "not_in", "list_ref": "approved_hosts"})],
+                     lists={"approved_hosts": ["api.example.com"]})
     assert c.principles[0].id == "1.1"
 
 
@@ -97,13 +97,13 @@ def test_happy_path_full_construction():
         **BASE,
         principles=[
             _p(when={"all": [{"field": "guardrails.pii", "op": "eq", "value": True},
-                             {"field": "egress.host", "op": "not_in", "list_ref": "egress_allowlist"}]},
+                             {"field": "egress.host", "op": "not_in", "list_ref": "approved_hosts"}]},
                applies_to=["tool_call", "mcp_call"]),
             _p(id="2.1", effect="require_approval",
                when={"any": [{"field": "intent.class", "op": "eq", "value": "DATA_DESTRUCTION"},
                              {"field": "intent.class", "op": "eq", "value": "DATA_EXFILTRATION"}]}),
         ],
-        lists={"egress_allowlist": ["api.example.com"]},
+        lists={"approved_hosts": ["api.example.com"]},
         graduated={"default": {"sandbox_at": 0.4, "deny_at": 0.7, "trust_harden_at": 0.2}},
     )
     assert [p.id for p in c.principles] == ["1.1", "2.1"]

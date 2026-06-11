@@ -24,6 +24,7 @@ from agentos_controlplane.registry import Registry
 from agentos_controlplane.store.engine import create_all, create_session_factory
 from agentos_pipeline.identity import IdentityStage
 from agentos_pipeline.policy import ConstitutionPolicyEngine
+from agentos_pipeline.posture import PostureMap
 from agentos_pipeline.risk import PromptInjectionScorer
 from agentos_pipeline.runner import Pipeline
 
@@ -115,6 +116,7 @@ def _wire(policy_engine) -> WiredPipeline:
         policy=policy_engine,
         scorers=[PromptInjectionScorer()],
         audit=AuditWriter(session_factory),
+        posture=PostureMap(),  # defaults: every class fail-closed, no-match floor allow
     )
     return WiredPipeline(pipeline=pipeline, token=token, agent_id=AGENT_ID)
 

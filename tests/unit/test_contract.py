@@ -50,16 +50,17 @@ def test_decision_json_roundtrip_preserves_reasons():
         action_id="11111111-1111-1111-1111-111111111111",
         outcome=Outcome.deny,
         reasons=[
-            Reason(stage="policy", code="egress_allowlist_violation",
-                   policy_id="egress.allow", detail="host not in allowlist"),
+            Reason(stage="policy", code="constitution_principle_fired",
+                   policy_id="constitution.1.1", principle_ref="1.1",
+                   detail="host not in allowlist"),
             Reason(stage="graduated", code="deny"),
         ],
     )
     restored = Decision.model_validate_json(decision.model_dump_json())
     assert restored == decision
     assert restored.reasons[0].stage == "policy"
-    assert restored.reasons[0].code == "egress_allowlist_violation"
-    assert restored.reasons[0].policy_id == "egress.allow"
+    assert restored.reasons[0].code == "constitution_principle_fired"
+    assert restored.reasons[0].policy_id == "constitution.1.1"
 
 
 def test_decision_rejects_out_of_range_risk_score():

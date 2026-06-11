@@ -50,7 +50,7 @@ def _decision(action: AgentAction, outcome: Outcome = Outcome.allow) -> Decision
         outcome=outcome,
         risk_score=0.1,
         trust_score=0.5,
-        reasons=[Reason(stage="policy", code="egress_allowlisted", policy_id="egress.allow")],
+        reasons=[Reason(stage="policy", code="no_principle_matched")],
     )
 
 

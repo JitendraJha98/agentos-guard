@@ -59,7 +59,7 @@ class MatchedPrinciple:
 
 @dataclass(frozen=True)
 class ConstitutionResult:
-    """PolicyResult v2 — the structured verdict of the compiled constitution."""
+    """The policy-result v2 contract — the structured verdict of the compiled constitution."""
     matched: tuple[MatchedPrinciple, ...]
     no_match: bool
 

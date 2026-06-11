@@ -1,7 +1,7 @@
 """ConstitutionPolicyEngine — the multi-principle compiled-constitution floor
 (Slice-3 Task 4; POL-03 / PIPE-06 / POL-08).
 
-Replaces the Phase-1 WasmPolicyEngine tests: the engine evaluates the COMPILED
+Replaces the Phase-1 egress-engine tests: the engine evaluates the COMPILED
 TEST CONSTITUTION (tests/fixtures/test_constitution.yaml) and returns the D4
 ConstitutionResult (matched principles + no_match), exposes content-hash
 versions for POL-08 stamping, reloads on version change (the compiled-policy

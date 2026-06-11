@@ -31,7 +31,7 @@ def _decision(action: AgentAction) -> Decision:
     return Decision(
         action_id=action.id,
         outcome=Outcome.allow,
-        reasons=[Reason(stage="policy", code="no_egress_policy_applicable")],
+        reasons=[Reason(stage="policy", code="no_principle_matched")],
     )
 
 

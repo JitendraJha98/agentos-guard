@@ -74,7 +74,7 @@ def _allow_decision() -> Decision:
     return Decision(
         action_id=uuid4(),
         outcome=Outcome.allow,
-        reasons=[Reason(stage="policy", code="egress_allowlisted", policy_id="egress.allow")],
+        reasons=[Reason(stage="policy", code="no_principle_matched")],
     )
 
 
@@ -87,9 +87,10 @@ def _deny_decision() -> Decision:
         reasons=[
             Reason(
                 stage="policy",
-                code="egress_allowlist_violation",
-                policy_id="egress.allow",
-                detail="host not in allowlist",
+                code="constitution_principle_fired",
+                policy_id="constitution.1.1",
+                principle_ref="1.1",
+                rationale="Egress allowlist",
             )
         ],
     )
@@ -125,7 +126,7 @@ def test_deny_blocks_handler_and_returns_tool_message() -> None:
     # The blocking message is correlated back to the originating tool call.
     assert result.tool_call_id == "call_deny_42"
     # The fired reason is surfaced (machine-readable code present in the message).
-    assert "egress_allowlist_violation" in result.content
+    assert "constitution_principle_fired" in result.content
 
 
 # --- Interim Phase-3 fail-closed posture (H1): unrealized outcomes BLOCK ----------
