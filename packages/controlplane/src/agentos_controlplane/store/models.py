@@ -54,8 +54,8 @@ class AuditRecord(Base):
 
     `seq` is strictly monotonic and is COVERED by `record_hash` (Pitfall 8) —
     ordering derives from `seq`, never from `created_at`. `prev_hash` is NULL
-    only for the genesis record. `policy_version` is deferred to Phase 4
-    (AUD-03): it lives nullable inside `body`, NOT as a column.
+    only for the genesis record. `policy_version` lives nullable inside `body`,
+    NOT as a column (populated from Phase 3 Slice 3).
     """
 
     __tablename__ = "audit_record"

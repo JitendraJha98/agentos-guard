@@ -143,9 +143,18 @@ class AuditWriter:
                 "outcome": decision.outcome.value,
                 "risk_score": decision.risk_score,
                 "trust_score": decision.trust_score,
-                "reasons": [r.model_dump() for r in decision.reasons],
+                # mode="json" keeps every reason field JSON-native for canonical_json
+                # (belt-and-braces atop the contract's JSON-native evidence validator).
+                "reasons": [r.model_dump(mode="json") for r in decision.reasons],
                 "redacted_payload": redacted,
-                # policy_version: Phase 4 (AUD-03) — nullable / omitted now.
+                # Phase-3 Slice-1 Decision fields — all bounded/typed at the contract,
+                # so the hash covers the COMPLETE decision (no un-audited field).
+                "side_effects": [s.value for s in decision.side_effects],
+                "inferred_intent": decision.inferred_intent,
+                "remediation": decision.remediation,
+                "constitution_version": decision.constitution_version,
+                "policy_version": decision.policy_version,
+                "expires_at": decision.expires_at.isoformat() if decision.expires_at else None,
             }
             record_hash = hashlib.sha256(canonical_json(body)).hexdigest()
             return self._insert(seq, prev_hash, record_hash, body)
