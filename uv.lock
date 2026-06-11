@@ -4,11 +4,29 @@ requires-python = ">=3.12"
 
 [manifest]
 members = [
+    "agentos-constitution",
     "agentos-contract",
     "agentos-controlplane",
     "agentos-guard",
     "agentos-pipeline",
     "agentos-sdk",
+]
+
+[[package]]
+name = "agentos-constitution"
+version = "0.1.0"
+source = { editable = "packages/constitution" }
+dependencies = [
+    { name = "agentos-contract" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agentos-contract", editable = "packages/contract" },
+    { name = "pydantic", specifier = ">=2.13,<3" },
+    { name = "pyyaml", specifier = ">=6,<7" },
 ]
 
 [[package]]
@@ -48,6 +66,7 @@ name = "agentos-guard"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "agentos-constitution" },
     { name = "agentos-contract" },
     { name = "agentos-controlplane" },
     { name = "agentos-pipeline" },
@@ -71,6 +90,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "agentos-constitution", editable = "packages/constitution" },
     { name = "agentos-contract", editable = "packages/contract" },
     { name = "agentos-controlplane", editable = "packages/controlplane" },
     { name = "agentos-pipeline", editable = "packages/pipeline" },
