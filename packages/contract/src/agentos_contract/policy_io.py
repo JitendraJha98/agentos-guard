@@ -1,0 +1,72 @@
+"""D4 policy I/O contract — the seam shared by the constitution compiler (Slice 2),
+the policy engine/runner (Slice 3), and the interpreter trigger (Slice 5).
+
+The INPUT registry is versioned: `when.field` in a Constitution may reference only
+these dotted paths, and `build_policy_input` (Slice 3) emits exactly this shape.
+OUTCOME_RESTRICTIVENESS is the single restrictiveness order (graduated._RANK
+consolidates onto it in Slice 3)."""
+
+from dataclasses import dataclass
+
+from agentos_contract.decision import Outcome
+
+POLICY_INPUT_SCHEMA_VERSION = 1
+
+# field -> (python type, action types it applies to; "all" = every type)
+POLICY_INPUT_FIELDS: dict[str, tuple[type, frozenset[str] | str]] = {
+    "type": (str, "all"),
+    "target": (str, "all"),
+    "intent.class": (str, "all"),
+    "guardrails.pii": (bool, "all"),
+    "guardrails.unsafe": (bool, "all"),
+    "guardrails.format": (bool, "all"),
+    "sequence.matched_refs": (list, "all"),
+    "egress.host": (str, frozenset({"tool_call", "mcp_call"})),
+    "memory.operation": (str, frozenset({"memory_access"})),
+    "memory.key": (str, frozenset({"memory_access"})),
+    "mcp.server": (str, frozenset({"mcp_call"})),
+    "mcp.tool": (str, frozenset({"mcp_call"})),
+    "delegation.to_agent": (str, frozenset({"delegation"})),
+    "model.name": (str, frozenset({"model_invocation"})),
+}
+
+# Single source of restrictiveness (ties: governance_review/temporary_exception both
+# "proceed with oversight"). deny is maximal; allow minimal.
+OUTCOME_RESTRICTIVENESS: dict[Outcome, int] = {
+    Outcome.allow: 0,
+    Outcome.warn: 1,
+    Outcome.governance_review: 2,
+    Outcome.temporary_exception: 2,
+    Outcome.sandbox: 3,
+    Outcome.require_consensus: 4,
+    Outcome.require_approval: 5,
+    Outcome.deny: 6,
+}
+
+# POL-13: temporary_exception is human-ratified only — never authorable as an effect.
+AUTHORABLE_EFFECTS: frozenset[str] = frozenset(
+    o.value for o in Outcome if o is not Outcome.temporary_exception
+)
+
+
+@dataclass(frozen=True)
+class MatchedPrinciple:
+    """One fired principle from the deterministic floor (provenance for Reason)."""
+    principle_ref: str
+    effect: str
+    evidence: dict | None = None
+
+
+@dataclass(frozen=True)
+class ConstitutionResult:
+    """PolicyResult v2 — the structured verdict of the compiled constitution."""
+    matched: tuple[MatchedPrinciple, ...]
+    no_match: bool
+
+
+def select_floor(matched: list[MatchedPrinciple] | tuple[MatchedPrinciple, ...]) -> Outcome | None:
+    """Deny-overrides-allow: the most restrictive matched effect is the floor.
+    Returns None on no match — that floor is the per-action-class posture (PIPE-05)."""
+    if not matched:
+        return None
+    return max((Outcome(m.effect) for m in matched), key=OUTCOME_RESTRICTIVENESS.__getitem__)
