@@ -60,24 +60,28 @@ def _risk_to_outcome(risk_score: float, t: GraduatedThresholds) -> Outcome:
     return Outcome.allow
 
 
-def graduated_response(policy_outcome: Outcome, risk_score: float, trust: float) -> Outcome:
+def _apply_trust_band(base: Outcome, trust: float, t: GraduatedThresholds) -> Outcome:
+    """TRST-02: trust modulates WITHIN a band. Conservative default = hardening-only —
+    low trust (<= trust_harden_at) tightens the risk outcome by one ladder step; trust
+    NEVER relaxes (defends Pitfall 10 trust-farming) and never crosses the deny ceiling."""
+    if trust <= t.trust_harden_at and base in _RISK_LADDER:
+        i = _RISK_LADDER.index(base)
+        return _RISK_LADDER[min(i + 1, len(_RISK_LADDER) - 1)]
+    return base
+
+
+def graduated_response(
+    policy_outcome: Outcome,
+    risk_score: float,
+    trust: float,
+    thresholds: GraduatedThresholds = GraduatedThresholds(),
+) -> Outcome:
     """Map {policy, risk, trust} to one outcome, never relaxing the policy floor.
 
-    Args:
-        policy_outcome: the deterministic OPA floor (the authoritative signal).
-        risk_score: advisory 0–1 risk from the inline detector (may only restrict).
-        trust: advisory 0–1 agent trust (modulates WITHIN the band; never flips deny).
-
-    Returns:
-        The graduated Outcome — equal to or more restrictive than the policy floor.
+    INVARIANT (POL-05/TRST-02): the result is never LESS restrictive than
+    `policy_outcome`; a policy `deny` is terminal; risk/trust may only RESTRICT.
     """
-    # FLOOR: a policy deny is terminal — nothing below can upgrade it (POL-05/TRST-02).
     if policy_outcome == Outcome.deny:
-        return Outcome.deny
-    # Policy allowed -> risk/trust may only move DOWN the spectrum.
-    if risk_score >= _DENY_THRESHOLD:
-        return Outcome.deny
-    if risk_score >= _SANDBOX_THRESHOLD:
-        return Outcome.sandbox  # vocabulary present; Phase 1 realizes allow+deny (D-13)
-    # Trust modulates WITHIN the band (TRST-01) but a policy allow with low risk stays allow.
-    return Outcome.allow
+        return Outcome.deny  # terminal floor (POL-05)
+    risk_outcome = _apply_trust_band(_risk_to_outcome(risk_score, thresholds), trust, thresholds)
+    return _more_restrictive(policy_outcome, risk_outcome)

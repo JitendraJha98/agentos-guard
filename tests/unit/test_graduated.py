@@ -70,3 +70,23 @@ def test_more_restrictive_picks_higher_rank():
     assert _more_restrictive(Outcome.allow, Outcome.require_approval) is Outcome.require_approval
     assert _more_restrictive(Outcome.deny, Outcome.sandbox) is Outcome.deny
     assert _more_restrictive(Outcome.warn, Outcome.allow) is Outcome.warn
+
+
+def test_low_trust_hardens_within_band():
+    # trust <= 0.2 tightens the risk outcome one step; never below floor, never relaxes.
+    assert graduated_response(Outcome.allow, risk_score=0.45, trust=0.1) is Outcome.deny     # sandbox -> deny
+    assert graduated_response(Outcome.allow, risk_score=0.0, trust=0.1) is Outcome.sandbox   # allow -> sandbox
+
+
+def test_high_trust_is_neutral_baseline():
+    # high trust does NOT relax risk (conservative hardening-only band).
+    assert graduated_response(Outcome.allow, risk_score=0.45, trust=1.0) is Outcome.sandbox
+    assert graduated_response(Outcome.allow, risk_score=0.0, trust=1.0) is Outcome.allow
+
+
+def test_policy_floor_is_a_lower_bound():
+    # A principle effect of require_approval is never relaxed by low risk/high trust.
+    assert graduated_response(Outcome.require_approval, risk_score=0.0, trust=1.0) is Outcome.require_approval
+    # ...but risk can still escalate ABOVE the floor.
+    assert graduated_response(Outcome.sandbox, risk_score=0.8, trust=1.0) is Outcome.deny
+    assert graduated_response(Outcome.warn, risk_score=0.0, trust=1.0) is Outcome.warn
