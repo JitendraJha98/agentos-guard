@@ -32,7 +32,7 @@ from uuid import UUID
 
 from agentos_contract import AgentAction, Decision, Outcome, Reason, RiskScorer
 
-from agentos_pipeline.graduated import graduated_response
+from agentos_pipeline.graduated import GraduatedThresholds, graduated_response
 from agentos_pipeline.identity import IdentityStage, IdentityVerdict
 from agentos_pipeline.policy import PolicyResult
 from agentos_pipeline.risk import assess_risk
@@ -58,7 +58,7 @@ def _host(action: AgentAction) -> str:
 
 
 class Pipeline:
-    """The synchronous 4-stage PDP. Satisfies PipelineProtocol (async evaluate)."""
+    """The 4-stage PDP (async evaluate; CPU stages inline). Satisfies PipelineProtocol."""
 
     def __init__(
         self,
@@ -67,11 +67,13 @@ class Pipeline:
         policy: _PolicyEngine,
         scorers: list[RiskScorer],
         audit: _AuditWriter,
+        thresholds: GraduatedThresholds = GraduatedThresholds(),
     ) -> None:
         self._identity = identity
         self._policy = policy
         self._scorers = scorers
         self._audit = audit
+        self._thresholds = thresholds  # POL-06: injectable graduated risk bands
 
     async def evaluate(self, action: AgentAction) -> Decision:
         reasons: list[Reason] = []
@@ -111,7 +113,7 @@ class Pipeline:
             )
 
         # Stage 4 — Graduated (POL-06): risk/trust may only RESTRICT the policy floor.
-        outcome = graduated_response(pol.outcome, risk_score, trust)
+        outcome = graduated_response(pol.outcome, risk_score, trust, self._thresholds)
         reasons.append(Reason(stage="graduated", code=outcome.value))
 
         decision = Decision(

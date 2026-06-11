@@ -57,8 +57,14 @@ _RANK: dict[Outcome, int] = {
     Outcome.require_approval: 5,
     Outcome.deny: 6,
 }
-# The subset risk alone can produce, ordered least->most restrictive (for trust stepping).
-_RISK_LADDER = [Outcome.allow, Outcome.sandbox, Outcome.deny]
+# Low trust tightens one step, keeping a human in the loop: a mid-risk sandbox
+# becomes require_approval (not a hard deny) — still strictly more restrictive
+# by _RANK, so every floor/monotonicity invariant holds.
+_HARDEN_NEXT: dict[Outcome, Outcome] = {
+    Outcome.allow: Outcome.sandbox,
+    Outcome.sandbox: Outcome.require_approval,
+    Outcome.deny: Outcome.deny,
+}
 
 
 def _more_restrictive(a: Outcome, b: Outcome) -> Outcome:
@@ -75,11 +81,10 @@ def _risk_to_outcome(risk_score: float, t: GraduatedThresholds) -> Outcome:
 
 def _apply_trust_band(base: Outcome, trust: float, t: GraduatedThresholds) -> Outcome:
     """TRST-02: trust modulates WITHIN a band. Conservative default = hardening-only —
-    low trust (<= trust_harden_at) tightens the risk outcome by one ladder step; trust
+    low trust (<= trust_harden_at) tightens the risk outcome by one step; trust
     NEVER relaxes (defends Pitfall 10 trust-farming) and never crosses the deny ceiling."""
-    if trust <= t.trust_harden_at and base in _RISK_LADDER:
-        i = _RISK_LADDER.index(base)
-        return _RISK_LADDER[min(i + 1, len(_RISK_LADDER) - 1)]
+    if trust <= t.trust_harden_at:
+        return _HARDEN_NEXT.get(base, base)
     return base
 
 

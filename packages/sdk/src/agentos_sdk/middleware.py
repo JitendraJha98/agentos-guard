@@ -5,13 +5,15 @@ and short-circuit code) + 01-AI-SPEC.md §4 "Tool Use"; CONTEXT.md D-01/D-03/D-0
 
 This is the Policy Enforcement Point. It intercepts every governed tool call BEFORE
 it executes, normalizes it into a stable `AgentAction`, asks the in-process pipeline
-(the PDP, D-07) for a `Decision`, and enforces it — that is the entire allow/deny
-mechanism (D-03):
+(the PDP, D-07) for a `Decision`, and enforces it via the single shared posture
+(`agentos_sdk.enforce.should_execute`, D-03):
 
-  - allow -> call `handler(request)` so the tool runs;
-  - deny  -> return a `ToolMessage` carrying the fired reasons WITHOUT calling
-             `handler`, so the tool never executes (no egress — the enforcement
-             contract; threat T-01-19).
+  - executable (allow / warn / governance_review) -> call `handler(request)` so the
+    tool runs;
+  - anything else (deny, plus outcomes whose enforcement is not yet realized —
+    interim fail-closed posture) -> return a `ToolMessage` carrying the fired reasons
+    WITHOUT calling `handler`, so the tool never executes (no egress — the
+    enforcement contract; threat T-01-19).
 
 Async-hook resolution (Open Q2 / Assumption A3, RESOLVED 2026-06-02): langchain 1.3.2
 exposes `awrap_tool_call(self, request, handler)` whose `handler` returns an Awaitable.
@@ -30,14 +32,14 @@ from __future__ import annotations
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ToolCallRequest
 from langchain.messages import AIMessage, ToolMessage
 
-from agentos_contract import Outcome, PipelineProtocol
+from agentos_contract import PipelineProtocol
 
-from agentos_sdk.enforce import format_reasons
+from agentos_sdk.enforce import format_reasons, should_execute
 from agentos_sdk.normalize import normalize_action, normalize_model_call
 
 
 class GovernanceMiddleware(AgentMiddleware):
-    """The PEP: intercept -> normalize -> evaluate -> enforce (allow runs / deny blocks).
+    """The PEP: intercept -> normalize -> evaluate -> enforce (executable runs / else blocks).
 
     Two native LangChain hooks are governed here: tool calls (INT-01) and model
     invocations (INT-02). Memory, MCP, and delegation are not LangChain middleware
@@ -50,27 +52,27 @@ class GovernanceMiddleware(AgentMiddleware):
         self._token = token        # the agent's signed JWT (from registration, IDN-01)
 
     async def awrap_tool_call(self, request: ToolCallRequest, handler):
-        """Async PEP hook (langchain 1.3.2). Allow runs the tool; deny blocks egress."""
+        """Async PEP hook (langchain 1.3.2). Executable runs the tool; else blocks egress."""
         action = normalize_action(request, self._token)
         decision = await self._pipeline.evaluate(action)
-        if decision.outcome == Outcome.deny:
+        if not should_execute(decision):
             # SHORT-CIRCUIT: do NOT call handler() -> the tool never executes (D-03).
             return ToolMessage(
                 content=f"Blocked by agentos-guard: {format_reasons(decision)}",
                 tool_call_id=request.tool_call["id"],
             )
-        return await handler(request)  # allow -> the tool executes
+        return await handler(request)  # executable -> the tool runs
 
     async def awrap_model_call(self, request: ModelRequest, handler):
-        """Async PEP hook (INT-02). Allow invokes the model; deny blocks the call.
+        """Async PEP hook (INT-02). Executable invokes the model; else blocks the call.
 
-        On deny the provider is NEVER called (handler is not awaited) — no prompt
+        On a block the provider is NEVER called (handler is not awaited) — no prompt
         leaves the process — and an AIMessage carrying the fired reasons is returned in
         place of the model's response, so the agent loop sees an explainable block.
         """
         action = normalize_model_call(request, self._token)
         decision = await self._pipeline.evaluate(action)
-        if decision.outcome == Outcome.deny:
+        if not should_execute(decision):
             # SHORT-CIRCUIT: the model is never invoked (no prompt egress to the provider).
             return AIMessage(content=f"Blocked by agentos-guard: {format_reasons(decision)}")
-        return await handler(request)  # allow -> the model is invoked
+        return await handler(request)  # executable -> the model is invoked

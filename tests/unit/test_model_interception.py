@@ -76,6 +76,16 @@ def test_deny_blocks_model_and_returns_reasons() -> None:
     assert "prompt_injection" in result.content
 
 
+def test_sandbox_blocks_model_fail_closed() -> None:
+    # Interim Phase-3 posture (H1): sandbox is not enforceable yet — no prompt egress.
+    mw = GovernanceMiddleware(_FakePipeline(_decision(Outcome.sandbox)), TOKEN)
+    handler = _SpyHandler()
+    result = asyncio.run(mw.awrap_model_call(_FakeModelRequest(), handler))
+    assert handler.calls == 0  # the provider was NEVER called
+    assert isinstance(result, AIMessage)
+    assert "Blocked by agentos-guard" in result.content
+
+
 def test_model_action_is_normalized() -> None:
     pipeline = _FakePipeline(_decision(Outcome.allow))
     mw = GovernanceMiddleware(pipeline, TOKEN)

@@ -128,6 +128,48 @@ def test_deny_blocks_handler_and_returns_tool_message() -> None:
     assert "egress_allowlist_violation" in result.content
 
 
+# --- Interim Phase-3 fail-closed posture (H1): unrealized outcomes BLOCK ----------
+
+
+def _outcome_decision(outcome: Outcome) -> Decision:
+    from uuid import uuid4
+
+    return Decision(
+        action_id=uuid4(),
+        outcome=outcome,
+        reasons=[Reason(stage="graduated", code=outcome.value)],
+    )
+
+
+def test_sandbox_blocks_tool_fail_closed() -> None:
+    # sandbox enforcement is not realized yet (Slice 6) — the tool must NOT run.
+    mw = GovernanceMiddleware(_FakePipeline(_outcome_decision(Outcome.sandbox)), TOKEN)
+    handler = _SpyHandler()
+    result = asyncio.run(mw.awrap_tool_call(_request(call_id="call_sbx_7"), handler))
+    assert handler.calls == 0  # no egress under the interim fail-closed posture
+    assert isinstance(result, ToolMessage)
+    assert result.tool_call_id == "call_sbx_7"
+    assert "Blocked by agentos-guard" in result.content
+
+
+def test_warn_executes_tool() -> None:
+    mw = GovernanceMiddleware(_FakePipeline(_outcome_decision(Outcome.warn)), TOKEN)
+    handler = _SpyHandler()
+    result = asyncio.run(mw.awrap_tool_call(_request(), handler))
+    assert handler.calls == 1
+    assert result.content == "tool ran"
+
+
+def test_governance_review_executes_tool() -> None:
+    mw = GovernanceMiddleware(
+        _FakePipeline(_outcome_decision(Outcome.governance_review)), TOKEN
+    )
+    handler = _SpyHandler()
+    result = asyncio.run(mw.awrap_tool_call(_request(), handler))
+    assert handler.calls == 1
+    assert result.content == "tool ran"
+
+
 def test_middleware_does_not_spin_a_nested_event_loop() -> None:
     """Guard against asyncio.run() in the hook (raises in a running loop)."""
     src = Path(GovernanceMiddleware.__module__.replace(".", "/"))

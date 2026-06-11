@@ -77,7 +77,8 @@ def test_more_restrictive_picks_higher_rank():
 
 def test_low_trust_hardens_within_band():
     # trust <= 0.2 tightens the risk outcome one step; never below floor, never relaxes.
-    assert graduated_response(Outcome.allow, risk_score=0.45, trust=0.1) is Outcome.deny     # sandbox -> deny
+    # Mid-risk hardening keeps a human in the loop: sandbox -> require_approval, NOT deny.
+    assert graduated_response(Outcome.allow, risk_score=0.45, trust=0.1) is Outcome.require_approval
     assert graduated_response(Outcome.allow, risk_score=0.0, trust=0.1) is Outcome.sandbox   # allow -> sandbox
 
 

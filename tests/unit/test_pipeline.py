@@ -26,6 +26,7 @@ import asyncio
 from uuid import UUID, uuid4
 
 from agentos_contract import ActionType, AgentAction, Outcome, RiskFinding
+from agentos_pipeline.graduated import GraduatedThresholds
 from agentos_pipeline.policy import PolicyResult
 from agentos_pipeline.runner import Pipeline
 
@@ -198,3 +199,18 @@ def test_policy_input_carries_parsed_host() -> None:
     assert pol.last_input is not None
     assert pol.last_input["host"] == "api.example.com"
     assert pol.last_input["type"] == "tool_call"
+
+
+def test_injected_thresholds_reach_the_graduated_stage() -> None:
+    # POL-06: GraduatedThresholds is injectable — a sandbox_at of 0.01 must move a
+    # low-risk action into sandbox, proving the config actually reaches the stage.
+    ident = FakeIdentityStage(ok=True, trust_score=0.5)
+    pol = SpyPolicyEngine(Outcome.allow)
+    scorer = SpyScorer(0.05)
+    audit = FakeAuditWriter()
+    pipeline = Pipeline(
+        identity=ident, policy=pol, scorers=[scorer], audit=audit,
+        thresholds=GraduatedThresholds(sandbox_at=0.01, deny_at=0.99),
+    )
+    decision = asyncio.run(pipeline.evaluate(_action()))
+    assert decision.outcome is Outcome.sandbox
