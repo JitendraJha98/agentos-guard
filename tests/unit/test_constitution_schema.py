@@ -18,7 +18,8 @@ def _p(**kw):
 
 
 def test_minimal_constitution_parses():
-    c = Constitution(**BASE, principles=[_p(when={"field": "egress.host", "op": "not_in", "list_ref": "egress_allowlist"})],
+    c = Constitution(**BASE, principles=[_p(applies_to=["tool_call"],
+                                            when={"field": "egress.host", "op": "not_in", "list_ref": "egress_allowlist"})],
                      lists={"egress_allowlist": ["api.example.com"]})
     assert c.principles[0].id == "1.1"
 
@@ -35,7 +36,8 @@ def test_unknown_when_field_rejected():                # registry-validated alge
 
 def test_list_ref_must_exist():
     with pytest.raises(ValidationError, match="unknown list"):
-        Constitution(**BASE, principles=[_p(when={"field": "egress.host", "op": "in", "list_ref": "ghost"})])
+        Constitution(**BASE, principles=[_p(applies_to=["tool_call"],
+                                            when={"field": "egress.host", "op": "in", "list_ref": "ghost"})])
 
 
 def test_duplicate_principle_ids_rejected():
@@ -57,6 +59,32 @@ def test_nesting_depth_bounded_at_3():
     deep = {"not": {"all": [{"any": [{"not": {"field": "type", "op": "eq", "value": "x"}}]}]}}
     with pytest.raises(ValidationError, match="depth"):
         Constitution(**BASE, principles=[_p(when=deep)])
+
+
+def test_scoped_field_rejected_when_applies_to_all():  # egress.host is tool_call/mcp_call only
+    with pytest.raises(ValidationError, match="subset"):
+        Constitution(**BASE, principles=[_p(when={"field": "egress.host", "op": "eq", "value": "x"})])
+
+
+def test_scoped_field_rejected_outside_its_action_types():
+    with pytest.raises(ValidationError, match="subset"):
+        Constitution(**BASE, principles=[_p(applies_to=["memory_access"],
+                                            when={"field": "egress.host", "op": "eq", "value": "x"})])
+
+
+def test_title_with_newline_rejected():               # Rego comment-injection gate
+    with pytest.raises(ValidationError, match="control"):
+        Constitution(**BASE, principles=[_p(title="Benign\ninjected := true")])
+
+
+def test_statement_with_carriage_return_rejected():
+    with pytest.raises(ValidationError, match="control"):
+        Constitution(**BASE, principles=[_p(statement="line one\rline two")])
+
+
+def test_multiline_statement_accepted():
+    c = Constitution(**BASE, principles=[_p(statement="line one\nline two")])
+    assert c.principles[0].statement == "line one\nline two"
 
 
 def test_op_type_compatibility():

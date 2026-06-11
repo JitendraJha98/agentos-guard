@@ -134,6 +134,24 @@ class Principle(BaseModel):
     sequence: list[str] | None = None   # sequence kind only
     side_effects: list[SideEffect] = Field(default_factory=list)
 
+    @field_validator("title")
+    @classmethod
+    def _title_no_control_chars(cls, v: str) -> str:
+        # A raw newline in the title would escape the generated `# Principle …`
+        # Rego comment and inject an enforced rule absent from the YAML layer.
+        if any(ch < " " for ch in v):
+            raise ValueError("title must not contain control characters")
+        return v
+
+    @field_validator("statement")
+    @classmethod
+    def _statement_no_control_chars(cls, v: str) -> str:
+        # Multi-line prose is fine (the emitter prefixes each line with `# `),
+        # but every other control character is rejected.
+        if any(ch < " " and ch != "\n" for ch in v):
+            raise ValueError("statement must not contain control characters other than newline")
+        return v
+
     @field_validator("effect")
     @classmethod
     def _authorable_effect(cls, v: str) -> str:
@@ -172,6 +190,24 @@ class Principle(BaseModel):
                 raise ValueError("action principles must not declare a sequence")
         if self.when is not None and _depth(self.when) > _MAX_DEPTH:
             raise ValueError(f"when condition nesting depth exceeds {_MAX_DEPTH}")
+        return self
+
+    @model_validator(mode="after")
+    def _field_scope(self) -> "Principle":
+        # Registry-scoped fields (e.g. egress.host -> tool_call/mcp_call) are
+        # absent for other action types, where ne/not_in would silently fire —
+        # so applies_to must be a subset of every used field's allowed types.
+        if self.when is None:
+            return self
+        for leaf in _leaves(self.when):
+            allowed = POLICY_INPUT_FIELDS[leaf.field][1]
+            if allowed == "all":
+                continue
+            if self.applies_to == "all" or not {t.value for t in self.applies_to} <= allowed:
+                raise ValueError(
+                    f"field {leaf.field!r} applies to {{{', '.join(sorted(allowed))}}}; "
+                    f"principle {self.id} applies_to must be a subset"
+                )
         return self
 
 

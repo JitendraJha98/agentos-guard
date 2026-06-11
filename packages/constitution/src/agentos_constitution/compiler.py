@@ -42,10 +42,16 @@ class CompiledBundle:
 
 # ---- condition lowering ----
 
+# The schema's depth<=3 bound limits nesting, NOT breadth: an `all` of N `any`
+# nodes expands to the product of their branch counts (e.g. 4 any-of-3 -> 81
+# disjuncts), so _principle_rules enforces this ceiling per principle.
+_MAX_DISJUNCTS = 64
+
+
 def _to_dnf(node: Node, negated: bool = False) -> list[list[tuple[Leaf, bool]]]:
     """Normalize to a list of disjuncts; each disjunct is [(leaf, negated)].
-    not(all) / not(any) via De Morgan; not(leaf) -> (leaf, True). Depth<=3 keeps the
-    product expansion tiny (validated at schema level)."""
+    not(all) / not(any) via De Morgan; not(leaf) -> (leaf, True). Expansion is a
+    cross product over `all` children — the caller caps it at _MAX_DISJUNCTS."""
     if isinstance(node, Leaf):
         return [[(node, negated)]]
     if isinstance(node, NotNode):
@@ -98,8 +104,16 @@ def _lower_leaf(leaf: Leaf, negated: bool) -> str:
     return line
 
 
+def _sanitize_comment(text: str) -> str:
+    """Defense-in-depth (schema already rejects these): control characters must
+    not break out of a single `# ` comment line, so replace them with spaces."""
+    return "".join(" " if ch < " " else ch for ch in text)
+
+
 def _principle_rules(p: Principle) -> str:
-    comment_lines = [f"# Principle {p.id} — {p.title}"]
+    comment_lines = [f"# Principle {p.id} — {_sanitize_comment(p.title)}"]
+    # splitlines() splits on \r and every other line boundary, so each statement
+    # line lands inside its own `# ` comment — nothing can escape into Rego.
     comment_lines += [f"# {line}" for line in p.statement.splitlines()]
     comment = "\n".join(comment_lines)
 
@@ -113,6 +127,11 @@ def _principle_rules(p: Principle) -> str:
         bodies = [scope + [f'"{p.id}" in input.sequence.matched_refs']]
     else:
         disjuncts = _to_dnf(p.when) if p.when is not None else [[]]
+        if len(disjuncts) > _MAX_DISJUNCTS:
+            raise ValueError(
+                f"principle {p.id}: condition expands to {len(disjuncts)} disjuncts "
+                f"(max {_MAX_DISJUNCTS}) — simplify the condition"
+            )
         bodies = [scope + [_lower_leaf(leaf, neg) for leaf, neg in disjunct] or ["true"]
                   for disjunct in disjuncts]
 

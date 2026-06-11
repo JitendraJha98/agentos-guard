@@ -10,6 +10,7 @@ def _principles(statement_suffix=""):
             "id": "1.1",
             "title": "Egress allowlist",
             "statement": "Only allowlisted hosts." + statement_suffix,
+            "applies_to": ["tool_call"],
             "effect": "deny",
             "when": {"field": "egress.host", "op": "not_in", "list_ref": "egress_allowlist"},
         },
