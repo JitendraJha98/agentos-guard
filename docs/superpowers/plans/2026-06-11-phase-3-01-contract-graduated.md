@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to
 > implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> **Commit convention:** every commit ends with a `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`
+> **Commit convention:** every commit ends with a `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
 > trailer (pass it as a second `-m`). Run tests from the repo root with the workspace venv.
 
 **Goal:** Extend the stable `contract` package for Phase 3's full graduated spectrum + explainable
@@ -110,7 +110,7 @@ Expected: PASS (new + all existing contract tests).
 
 ```bash
 git add packages/contract/src/agentos_contract/decision.py packages/contract/src/agentos_contract/__init__.py tests/unit/test_contract.py
-git commit -m "feat(contract): add temporary_exception/governance_review outcomes + SideEffect (POL-13/14, PIPE-09)" -m "Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+git commit -m "feat(contract): add temporary_exception/governance_review outcomes + SideEffect (POL-13/14, PIPE-09)" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -160,7 +160,7 @@ Expected: PASS.
 
 ```bash
 git add packages/contract/src/agentos_contract/decision.py tests/unit/test_contract.py
-git commit -m "feat(contract): Reason carries {principle_ref, rationale, evidence} (PIPE-08)" -m "Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+git commit -m "feat(contract): Reason carries {principle_ref, rationale, evidence} (PIPE-08)" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -232,7 +232,7 @@ Expected: PASS (incl. existing `test_decision_json_roundtrip_preserves_reasons`,
 
 ```bash
 git add packages/contract/src/agentos_contract/decision.py tests/unit/test_contract.py
-git commit -m "feat(contract): Decision carries side_effects/intent/remediation/version/expires_at (PIPE-08/09, POL-08/13, SEC-12)" -m "Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+git commit -m "feat(contract): Decision carries side_effects/intent/remediation/version/expires_at (PIPE-08/09, POL-08/13, SEC-12)" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -329,7 +329,7 @@ Expected: PASS. (The old `graduated_response` tests may transiently fail until T
 
 ```bash
 git add packages/pipeline/src/agentos_pipeline/graduated.py tests/unit/test_graduated.py
-git commit -m "feat(pipeline): GraduatedThresholds + restrictiveness ladder for the full spectrum (POL-06)" -m "Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+git commit -m "feat(pipeline): GraduatedThresholds + restrictiveness ladder for the full spectrum (POL-06)" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -407,7 +407,7 @@ Expected: PASS — the new tests AND every pre-existing band/floor test in the f
 
 ```bash
 git add packages/pipeline/src/agentos_pipeline/graduated.py tests/unit/test_graduated.py
-git commit -m "feat(pipeline): floor-preserving graduated_response with conservative trust band (TRST-02)" -m "Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+git commit -m "feat(pipeline): floor-preserving graduated_response with conservative trust band (TRST-02)" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -463,7 +463,7 @@ Expected: PASS (all unit tests).
 
 ```bash
 git add tests/unit/test_graduated.py
-git commit -m "test(pipeline): lock floor invariant across the full graduated spectrum (POL-05/TRST-02)" -m "Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+git commit -m "test(pipeline): lock floor invariant across the full graduated spectrum (POL-05/TRST-02)" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -486,7 +486,7 @@ weaken the floor-invariant tests to make a failure pass.
 - [ ] **Step 3: Commit** (only if Step 1 required incidental fixes; otherwise nothing to commit)
 
 ```bash
-git commit -am "test: green full suite after Slice 1 contract/graduated extension" -m "Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+git commit -am "test: green full suite after Slice 1 contract/graduated extension" -m "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
 
 ---
