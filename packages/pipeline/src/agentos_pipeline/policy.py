@@ -66,14 +66,20 @@ class ConstitutionPolicyEngine:
         constitution_version: str,
         principles_meta: dict[str, dict],
     ) -> None:
-        self._policy = OPAPolicy(wasm_path)
+        """Exception-atomic: every fallible step runs on locals; instance attributes
+        are assigned only after ALL of them succeeded, so a failed (re)load leaves
+        no torn state. Reload must run on the event-loop thread — single-threaded
+        asyncio makes the multi-attribute swap safe."""
+        policy = OPAPolicy(wasm_path)
         # Named lists are runtime configuration, not compiled policy (D-05).
-        self._policy.set_data({"lists": lists})
-        self.constitution_version = constitution_version
+        policy.set_data({"lists": lists})
         # POL-08: the policy version is the hash of the exact compiled artifact.
-        self.policy_version = (
+        policy_version = (
             "sha256:" + hashlib.sha256(Path(wasm_path).read_bytes()).hexdigest()
         )
+        self._policy = policy
+        self.constitution_version = constitution_version
+        self.policy_version = policy_version
         # {ref: {title, statement, effect, side_effects}} — Reason rationale source.
         self.principles_meta = principles_meta
 

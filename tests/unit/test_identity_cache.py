@@ -81,6 +81,23 @@ def test_invalidate_clears_everything() -> None:
     assert stub.calls == 2
 
 
+def test_invalidate_single_agent_evicts_only_that_agent() -> None:
+    """I2: invalidate(agent_id) is the trust-mutation/deregistration hook — it
+    evicts ONLY that agent's entries; other agents stay cached."""
+    stub = StubStage(ok=True)
+    cached = CachingIdentityStage(stub, ttl_seconds=60, max_entries=1024)
+    cached.verify(_action(token="tok-a", agent_id="agent-a"))
+    cached.verify(_action(token="tok-a2", agent_id="agent-a"))
+    cached.verify(_action(token="tok-b", agent_id="agent-b"))
+    assert stub.calls == 3
+    cached.invalidate("agent-a")
+    cached.verify(_action(token="tok-b", agent_id="agent-b"))  # still cached
+    assert stub.calls == 3
+    cached.verify(_action(token="tok-a", agent_id="agent-a"))   # evicted -> re-verify
+    cached.verify(_action(token="tok-a2", agent_id="agent-a"))  # evicted -> re-verify
+    assert stub.calls == 5
+
+
 def test_bounded_never_exceeds_max_entries() -> None:
     stub = StubStage(ok=True)
     cached = CachingIdentityStage(stub, ttl_seconds=60, max_entries=8)

@@ -62,7 +62,13 @@ class CachingIdentityStage:
         probe freely, and caching nothing on failure keeps the deny path exact;
       - entries expire after `ttl_seconds` (injectable `clock` for tests);
       - the dict is bounded at `max_entries` with FIFO eviction (dict order);
-      - `invalidate()` clears everything — the policy-version-change hook.
+      - `invalidate()` clears everything; `invalidate(agent_id)` evicts one agent.
+
+    STALENESS WINDOW: a cached verdict embeds the `trust_score` as of the LAST
+    uncached verify — a trust demotion or agent deregistration is INVISIBLE to
+    this cache for up to `ttl_seconds`. Deployments MUST call `invalidate()` (or
+    `invalidate(agent_id)`) on trust mutations, deregistration, and every
+    policy/constitution version change; the TTL alone only bounds the window.
 
     Whole-Decision caching is deliberately REJECTED (trust drifts between calls
     and every action must produce its own audit record); only the verification
@@ -98,6 +104,12 @@ class CachingIdentityStage:
             self._cache.pop(key, None)  # never serve a stale ok after a failure
         return verdict
 
-    def invalidate(self) -> None:
-        """Drop every cached verdict (call on policy/constitution version change)."""
-        self._cache.clear()
+    def invalidate(self, agent_id: str | None = None) -> None:
+        """Drop cached verdicts: ALL when `agent_id` is None (the policy/constitution
+        version-change hook), else only that agent's entries (the trust-mutation /
+        deregistration hook)."""
+        if agent_id is None:
+            self._cache.clear()
+            return
+        for key in [k for k in self._cache if k[1] == agent_id]:
+            del self._cache[key]

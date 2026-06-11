@@ -98,6 +98,32 @@ def test_reload_invalidates_compiled_policy(tmp_path_factory) -> None:  # PIPE-0
     assert eng.constitution_version != old_constitution_version
 
 
+def test_failed_reload_leaves_engine_on_old_policy(tmp_path_factory) -> None:
+    """I1: reload must be exception-atomic — a failure mid-reload (set_data raises
+    AFTER the new WASM loaded) leaves NO torn state: old WASM + old lists + old
+    versions + old meta all still in force."""
+    built_a = build_constitution_wasm(CONSTITUTION, tmp_path_factory.mktemp("wasm_atomic_a"))
+    built_b = build_constitution_wasm(NO_EGRESS, tmp_path_factory.mktemp("wasm_atomic_b"))
+    eng = _engine_from(built_a)
+    attack = {"type": "tool_call", "egress": {"host": "attacker.example"}}
+    assert not eng.evaluate(attack).no_match  # 1.1 fires on the OLD policy
+    old_policy_version = eng.policy_version
+    old_constitution_version = eng.constitution_version
+    old_meta = eng.principles_meta
+    with pytest.raises(Exception):
+        eng.reload(
+            wasm_path=str(built_b.wasm_path),
+            lists={"egress_allowlist": {"not-json-serializable"}},  # set -> set_data raises
+            constitution_version="sha256:torn",
+            principles_meta={},
+        )
+    # The OLD policy still evaluates correctly and every version/meta is untouched.
+    assert not eng.evaluate(attack).no_match
+    assert eng.policy_version == old_policy_version
+    assert eng.constitution_version == old_constitution_version
+    assert eng.principles_meta == old_meta
+
+
 def test_malformed_result_fails_closed(engine, monkeypatch) -> None:
     monkeypatch.setattr(engine, "_policy", SimpleNamespace(evaluate=lambda i: [{"weird": 1}]))
     with pytest.raises(PolicyEvaluationError):
