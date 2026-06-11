@@ -8,13 +8,14 @@ Still fail-closed: an unknown key writes no record.
 """
 
 import asyncio
+import hashlib
 import json
 
 import pytest
 from sqlalchemy import create_engine, func, select
 
 from agentos_contract import ActionType, AgentAction, Decision, Outcome, Reason
-from agentos_controlplane.audit import AuditWriter, RedactionError
+from agentos_controlplane.audit import AuditWriter, RedactionError, canonical_json
 from agentos_controlplane.store.engine import create_all, create_session_factory
 from agentos_controlplane.store.models import AuditRecord
 
@@ -83,6 +84,45 @@ def test_unknown_key_still_fails_closed(audit_writer: AuditWriter) -> None:
     bad = AgentAction(
         agent_id="a", type=ActionType.mcp_call, target="x",
         payload={"server": "s", "tool": "t", "args": "a", "rogue": "leak"},
+    )
+    before = _count(audit_writer)
+    with pytest.raises(RedactionError):
+        asyncio.run(audit_writer.append(bad, _decision(bad)))
+    assert _count(audit_writer) == before  # no record written
+
+
+# --- Slice-3 (PIPE-05 seed): digest keys accept ANY JSON-serializable value ------
+
+
+def test_non_str_digest_value_digests_canonical_json(audit_writer: AuditWriter) -> None:
+    """An mcp_call with structured (dict) args appends; args is a {len, sha256} digest."""
+    args = {"count": 5, "filters": ["a", "b"]}
+    a = AgentAction(
+        agent_id="a", type=ActionType.mcp_call, target="github:list",
+        payload={"server": "s", "tool": "t", "args": args},
+    )
+    asyncio.run(audit_writer.append(a, _decision(a)))
+    stored_args = _body(audit_writer)["redacted_payload"]["args"]
+    raw = canonical_json(args)
+    assert stored_args == {"len": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+
+
+def test_non_str_content_digest_key_appends(audit_writer: AuditWriter) -> None:
+    """A tool_call whose `content` (digest key) is an int still appends — digested."""
+    a = AgentAction(
+        agent_id="a", type=ActionType.tool_call, target="http_get",
+        payload={"url": "https://api.example.com/x", "content": 42},
+    )
+    asyncio.run(audit_writer.append(a, _decision(a)))
+    stored = _body(audit_writer)["redacted_payload"]["content"]
+    assert set(stored) == {"len", "sha256"}  # digested, never raw
+
+
+def test_non_str_verbatim_value_still_fails_closed(audit_writer: AuditWriter) -> None:
+    """Verbatim keys are identifiers — they must stay strings (fail-closed)."""
+    bad = AgentAction(
+        agent_id="a", type=ActionType.mcp_call, target="x",
+        payload={"server": 5, "tool": "t", "args": "a"},
     )
     before = _count(audit_writer)
     with pytest.raises(RedactionError):

@@ -82,9 +82,22 @@ def _redact_url(url: str) -> str:
     return f"{parts.scheme}://{host}"
 
 
-def _redact_content(content: str) -> dict:
-    """Never persist raw fetched content — store length + SHA-256 digest only."""
-    raw = content.encode("utf-8")
+def _redact_content(content: object) -> dict:
+    """Never persist raw content — store length + SHA-256 digest only.
+
+    Digest keys accept ANY JSON-serializable value (PIPE-05 seed): a non-str
+    value is digested over its canonical JSON bytes. A value canonical_json
+    cannot serialize raises RedactionError — fail closed, never best-effort.
+    """
+    if isinstance(content, str):
+        raw = content.encode("utf-8")
+    else:
+        try:
+            raw = canonical_json(content)
+        except TypeError:
+            raise RedactionError(
+                f"undigestable payload value of type {type(content).__name__}"
+            ) from None
     return {"len": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
 
 
@@ -94,13 +107,15 @@ def _redact_or_raise(payload: dict) -> dict:
     for key, value in payload.items():
         if key not in _KNOWN_PAYLOAD_KEYS:
             raise RedactionError(f"unclassifiable payload field: {key!r}")
-        if not isinstance(value, str):
-            raise RedactionError(f"payload field {key!r} is not a string")
         if key == "url":
+            if not isinstance(value, str):
+                raise RedactionError("payload field 'url' is not a string")
             redacted["url"] = _redact_url(value)
         elif key in _DIGEST_KEYS:
             redacted[key] = _redact_content(value)
-        else:  # _VERBATIM_KEYS — short identifiers, safe to keep
+        else:  # _VERBATIM_KEYS — short string identifiers, safe to keep
+            if not isinstance(value, str):
+                raise RedactionError(f"payload field {key!r} is not a string")
             redacted[key] = value
     return redacted
 
