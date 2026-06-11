@@ -90,3 +90,30 @@ def test_policy_floor_is_a_lower_bound():
     # ...but risk can still escalate ABOVE the floor.
     assert graduated_response(Outcome.sandbox, risk_score=0.8, trust=1.0) is Outcome.deny
     assert graduated_response(Outcome.warn, risk_score=0.0, trust=1.0) is Outcome.warn
+
+
+from agentos_pipeline.graduated import _RANK
+
+_ALL_RISK = [0.0, 0.1, 0.39, 0.4, 0.6, 0.69, 0.7, 0.99, 1.0]
+_ALL_TRUST = [0.0, 0.2, 0.25, 0.5, 0.75, 1.0]
+
+
+@pytest.mark.floor_invariant
+@pytest.mark.parametrize("floor", [
+    Outcome.allow, Outcome.warn, Outcome.sandbox,
+    Outcome.require_consensus, Outcome.require_approval,
+])
+@pytest.mark.parametrize("risk", _ALL_RISK)
+@pytest.mark.parametrize("trust", _ALL_TRUST)
+def test_result_never_less_restrictive_than_policy_floor(floor, risk, trust):
+    # For ANY (risk, trust) and ANY policy floor, the result rank is >= the floor rank.
+    result = graduated_response(floor, risk_score=risk, trust=trust)
+    assert _RANK[result] >= _RANK[floor]
+
+
+@pytest.mark.floor_invariant
+@pytest.mark.parametrize("trust", _ALL_TRUST)
+def test_more_risk_is_monotonically_non_relaxing(trust):
+    # Fix trust; increasing risk never produces a LESS restrictive outcome.
+    ranks = [_RANK[graduated_response(Outcome.allow, risk_score=r, trust=trust)] for r in _ALL_RISK]
+    assert ranks == sorted(ranks)
