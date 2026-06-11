@@ -40,7 +40,11 @@ from typing import Protocol
 from uuid import UUID
 
 from agentos_contract import AgentAction, Decision, Outcome, Reason, RiskScorer
-from agentos_contract.policy_io import ConstitutionResult, select_floor
+from agentos_contract.policy_io import (
+    OUTCOME_RESTRICTIVENESS,
+    ConstitutionResult,
+    select_floor,
+)
 
 from agentos_pipeline.enrichment import enrich
 from agentos_pipeline.graduated import GraduatedThresholds, graduated_response
@@ -92,17 +96,21 @@ class Pipeline:
         self._posture = posture        # PIPE-05: per-action-class failure posture
 
     async def evaluate(self, action: AgentAction) -> Decision:
+        # Mutable holder: _evaluate records the computed floor as soon as it is
+        # known, so a later exception cannot relax it through the fail-safe.
+        floor_box: list[Outcome | None] = [None]
         try:
-            return await self._evaluate(action)
+            return await self._evaluate(action, floor_box)
         except Exception as exc:  # total control-plane failure (PIPE-05)
-            return await self._fail_safe(action, exc)
+            return await self._fail_safe(action, exc, computed_floor=floor_box[0])
 
-    async def _evaluate(self, action: AgentAction) -> Decision:
+    async def _evaluate(self, action: AgentAction, floor_box: list[Outcome | None]) -> Decision:
         reasons: list[Reason] = []
 
         # Stage 1 — Identity & Trust (IDN-02, TRST-01); short-circuit on forged/unknown.
         ident: IdentityVerdict = self._identity.verify(action)
         if not ident.ok:
+            floor_box[0] = Outcome.deny  # forged identity: the deny may NEVER relax
             reasons.append(
                 Reason(
                     stage="identity",
@@ -118,8 +126,9 @@ class Pipeline:
                 policy_version=self._policy.policy_version,
             )
             # Audited even on deny — evidence exists before enforcement (PIPE-03/AUD-01).
-            # If THIS append fails, the outer fail-safe still writes a payload-free record.
-            decision.evidence_ref = await self._audit.append(action, decision)
+            # A RedactionError retries payload-free HERE (the deny stands); any other
+            # append failure falls to the outer fail-safe, which inherits the deny floor.
+            await self._append_with_redaction_fallback(action, decision)
             return decision  # TERMINAL — no later stages
         trust = ident.trust_score
         # Identity verified — record the stage that ran so every stage contributes a
@@ -144,10 +153,12 @@ class Pipeline:
                         code="constitution_principle_fired",
                         policy_id=f"constitution.{m.principle_ref}",
                         principle_ref=m.principle_ref,
-                        rationale=self._policy.principles_meta[m.principle_ref]["title"],
+                        # .get chain: a meta gap must explain less, never crash the verdict.
+                        rationale=self._policy.principles_meta.get(m.principle_ref, {}).get("title", ""),
                         evidence={"effect": m.effect},
                     )
                 )
+        floor_box[0] = floor  # any later exception inherits the computed floor
 
         # Stage 4 — Risk (SEC-01): inline, pure-CPU (plain call — not awaited).
         risk_score, findings = assess_risk(action, self._scorers)
@@ -171,14 +182,23 @@ class Pipeline:
             policy_version=self._policy.policy_version,               # POL-08
         )
         # SYNC audit write on the hot path (AUD-01); sets evidence_ref before returning.
+        await self._append_with_redaction_fallback(action, decision)
+        return decision
+
+    async def _append_with_redaction_fallback(
+        self, action: AgentAction, decision: Decision
+    ) -> None:
+        """Append the audit record, setting decision.evidence_ref. A RedactionError
+        (unclassifiable payload, D-15) is handled HERE — never escaping to the
+        fail-safe: fall to the per-class posture FIRST (closed -> deny; an existing
+        deny always stands), then append a payload-free copy so the decision still
+        carries evidence. Exception CLASS only — never payload. Any OTHER audit
+        failure propagates to the outer fail-safe (PIPE-05)."""
         try:
             decision.evidence_ref = await self._audit.append(action, decision)
         except Exception as exc:
             if not _is_redaction_error(exc):
                 raise  # any other audit failure -> the outer fail-safe (PIPE-05)
-            # Redaction failed (unclassifiable payload, D-15): fall to the per-class
-            # posture FIRST (closed -> deny), then append a payload-free copy so the
-            # decision still carries evidence. Exception CLASS only — never payload.
             if self._posture.fail_posture(action.type) is FailPosture.closed:
                 decision.outcome = Outcome.deny
             decision.reasons.append(
@@ -186,14 +206,19 @@ class Pipeline:
             )
             stripped = action.model_copy(update={"payload": {}})
             decision.evidence_ref = await self._audit.append(stripped, decision)
-        return decision
 
-    async def _fail_safe(self, action: AgentAction, exc: Exception) -> Decision:
+    async def _fail_safe(
+        self, action: AgentAction, exc: Exception, computed_floor: Outcome | None = None
+    ) -> Decision:
         """Total-failure semantics (PIPE-05): posture-applied outcome + payload-free
         fail-safe audit record. A fail-open that cannot write its record is demoted
-        to deny — no record, no allow."""
+        to deny — no record, no allow. When a floor was already computed before the
+        failure, the outcome is the MORE RESTRICTIVE of posture and floor — a
+        fail-open allow can never override a computed deny/restrictive floor."""
         posture = self._posture.fail_posture(action.type)
         outcome = Outcome.allow if posture is FailPosture.open else Outcome.deny
+        if computed_floor is not None:
+            outcome = max(outcome, computed_floor, key=OUTCOME_RESTRICTIVENESS.__getitem__)
         reasons = [
             Reason(
                 stage="pipeline",

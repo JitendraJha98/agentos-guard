@@ -365,6 +365,103 @@ def test_fail_open_without_audit_record_becomes_deny() -> None:
     assert any(r.code == "fail_open_unaudited_demoted_to_deny" for r in decision.reasons)
 
 
+def test_forged_identity_redaction_failure_never_relaxes_to_fail_open_allow() -> None:
+    """C1 repro 1: a RedactionError in the short-circuit's audit append must not
+    escape to _fail_safe and turn a forged-identity DENY into a fail-open ALLOW."""
+    from agentos_controlplane.audit import RedactionError
+
+    class PayloadRedactionFailingAudit:
+        """Raises RedactionError while the appended action carries a payload;
+        succeeds on the payload-free retry."""
+
+        def __init__(self) -> None:
+            self.calls: list[AgentAction] = []
+            self._id = uuid4()
+
+        async def append(self, action: AgentAction, decision) -> UUID:
+            self.calls.append(action)
+            if action.payload:
+                raise RedactionError("unclassifiable payload field: 'rogue'")
+            return self._id
+
+    audit = PayloadRedactionFailingAudit()
+    pipeline = Pipeline(
+        identity=FakeIdentityStage(ok=False, detail="forged"),
+        policy=SpyPolicyEngine(Outcome.allow),
+        scorers=[],
+        audit=audit,
+        posture=PostureMap(fail_open_types=frozenset({ActionType.model_invocation})),
+    )
+    action = AgentAction(
+        agent_id="agent-1", type=ActionType.model_invocation, target="m",
+        payload={"model": "m", "rogue": "x"}, identity_token="forged",
+    )
+    decision = asyncio.run(pipeline.evaluate(action))
+    assert decision.outcome is Outcome.deny  # the short-circuit deny STANDS
+    assert any(r.code == "forged_or_unknown_identity" for r in decision.reasons)
+    assert any(r.code == "redaction_failed" for r in decision.reasons)
+    assert audit.calls[-1].payload == {}  # the retry is payload-free
+    assert decision.evidence_ref is not None
+
+
+def test_unknown_fired_principle_ref_never_relaxes_computed_deny() -> None:
+    """C1 repro 2: a fired ref missing from principles_meta must not crash reason
+    construction AFTER the deny floor into a fail-open ALLOW — the deny survives."""
+
+    class UnknownRefPolicyEngine:
+        constitution_version = "sha256:stub-constitution"
+        policy_version = "sha256:stub-policy"
+        principles_meta: dict = {}  # lacks the fired ref "9.9"
+
+        def evaluate(self, input: dict) -> ConstitutionResult:
+            return ConstitutionResult(
+                matched=(MatchedPrinciple(principle_ref="9.9", effect="deny"),),
+                no_match=False,
+            )
+
+    pipeline = Pipeline(
+        identity=FakeIdentityStage(ok=True),
+        policy=UnknownRefPolicyEngine(),
+        scorers=[],
+        audit=FakeAuditWriter(),
+        posture=PostureMap(fail_open_types=frozenset({ActionType.model_invocation})),
+    )
+    action = AgentAction(
+        agent_id="agent-1", type=ActionType.model_invocation, target="m",
+        payload={"model": "m"}, identity_token="tok",
+    )
+    decision = asyncio.run(pipeline.evaluate(action))
+    assert decision.outcome is Outcome.deny
+    fired = [r for r in decision.reasons if r.code == "constitution_principle_fired"]
+    assert fired and fired[0].principle_ref == "9.9"  # the matched deny survives
+
+
+def test_post_floor_failure_inherits_computed_deny_floor_on_fail_open_class() -> None:
+    """C1 belt-and-braces: ANY exception after the deny floor was computed must
+    inherit that floor in _fail_safe — a fail-open allow can never override it."""
+
+    class RaisingScorer:
+        name = "raising.v1"
+        inline = True
+
+        def score(self, action: AgentAction) -> RiskFinding:
+            raise RuntimeError("scorer down")
+
+    pipeline = Pipeline(
+        identity=FakeIdentityStage(ok=True),
+        policy=SpyPolicyEngine(Outcome.deny),
+        scorers=[RaisingScorer()],
+        audit=FakeAuditWriter(),
+        posture=PostureMap(fail_open_types=frozenset({ActionType.model_invocation})),
+    )
+    action = AgentAction(
+        agent_id="agent-1", type=ActionType.model_invocation, target="m",
+        payload={"model": "m"}, identity_token="tok",
+    )
+    decision = asyncio.run(pipeline.evaluate(action))
+    assert decision.outcome is Outcome.deny  # the computed floor wins over fail-open
+
+
 def test_redaction_failure_writes_payload_free_record_and_applies_posture() -> None:
     from agentos_controlplane.audit import RedactionError
 
