@@ -1,9 +1,10 @@
-"""Shared pytest fixtures for Phase 1 (Wave-0 test infrastructure, filled Wave-5).
+"""Shared pytest fixtures (Wave-0 infrastructure; migrated to the compiled
+constitution in Phase-3 Slice 3).
 
-The `make_http_get` helper and the SQLite-backed `audit_store` seam were authored
-by plan 01-01; plan 01-06 (this wave) fills the four placeholder fixtures with real
-wiring: `prompt_injection_scorer`, `registered_agent_token`, `pipeline_with_principle`,
-and `pipeline_without_principle`.
+The pipeline fixtures wire the REAL `ConstitutionPolicyEngine` over WASM compiled
+at session start from the test-owned constitutions (tests/fixtures/*.yaml) via the
+OPA CLI (vendored exe on the Windows dev box, PATH on CI). When no OPA binary is
+found anywhere, the dependent tests skip cleanly.
 
 No-Docker deviation (CONTEXT.md D-14): the audit/e2e tests run against a
 SQLite-backed Store, NOT a testcontainers Postgres. There is no `testcontainers`
@@ -11,23 +12,25 @@ or Docker import anywhere in this file.
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine
 
-from agentos_contract import ActionType, AgentAction, Outcome
+from _opa import BuiltPolicy, build_constitution_wasm, find_opa
+from agentos_contract import ActionType, AgentAction
 from agentos_controlplane.audit import AuditWriter
 from agentos_controlplane.registry import Registry
 from agentos_controlplane.store.engine import create_all, create_session_factory
 from agentos_pipeline.identity import IdentityStage
-from agentos_pipeline.policy import PolicyResult, WasmPolicyEngine
+from agentos_pipeline.policy import ConstitutionPolicyEngine
 from agentos_pipeline.risk import PromptInjectionScorer
 from agentos_pipeline.runner import Pipeline
 
-# The compiled OPA WASM egress floor (built by the 01-04 CI/build step).
-EGRESS_WASM = "policies/build/egress.wasm"
-# The single allowlisted host for the Phase-1 slice (the "benign" demo target).
-ALLOWLIST = ["api.example.com"]
+# The test-owned constitutions (Slice 3): principles 1.1/2.1/3.2/3.5, and the
+# same file minus 1.1 (the REAL D-04 deleted-principle recompile).
+CONSTITUTION_YAML = Path("tests/fixtures/test_constitution.yaml")
+CONSTITUTION_NO_EGRESS_YAML = Path("tests/fixtures/test_constitution_no_egress.yaml")
 # The agent identity the e2e + red-team probes act as.
 AGENT_ID = "test-agent"
 
@@ -60,27 +63,33 @@ class WiredPipeline:
     agent_id: str
 
 
-class _AllowAllPolicyEngine:
-    """A PolicyEngine with the egress PRINCIPLE REMOVED — the D-04 proof-of-life.
+def _build_constitution(tmp_path_factory, yaml_path: Path, label: str) -> BuiltPolicy:
+    if find_opa() is None:
+        pytest.skip("no OPA binary (vendored tools/opa/opa.exe or PATH) — cannot compile the test constitution")
+    return build_constitution_wasm(yaml_path, tmp_path_factory.mktemp(label))
 
-    Modeling "delete the egress principle" by recompiling the Rego with the
-    allowlist rule deleted would require the OPA CLI at test time (fragile,
-    non-deterministic across environments). Structurally, deleting the principle
-    means the policy floor no longer gates egress on the allowlist — i.e. the floor
-    always allows. This engine is that exact structural state: it satisfies the same
-    `PolicyEngine` Protocol (`evaluate(input) -> PolicyResult`) and always returns
-    `allow`, with NO allowlist check. Note an *empty* allowlist would NOT work — the
-    Rego floor is deny-by-default, so an empty allowlist still denies (verified); the
-    principle being *removed* is what flips deny->allow, and that is what this models.
-    """
 
-    def evaluate(self, input: dict) -> PolicyResult:
-        return PolicyResult(
-            outcome=Outcome.allow,
-            code="egress_principle_removed",
-            policy_id="egress.allow",
-            detail="egress principle deleted (D-04 proof-of-life variant)",
-        )
+@pytest.fixture(scope="session")
+def constitution_wasm(tmp_path_factory) -> BuiltPolicy:
+    """The full test constitution, compiled ONCE per session."""
+    return _build_constitution(tmp_path_factory, CONSTITUTION_YAML, "wasm_full")
+
+
+@pytest.fixture(scope="session")
+def constitution_wasm_no_egress(tmp_path_factory) -> BuiltPolicy:
+    """The D-04 variant: the SAME constitution genuinely recompiled WITHOUT 1.1."""
+    return _build_constitution(
+        tmp_path_factory, CONSTITUTION_NO_EGRESS_YAML, "wasm_no_egress"
+    )
+
+
+def _engine(built: BuiltPolicy) -> ConstitutionPolicyEngine:
+    return ConstitutionPolicyEngine(
+        wasm_path=str(built.wasm_path),
+        lists=built.bundle.lists,
+        constitution_version=built.bundle.constitution_version,
+        principles_meta=built.principles_meta,
+    )
 
 
 def _new_store():
@@ -142,23 +151,23 @@ def registered_agent_token() -> str:
 
 
 @pytest.fixture
-def pipeline_with_principle() -> WiredPipeline:
-    """The 4-stage pipeline WITH the egress-allowlist principle loaded.
+def pipeline_with_principle(constitution_wasm) -> WiredPipeline:
+    """The pipeline WITH the full test constitution (incl. egress principle 1.1).
 
-    Policy stage = the real `WasmPolicyEngine(egress.wasm, allowlist=["api.example.com"])`
-    deterministic OPA WASM floor. Returns the pipeline + the registered agent's token.
+    Policy stage = the real `ConstitutionPolicyEngine` over the compiled
+    multi-principle WASM floor. Returns the pipeline + the registered agent's token.
     """
-    return _wire(WasmPolicyEngine(EGRESS_WASM, allowlist=ALLOWLIST))
+    return _wire(_engine(constitution_wasm))
 
 
 @pytest.fixture
-def pipeline_without_principle() -> WiredPipeline:
-    """The SAME pipeline but with the egress principle REMOVED — the D-04 proof-of-life.
+def pipeline_without_principle(constitution_wasm_no_egress) -> WiredPipeline:
+    """The SAME pipeline, recompiled WITHOUT principle 1.1 — the D-04 proof-of-life.
 
-    Deleting the principle must flip the exfil probe deny->allow. Identical wiring to
-    `pipeline_with_principle` except the policy stage is the allow-all engine (the
-    structural equivalent of the deleted Rego floor rule). If the probe still denies
-    here, the WITH-principle test is meaningless — so this asserting `allow` is what
-    makes the regression lock bite.
+    Slice 3 retired the structural allow-all stub: this is now a GENUINELY
+    RECOMPILED constitution with the egress principle deleted (everything else
+    identical, including the lists). Deleting the principle must flip the exfil
+    probe deny->allow; if the probe still denies here, the WITH-principle test is
+    meaningless — so this asserting `allow` is what makes the regression lock bite.
     """
-    return _wire(_AllowAllPolicyEngine())
+    return _wire(_engine(constitution_wasm_no_egress))

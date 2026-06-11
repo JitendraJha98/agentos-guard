@@ -15,16 +15,21 @@ OPA_BIN = _REPO_ROOT / "tools" / "opa" / "opa.exe"
 ENTRYPOINT = "agentos/constitution/result"
 
 
-def build_wasm(rego_text: str, out_dir: Path) -> Path:
-    """opa build -t wasm -e agentos/constitution/result; extract policy.wasm."""
-    if not OPA_BIN.is_file():
-        raise FileNotFoundError(f"vendored OPA CLI not found at {OPA_BIN}")
+def build_wasm(rego_text: str, out_dir: Path, opa_bin: str | None = None) -> Path:
+    """opa build -t wasm -e agentos/constitution/result; extract policy.wasm.
+
+    `opa_bin` overrides the OPA CLI location (CI installs Linux OPA on PATH);
+    the default is the vendored Windows exe (the original behavior).
+    """
+    opa = Path(opa_bin) if opa_bin is not None else OPA_BIN
+    if not opa.is_file():
+        raise FileNotFoundError(f"OPA CLI not found at {opa}")
     out_dir = Path(out_dir)
     rego_path = out_dir / "constitution.rego"
     rego_path.write_text(rego_text, encoding="utf-8")
     bundle_path = out_dir / "bundle.tar.gz"
     subprocess.run(
-        [str(OPA_BIN), "build", "-t", "wasm", "-e", ENTRYPOINT,
+        [str(opa), "build", "-t", "wasm", "-e", ENTRYPOINT,
          str(rego_path), "-o", str(bundle_path)],
         check=True, capture_output=True,
     )

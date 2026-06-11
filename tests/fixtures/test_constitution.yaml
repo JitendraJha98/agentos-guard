@@ -1,0 +1,44 @@
+# The TEST constitution (Slice 3) — owned by the test suite, NOT the operator
+# example (policies/constitution.yaml keeps its own test).
+#
+# Principles 1.1 / 2.1 / 3.2 / 3.5 only — deliberately NO 4.1, so benign egress
+# to an allowlisted host stays a clean `allow` (no governance_review floor in
+# the e2e/red-team paths). The no-egress variant (test_constitution_no_egress.yaml)
+# is THIS file minus 1.1 with the SAME lists section — the real D-04
+# deleted-principle recompile.
+schema_version: 1
+name: agentos-guard-test
+lists:
+  egress_allowlist: [api.example.com]
+graduated:
+  default: {sandbox_at: 0.4, deny_at: 0.7, trust_harden_at: 0.2}
+principles:
+  - id: "1.1"
+    title: Egress allowlist
+    statement: An agent may only make outbound requests to allowlisted hosts.
+    applies_to: [tool_call]
+    effect: deny
+    when: {field: egress.host, op: not_in, list_ref: egress_allowlist}
+  - id: "2.1"
+    title: Destructive or exfiltrating intent requires approval
+    statement: Destructive or exfiltrating actions require human approval.
+    effect: require_approval
+    when:
+      any:
+        - {field: intent.class, op: eq, value: DATA_DESTRUCTION}
+        - {field: intent.class, op: eq, value: DATA_EXFILTRATION}
+  - id: "3.2"
+    title: PII never leaves approved hosts
+    statement: An agent must never send user PII to a host outside the approved allowlist.
+    applies_to: [tool_call, mcp_call]
+    effect: deny
+    when:
+      all:
+        - {field: guardrails.pii, op: eq, value: true}
+        - {field: egress.host, op: not_in, list_ref: egress_allowlist}
+  - id: "3.5"
+    title: Rename-then-drop is forbidden
+    statement: A rename followed by destruction of the renamed resource is forbidden, even when each step looks benign alone.
+    kind: sequence
+    sequence: [RESOURCE_RENAME, DATA_DESTRUCTION]
+    effect: deny

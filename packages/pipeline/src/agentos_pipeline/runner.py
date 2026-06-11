@@ -33,13 +33,12 @@ from agentos_contract import AgentAction, Decision, Outcome, Reason, RiskScorer
 
 from agentos_pipeline.graduated import GraduatedThresholds, graduated_response
 from agentos_pipeline.identity import IdentityStage, IdentityVerdict
-from agentos_pipeline.policy import PolicyResult
 from agentos_pipeline.policy_input import _host
 from agentos_pipeline.risk import assess_risk
 
 
 class _PolicyEngine(Protocol):
-    def evaluate(self, input: dict) -> PolicyResult: ...
+    def evaluate(self, input: dict) -> object: ...
 
 
 class _AuditWriter(Protocol):
