@@ -1,0 +1,62 @@
+constitution_version: sha256:69d5c51453b6df5aef6598819904748e6ded829fb84f4b2e72adf739d78f557b
+policies:
+- applies_to:
+  - tool_call
+  condition:
+    field: egress.host
+    list_ref: egress_allowlist
+    op: not_in
+    value: null
+  effect: deny
+  id: '1.1'
+  kind: action
+  side_effects: []
+  statement: An agent may only make outbound requests to allowlisted hosts.
+  title: Egress allowlist
+- applies_to: all
+  condition:
+    any:
+    - field: intent.class
+      list_ref: null
+      op: eq
+      value: DATA_DESTRUCTION
+    - field: intent.class
+      list_ref: null
+      op: eq
+      value: DATA_EXFILTRATION
+  effect: require_approval
+  id: '2.1'
+  kind: action
+  side_effects: []
+  statement: Destructive or exfiltrating actions require human approval.
+  title: Destructive or exfiltrating intent requires approval
+- applies_to:
+  - tool_call
+  - mcp_call
+  condition:
+    all:
+    - field: guardrails.pii
+      list_ref: null
+      op: eq
+      value: true
+    - field: egress.host
+      list_ref: egress_allowlist
+      op: not_in
+      value: null
+  effect: deny
+  id: '3.2'
+  kind: action
+  side_effects: []
+  statement: An agent must never send user PII to a host outside the approved allowlist.
+  title: PII never leaves approved hosts
+- applies_to: all
+  effect: deny
+  id: '3.5'
+  kind: sequence
+  sequence:
+  - RESOURCE_RENAME
+  - DATA_DESTRUCTION
+  side_effects: []
+  statement: A rename followed by destruction of the renamed resource is forbidden,
+    even when each step looks benign alone.
+  title: Rename-then-drop is forbidden
