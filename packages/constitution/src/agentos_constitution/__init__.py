@@ -11,8 +11,10 @@ from agentos_constitution.schema import (
     load_constitution,
 )
 from agentos_constitution.version import canonical_form, constitution_version
+from agentos_constitution.wasm import build_wasm
 
 __all__ = [
+    "build_wasm",
     "canonical_form",
     "compile_constitution",
     "CompiledBundle",
