@@ -4,6 +4,7 @@ Source: docs/architecture/02-domain-model.md (Decision). Pydantic v2,
 extra="forbid"; scores bounded to [0, 1] (threat T-01-03).
 """
 
+from datetime import datetime
 from enum import Enum
 from uuid import UUID
 
@@ -47,4 +48,10 @@ class Decision(BaseModel):
     risk_score: float = Field(ge=0.0, le=1.0, default=0.0)
     trust_score: float = Field(ge=0.0, le=1.0, default=0.0)
     reasons: list[Reason] = Field(default_factory=list)
+    side_effects: list[SideEffect] = Field(default_factory=list)   # PIPE-09
+    inferred_intent: str | None = None                             # SEC-12 coarse intent class
+    remediation: list[str] = Field(default_factory=list)           # PIPE-08 next steps
+    constitution_version: str | None = None                        # POL-08 (populated Slice 3)
+    policy_version: str | None = None                              # POL-08 (populated Slice 3)
+    expires_at: datetime | None = None                             # POL-13 temporary_exception expiry
     evidence_ref: UUID | None = None   # the AuditRecord id, set after the audit write

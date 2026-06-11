@@ -135,3 +135,31 @@ def test_reason_carries_explainable_denial_fields():
     assert restored == r
     assert restored.principle_ref == "3.2"
     assert restored.evidence == {"matched": "email_address", "host": "attacker.example"}
+
+
+from datetime import datetime, timezone
+
+
+def test_decision_full_phase3_shape_roundtrip():
+    d = Decision(
+        action_id="11111111-1111-1111-1111-111111111111",
+        outcome=Outcome.temporary_exception,
+        side_effects=[SideEffect.notify, SideEffect.additional_monitoring],
+        inferred_intent="DATA_DESTRUCTION",
+        remediation=["Request approval via the dashboard", "Narrow the tool scope"],
+        constitution_version="sha256:abc",
+        policy_version="sha256:def",
+        expires_at=datetime(2026, 6, 11, 12, 0, tzinfo=timezone.utc),
+    )
+    restored = Decision.model_validate_json(d.model_dump_json())
+    assert restored == d
+    assert restored.side_effects == [SideEffect.notify, SideEffect.additional_monitoring]
+    assert restored.inferred_intent == "DATA_DESTRUCTION"
+
+
+def test_decision_defaults_are_empty_and_still_forbid_unknown():
+    d = Decision(action_id="11111111-1111-1111-1111-111111111111", outcome=Outcome.allow)
+    assert d.side_effects == [] and d.remediation == []
+    assert d.inferred_intent is None and d.policy_version is None and d.expires_at is None
+    with pytest.raises(ValidationError):
+        Decision(action_id="11111111-1111-1111-1111-111111111111", outcome=Outcome.allow, mystery=1)
