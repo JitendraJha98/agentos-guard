@@ -16,7 +16,17 @@ class Outcome(str, Enum):
     sandbox = "sandbox"      # vocabulary present; realized Phase 3
     require_consensus = "require_consensus"
     require_approval = "require_approval"
+    temporary_exception = "temporary_exception"   # POL-13 — human-ratified, time-boxed allow
+    governance_review = "governance_review"        # POL-14 — proceed + async non-blocking review
     deny = "deny"
+
+
+class SideEffect(str, Enum):
+    """Composable, outcome-orthogonal escalations (PIPE-09). A Decision may carry any subset."""
+    notify = "notify"
+    additional_monitoring = "additional_monitoring"
+    risk_flag = "risk_flag"
+    create_incident = "create_incident"
 
 
 class Reason(BaseModel):

@@ -17,6 +17,7 @@ from agentos_contract import (
     Outcome,
     Reason,
     RiskFinding,
+    SideEffect,
 )
 
 
@@ -107,3 +108,17 @@ def test_risk_finding_is_frozen():
     )
     with pytest.raises(ValidationError):
         finding.risk_score = 0.9
+
+
+def test_outcome_has_full_phase3_spectrum():
+    names = {o.value for o in Outcome}
+    assert names == {
+        "allow", "warn", "sandbox", "require_consensus",
+        "require_approval", "temporary_exception", "governance_review", "deny",
+    }
+
+
+def test_side_effect_members():
+    assert {s.value for s in SideEffect} == {
+        "notify", "additional_monitoring", "risk_flag", "create_incident",
+    }
