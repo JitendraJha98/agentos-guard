@@ -34,3 +34,13 @@ principles:
     kind: sequence
     sequence: [RESOURCE_RENAME, DATA_DESTRUCTION]
     effect: deny
+  - id: "5.1"
+    title: Non-GET-like writes to memory require approval
+    statement: Memory writes outside read-like operations require approval.
+    applies_to: [memory_access]
+    effect: require_approval
+    when:
+      not:
+        any:
+          - {field: memory.operation, op: eq, value: read}
+          - {field: memory.operation, op: eq, value: list}

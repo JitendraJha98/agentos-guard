@@ -1,4 +1,4 @@
-constitution_version: sha256:69d5c51453b6df5aef6598819904748e6ded829fb84f4b2e72adf739d78f557b
+constitution_version: sha256:4f8698bb8543fab0d68105eddaed95e943a3122a61e4b685142a5b7a8d21049d
 policies:
 - applies_to:
   - tool_call
@@ -60,3 +60,22 @@ policies:
   statement: A rename followed by destruction of the renamed resource is forbidden,
     even when each step looks benign alone.
   title: Rename-then-drop is forbidden
+- applies_to:
+  - memory_access
+  condition:
+    not:
+      any:
+      - field: memory.operation
+        list_ref: null
+        op: eq
+        value: read
+      - field: memory.operation
+        list_ref: null
+        op: eq
+        value: list
+  effect: require_approval
+  id: '5.1'
+  kind: action
+  side_effects: []
+  statement: Memory writes outside read-like operations require approval.
+  title: Non-GET-like writes to memory require approval

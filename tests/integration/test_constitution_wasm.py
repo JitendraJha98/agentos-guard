@@ -48,6 +48,14 @@ def test_sequence_membership_rule(policy):
     assert {"principle_ref": "3.5", "effect": "deny"} in r["matched"]
 
 
+def test_not_combinator_non_readlike_memory_write_requires_approval(policy):
+    """5.1: not(any(eq read, eq list)) — De Morgan lowers to two != lines."""
+    write = _result(policy, {"type": "memory_access", "memory": {"operation": "write"}})
+    assert {"principle_ref": "5.1", "effect": "require_approval"} in write["matched"]
+    read = _result(policy, {"type": "memory_access", "memory": {"operation": "read"}})
+    assert "5.1" not in {m["principle_ref"] for m in read["matched"]}
+
+
 def test_benign_input_is_no_match(policy):
     r = _result(policy, {"type": "tool_call", "egress": {"host": "api.example.com"}})
     assert r["matched"] == [] and r["no_match"] is True
