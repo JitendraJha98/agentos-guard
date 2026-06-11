@@ -23,7 +23,10 @@ from typing import Protocol, runtime_checkable
 
 from opa_wasmtime import OPAPolicy
 
+from agentos_contract import Outcome
 from agentos_contract.policy_io import ConstitutionResult, MatchedPrinciple
+
+_VALID_EFFECTS = frozenset(o.value for o in Outcome)
 
 
 class PolicyEvaluationError(RuntimeError):
@@ -124,6 +127,11 @@ class ConstitutionPolicyEngine:
                 or not isinstance(m.get("effect"), str)
             ):
                 raise PolicyEvaluationError("malformed matched-principle entry")
+            if m["effect"] not in _VALID_EFFECTS:
+                raise PolicyEvaluationError(
+                    f"unknown effect {m['effect']!r} in matched principle"
+                    f" {m['principle_ref']!r} (not an Outcome)"
+                )
             matched.append(
                 MatchedPrinciple(
                     principle_ref=m["principle_ref"],

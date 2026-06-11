@@ -134,3 +134,15 @@ def test_empty_result_set_fails_closed(engine, monkeypatch) -> None:
     monkeypatch.setattr(engine, "_policy", SimpleNamespace(evaluate=lambda i: []))
     with pytest.raises(PolicyEvaluationError):
         engine.evaluate({"type": "tool_call"})
+
+
+def test_unknown_effect_fails_closed_at_parse_boundary(engine, monkeypatch) -> None:
+    """M1: an effect outside the Outcome vocabulary is a precise parse-boundary
+    PolicyEvaluationError, not a later Outcome() crash."""
+    raw = [{"result": {
+        "matched": [{"principle_ref": "1.1", "effect": "explode"}],
+        "no_match": False,
+    }}]
+    monkeypatch.setattr(engine, "_policy", SimpleNamespace(evaluate=lambda i: raw))
+    with pytest.raises(PolicyEvaluationError):
+        engine.evaluate({"type": "tool_call"})

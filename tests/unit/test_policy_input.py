@@ -8,6 +8,7 @@ Keys/values must match the POLICY_INPUT_FIELDS registry paths exactly.
 """
 
 from agentos_contract import ActionType, AgentAction
+from agentos_contract.policy_io import POLICY_INPUT_FIELDS
 from agentos_pipeline.enrichment import enrich
 from agentos_pipeline.policy_input import build_policy_input
 
@@ -96,3 +97,30 @@ def test_model_invocation_input() -> None:
 def test_model_invocation_missing_model_defaults_empty() -> None:
     a = _act(ActionType.model_invocation, "m", {})
     assert build_policy_input(a, enrich(a))["model"]["name"] == ""
+
+
+def _dotted_paths(node: dict, prefix: str = "") -> set[str]:
+    """Flatten a policy-input document to its dotted leaf paths."""
+    paths: set[str] = set()
+    for key, val in node.items():
+        dotted = f"{prefix}{key}"
+        if isinstance(val, dict):
+            paths |= _dotted_paths(val, dotted + ".")
+        else:
+            paths.add(dotted)
+    return paths
+
+
+def test_builder_emits_exactly_the_registry_fields_for_every_type() -> None:
+    """M3 drift lock: the builder and the POLICY_INPUT_FIELDS registry are the
+    SAME versioned schema — for every ActionType, the emitted dotted paths must
+    equal the registry entries applicable to that type (in BOTH directions)."""
+    for type_ in ActionType:
+        a = _act(type_, "t", {})
+        emitted = _dotted_paths(build_policy_input(a, enrich(a)))
+        applicable = {
+            field
+            for field, (_, scope) in POLICY_INPUT_FIELDS.items()
+            if scope == "all" or type_.value in scope
+        }
+        assert emitted == applicable, f"registry/builder drift for {type_.value}"

@@ -1,13 +1,13 @@
-"""Non-gating cached-path latency TREND baseline (PIPE-04 seed; Slice-3 Task 8).
+"""Cached-path latency TREND baseline (PIPE-04 seed; Slice-3 Task 8).
 
 Measures the full wired hot path — identity -> enrichment -> compiled-constitution
 WASM floor -> risk -> graduated -> SQLite hash-chained audit append — for a benign
 allowlisted http_get. Every round evaluates a FRESH action (unique action.id), so
 the audit chain genuinely appends each time; nothing is decision-cached (PIPE-06).
 
-The asserted ceiling is deliberately GENEROUS (50 ms mean) so this test is real
-but non-flaky: it exists to record the trend baseline and catch order-of-magnitude
-regressions. The HARD p95 budget gate lands in Slice 6c (PIPE-04).
+The asserted mean<50ms ceiling DOES gate CI — it is a deliberately generous smoke
+ceiling (non-flaky, catches order-of-magnitude regressions) that records the trend
+baseline. The hard p95 budget gate arrives in Slice 6c (PIPE-04).
 """
 
 import asyncio
@@ -44,5 +44,5 @@ def test_cached_path_latency_trend(benchmark, pipeline_with_principle) -> None:
         f"\ncached-path latency: mean={stats.mean * 1000:.3f} ms  "
         f"p95={p95 * 1000:.3f} ms  rounds={len(data)}"
     )
-    # Non-gating trend: generous smoke ceiling only (hard budget gate = Slice 6c).
+    # CI-gating generous smoke ceiling (hard budget gate arrives in Slice 6c).
     assert stats.mean < 0.050

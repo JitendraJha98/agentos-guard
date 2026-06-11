@@ -12,7 +12,7 @@ Behavior (Slice-3 Task 2):
 """
 
 from agentos_contract import ActionType, AgentAction
-from agentos_pipeline.enrichment import enrich, tag_intent
+from agentos_pipeline.enrichment import INTENT_CLASSES, enrich, tag_intent
 
 
 def _act(type_: ActionType, target: str, payload: dict | None = None) -> AgentAction:
@@ -36,6 +36,18 @@ def test_memory_delete_operation_tagged() -> None:
 
 def test_benign_target_untagged() -> None:
     assert tag_intent(_act(ActionType.tool_call, "http_get")) is None
+
+
+def test_remove_prefixed_targets_are_not_destruction() -> None:
+    """M2: remove_* was a false-positive trigger (remove_formatting/_duplicates
+    are not data destruction) — the prefix is dropped from the tagger."""
+    for t in ("remove_formatting", "remove_duplicates"):
+        assert tag_intent(_act(ActionType.tool_call, t)) is None
+
+
+def test_intent_classes_export_is_the_emitted_vocabulary() -> None:
+    """M2: the tagger's output vocabulary is exported for principle authors."""
+    assert INTENT_CLASSES == frozenset({"DATA_DESTRUCTION", "RESOURCE_RENAME"})
 
 
 def test_enrich_shape() -> None:

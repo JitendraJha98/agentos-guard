@@ -11,13 +11,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agentos_constitution import CompiledBundle, compile_constitution, load_constitution
-from agentos_constitution.wasm import build_wasm
+from agentos_constitution.wasm import OPA_BIN, build_wasm
 
 
 def find_opa() -> str | None:
-    """The vendored opa.exe if present (Windows dev box), else PATH (CI installs Linux OPA)."""
-    vendored = Path("tools/opa/opa.exe")
-    return str(vendored) if vendored.exists() else shutil.which("opa")
+    """The vendored opa.exe if present (Windows dev box), else PATH (CI installs
+    Linux OPA). OPA_BIN is repo-root-anchored — never CWD-dependent."""
+    return str(OPA_BIN) if OPA_BIN.exists() else shutil.which("opa")
 
 
 @dataclass(frozen=True)
