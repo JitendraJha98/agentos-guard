@@ -436,6 +436,71 @@ def test_unknown_fired_principle_ref_never_relaxes_computed_deny() -> None:
     assert fired and fired[0].principle_ref == "9.9"  # the matched deny survives
 
 
+def test_string_principles_meta_value_never_relaxes_computed_deny() -> None:
+    """Re-review hardening: a principles_meta VALUE that is a string (not a dict)
+    must not crash reason construction BEFORE the deny floor is captured — the
+    floor is recorded the moment it is computed, so the deny can never relax
+    into a fail-open ALLOW."""
+
+    class StringMetaPolicyEngine:
+        constitution_version = "sha256:stub-constitution"
+        policy_version = "sha256:stub-policy"
+        principles_meta: dict = {"9.9": "not-a-dict"}  # malformed meta VALUE
+
+        def evaluate(self, input: dict) -> ConstitutionResult:
+            return ConstitutionResult(
+                matched=(MatchedPrinciple(principle_ref="9.9", effect="deny"),),
+                no_match=False,
+            )
+
+    pipeline = Pipeline(
+        identity=FakeIdentityStage(ok=True),
+        policy=StringMetaPolicyEngine(),
+        scorers=[],
+        audit=FakeAuditWriter(),
+        posture=PostureMap(fail_open_types=frozenset({ActionType.model_invocation})),
+    )
+    action = AgentAction(
+        agent_id="agent-1", type=ActionType.model_invocation, target="m",
+        payload={"model": "m"}, identity_token="tok",
+    )
+    decision = asyncio.run(pipeline.evaluate(action))
+    assert decision.outcome is Outcome.deny  # the matched deny survives bad meta
+
+
+def test_audit_failure_after_risk_driven_deny_never_relaxes_to_fail_open_allow() -> None:
+    """Re-review hardening: a risk-driven deny (floor allow, risk >= deny_at) on a
+    fail-open class must survive a NON-RedactionError audit failure — the fail-safe
+    inherits the FINAL graduated outcome, not just the policy floor. The writer
+    fails only the hot-path append and accepts the fail-safe's payload-free record,
+    so the relaxation would be an audited ALLOW (not caught by no-record->no-allow)."""
+
+    class FirstAppendFailingAudit:
+        def __init__(self) -> None:
+            self.calls = 0
+            self._id = uuid4()
+
+        async def append(self, action: AgentAction, decision) -> UUID:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("audit store down")  # NOT a RedactionError
+            return self._id
+
+    pipeline = Pipeline(
+        identity=FakeIdentityStage(ok=True),
+        policy=SpyPolicyEngine(Outcome.allow),  # benign: no_match -> floor allow
+        scorers=[SpyScorer(0.9)],               # risk >= deny_at -> graduated deny
+        audit=FirstAppendFailingAudit(),
+        posture=PostureMap(fail_open_types=frozenset({ActionType.model_invocation})),
+    )
+    action = AgentAction(
+        agent_id="agent-1", type=ActionType.model_invocation, target="m",
+        payload={"model": "m"}, identity_token="tok",
+    )
+    decision = asyncio.run(pipeline.evaluate(action))
+    assert decision.outcome is Outcome.deny  # the computed verdict never relaxes
+
+
 def test_post_floor_failure_inherits_computed_deny_floor_on_fail_open_class() -> None:
     """C1 belt-and-braces: ANY exception after the deny floor was computed must
     inherit that floor in _fail_safe — a fail-open allow can never override it."""

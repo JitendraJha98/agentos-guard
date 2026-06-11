@@ -144,21 +144,25 @@ class Pipeline:
         if floor is None:
             # Ambiguity ≡ no_match (D4): the floor is the per-class posture default.
             floor = self._posture.no_match_floor(action.type)
-            reasons.append(Reason(stage="policy", code="no_principle_matched"))
-        else:
+        # Captured the moment it is known: an exception in the reason loop below
+        # (or any later stage) inherits the computed floor — it can never relax.
+        floor_box[0] = floor
+        if res.matched:
             for m in res.matched:
+                meta = self._policy.principles_meta.get(m.principle_ref)
                 reasons.append(
                     Reason(
                         stage="policy",
                         code="constitution_principle_fired",
                         policy_id=f"constitution.{m.principle_ref}",
                         principle_ref=m.principle_ref,
-                        # .get chain: a meta gap must explain less, never crash the verdict.
-                        rationale=self._policy.principles_meta.get(m.principle_ref, {}).get("title", ""),
+                        # malformed/missing meta must explain less, never crash the verdict.
+                        rationale=meta.get("title", "") if isinstance(meta, dict) else "",
                         evidence={"effect": m.effect},
                     )
                 )
-        floor_box[0] = floor  # any later exception inherits the computed floor
+        else:
+            reasons.append(Reason(stage="policy", code="no_principle_matched"))
 
         # Stage 4 — Risk (SEC-01): inline, pure-CPU (plain call — not awaited).
         risk_score, findings = assess_risk(action, self._scorers)
@@ -169,6 +173,9 @@ class Pipeline:
 
         # Stage 5 — Graduated (POL-06): risk/trust may only RESTRICT the policy floor.
         outcome = graduated_response(floor, risk_score, trust, self._thresholds)
+        floor_box[0] = outcome  # the fail-safe inherits the FINAL verdict, not just
+        # the policy floor — a post-verdict audit failure can never relax a
+        # risk-driven deny on a fail-open class.
         reasons.append(Reason(stage="graduated", code=outcome.value))
 
         decision = Decision(
