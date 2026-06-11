@@ -27,7 +27,6 @@ typed structurally, so this package keeps its single internal dependency on
 from __future__ import annotations
 
 from typing import Protocol
-from urllib.parse import urlsplit
 from uuid import UUID
 
 from agentos_contract import AgentAction, Decision, Outcome, Reason, RiskScorer
@@ -35,6 +34,7 @@ from agentos_contract import AgentAction, Decision, Outcome, Reason, RiskScorer
 from agentos_pipeline.graduated import GraduatedThresholds, graduated_response
 from agentos_pipeline.identity import IdentityStage, IdentityVerdict
 from agentos_pipeline.policy import PolicyResult
+from agentos_pipeline.policy_input import _host
 from agentos_pipeline.risk import assess_risk
 
 
@@ -44,17 +44,6 @@ class _PolicyEngine(Protocol):
 
 class _AuditWriter(Protocol):
     async def append(self, action: AgentAction, decision: Decision) -> UUID: ...
-
-
-def _host(action: AgentAction) -> str:
-    """Parse the host from the http_get `url` in the action payload.
-
-    A missing/unparseable URL yields an empty host — which the deny-by-default egress
-    policy (`host in data.allowlist`) correctly DENIES. Never silently fail open
-    (Pitfall 3): an unknown host is treated as not-allowlisted, not as allowed.
-    """
-    url = (action.payload or {}).get("url", "")
-    return urlsplit(url).hostname or ""
 
 
 class Pipeline:
