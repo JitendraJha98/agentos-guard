@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agentos_contract import Outcome
+from agentos_contract.policy_io import OUTCOME_RESTRICTIVENESS as _RANK
 
 
 @dataclass(frozen=True)
@@ -45,18 +46,10 @@ class GraduatedThresholds:
             )
 
 
-# Restrictiveness ladder for the floor clamp (higher = more restrictive). The graduated
-# stage NEVER returns a result less restrictive than the policy floor.
-_RANK: dict[Outcome, int] = {
-    Outcome.allow: 0,
-    Outcome.warn: 1,
-    Outcome.governance_review: 2,
-    Outcome.temporary_exception: 2,
-    Outcome.sandbox: 3,
-    Outcome.require_consensus: 4,
-    Outcome.require_approval: 5,
-    Outcome.deny: 6,
-}
+# Restrictiveness ladder for the floor clamp (higher = more restrictive; `_RANK`
+# above): the graduated stage NEVER returns a result less restrictive than the
+# policy floor. Single source of truth since Slice 3: the D4 contract's
+# OUTCOME_RESTRICTIVENESS, imported as _RANK.
 # Low trust tightens one step, keeping a human in the loop: a mid-risk sandbox
 # becomes require_approval (not a hard deny) — still strictly more restrictive
 # by _RANK, so every floor/monotonicity invariant holds.
