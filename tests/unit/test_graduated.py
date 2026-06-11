@@ -20,7 +20,13 @@ from __future__ import annotations
 import pytest
 
 from agentos_contract import Outcome
-from agentos_pipeline.graduated import graduated_response
+from agentos_pipeline.graduated import (
+    _RANK,
+    GraduatedThresholds,
+    _more_restrictive,
+    _risk_to_outcome,
+    graduated_response,
+)
 
 
 @pytest.mark.floor_invariant
@@ -52,9 +58,6 @@ def test_mid_risk_on_allowed_action_lands_in_sandbox_band() -> None:
 def test_low_risk_on_allowed_action_stays_allow() -> None:
     assert graduated_response(Outcome.allow, risk_score=0.0, trust=0.9) is Outcome.allow
     assert graduated_response(Outcome.allow, risk_score=0.39, trust=1.0) is Outcome.allow
-
-
-from agentos_pipeline.graduated import GraduatedThresholds, _more_restrictive, _risk_to_outcome
 
 
 def test_risk_to_outcome_default_bands():
@@ -92,8 +95,6 @@ def test_policy_floor_is_a_lower_bound():
     assert graduated_response(Outcome.warn, risk_score=0.0, trust=1.0) is Outcome.warn
 
 
-from agentos_pipeline.graduated import _RANK
-
 _ALL_RISK = [0.0, 0.1, 0.39, 0.4, 0.6, 0.69, 0.7, 0.99, 1.0]
 _ALL_TRUST = [0.0, 0.2, 0.25, 0.5, 0.75, 1.0]
 
@@ -102,6 +103,7 @@ _ALL_TRUST = [0.0, 0.2, 0.25, 0.5, 0.75, 1.0]
 @pytest.mark.parametrize("floor", [
     Outcome.allow, Outcome.warn, Outcome.sandbox,
     Outcome.require_consensus, Outcome.require_approval,
+    Outcome.temporary_exception, Outcome.governance_review,
 ])
 @pytest.mark.parametrize("risk", _ALL_RISK)
 @pytest.mark.parametrize("trust", _ALL_TRUST)
@@ -117,3 +119,15 @@ def test_more_risk_is_monotonically_non_relaxing(trust):
     # Fix trust; increasing risk never produces a LESS restrictive outcome.
     ranks = [_RANK[graduated_response(Outcome.allow, risk_score=r, trust=trust)] for r in _ALL_RISK]
     assert ranks == sorted(ranks)
+
+
+def test_thresholds_reject_inverted_risk_bands():
+    # sandbox_at must not exceed deny_at — inverted bands are a config error.
+    with pytest.raises(ValueError):
+        GraduatedThresholds(sandbox_at=0.8, deny_at=0.4)
+
+
+def test_trust_harden_boundary_is_inclusive():
+    # trust == trust_harden_at (0.2 default) hardens one step; just above does not.
+    assert graduated_response(Outcome.allow, risk_score=0.0, trust=0.2) is Outcome.sandbox
+    assert graduated_response(Outcome.allow, risk_score=0.0, trust=0.21) is Outcome.allow

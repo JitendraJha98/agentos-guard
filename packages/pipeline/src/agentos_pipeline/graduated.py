@@ -9,9 +9,11 @@ risk and trust may only RESTRICT, never relax, the deterministic policy floor. A
 policy `deny` is TERMINAL — no (risk, trust) combination can upgrade it. This is
 checked explicitly by the `floor_invariant`-marked property sweep.
 
-Phase-1 scope (D-13): `allow` and `deny` are realized end-to-end; `sandbox` is in
-the Outcome vocabulary (so the contract is stable) but its enforcement lands in
-Phase 3 — the SDK only acts on allow (run) / deny (block) this phase.
+Phase-3 scope: the full graduated spectrum is mapped here — `GraduatedThresholds`
+sets the policy-driven risk bands, the restrictiveness ladder orders all outcomes,
+and a conservative (hardening-only) trust band lets low trust tighten one risk
+step while trust never relaxes. The deterministic policy floor remains a strict
+lower bound on the result.
 """
 
 from __future__ import annotations
@@ -30,6 +32,17 @@ class GraduatedThresholds:
     sandbox_at: float = 0.4
     deny_at: float = 0.7
     trust_harden_at: float = 0.2   # trust <= this -> tighten one risk step (TRST-02, conservative)
+
+    def __post_init__(self) -> None:
+        if not (0.0 <= self.sandbox_at <= self.deny_at <= 1.0):
+            raise ValueError(
+                "GraduatedThresholds require 0.0 <= sandbox_at <= deny_at <= 1.0, "
+                f"got sandbox_at={self.sandbox_at}, deny_at={self.deny_at}"
+            )
+        if not (0.0 <= self.trust_harden_at <= 1.0):
+            raise ValueError(
+                f"GraduatedThresholds require 0.0 <= trust_harden_at <= 1.0, got {self.trust_harden_at}"
+            )
 
 
 # Restrictiveness ladder for the floor clamp (higher = more restrictive). The graduated
