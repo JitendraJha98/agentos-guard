@@ -1,9 +1,14 @@
 """POL-01 schema: structured principles; temporary_exception unauthorable; field registry."""
+import subprocess
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
-from agentos_constitution.schema import Constitution, Leaf, Principle
+from agentos_constitution.schema import Constitution, Leaf, Principle, load_constitution
 
 BASE = dict(schema_version=1, name="test")
+EXAMPLE = Path("policies/constitution.yaml")
+OPA = Path("tools/opa/opa.exe")
 
 
 def _p(**kw):
@@ -76,3 +81,31 @@ def test_happy_path_full_construction():
     assert [p.id for p in c.principles] == ["1.1", "2.1"]
     assert c.graduated.default.deny_at == 0.7
     assert c.principles[0].applies_to == ["tool_call", "mcp_call"]
+
+
+# --- the shipped example operator constitution (POL-01, Task 7) ---
+
+def test_example_constitution_loads_and_compiles_with_stable_version():
+    from agentos_constitution import compile_constitution, constitution_version
+    c = load_constitution(EXAMPLE)
+    assert {p.id for p in c.principles} >= {"1.1", "2.1", "3.2", "3.5", "4.1"}
+    by_id = {p.id: p for p in c.principles}
+    assert by_id["4.1"].effect == "governance_review"
+    assert by_id["3.5"].kind == "sequence"
+    bundle = compile_constitution(c)
+    assert bundle.constitution_version.startswith("sha256:")
+    # stable: re-loading + re-compiling yields the identical version and bytes
+    again = compile_constitution(load_constitution(EXAMPLE))
+    assert again.constitution_version == bundle.constitution_version
+    assert again.rego == bundle.rego
+
+
+@pytest.mark.skipif(not OPA.exists(), reason="vendored OPA CLI not present")
+def test_example_constitution_rego_passes_opa_check_strict(tmp_path):
+    from agentos_constitution import compile_constitution
+    bundle = compile_constitution(load_constitution(EXAMPLE))
+    rego_path = tmp_path / "constitution.rego"
+    rego_path.write_text(bundle.rego, encoding="utf-8")
+    proc = subprocess.run([str(OPA), "check", "--strict", str(rego_path)],
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr

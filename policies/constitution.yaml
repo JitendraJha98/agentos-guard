@@ -1,0 +1,50 @@
+# The example operator Constitution (POL-01) — copy this file and edit.
+#
+# Numbered principles with verbatim statements; the compiler lowers this file
+# deterministically to YAML policy + Rego (POL-02). Principles 1.1/2.1/3.2/3.5
+# are the Phase-3 wedge (PII egress + rename_then_drop); 4.1 shows the
+# non-blocking governance_review effect (POL-14). `temporary_exception` is
+# never authorable here (POL-13) — it is human-ratified at runtime only.
+schema_version: 1
+name: agentos-guard-example
+lists:
+  egress_allowlist: [api.example.com]
+graduated:
+  default: {sandbox_at: 0.4, deny_at: 0.7, trust_harden_at: 0.2}
+principles:
+  - id: "1.1"
+    title: Egress allowlist
+    statement: An agent may only make outbound requests to allowlisted hosts.
+    applies_to: [tool_call]
+    effect: deny
+    when: {field: egress.host, op: not_in, list_ref: egress_allowlist}
+  - id: "2.1"
+    title: Destructive or exfiltrating intent requires approval
+    statement: Destructive or exfiltrating actions require human approval.
+    effect: require_approval
+    when:
+      any:
+        - {field: intent.class, op: eq, value: DATA_DESTRUCTION}
+        - {field: intent.class, op: eq, value: DATA_EXFILTRATION}
+  - id: "3.2"
+    title: PII never leaves approved hosts
+    statement: An agent must never send user PII to a host outside the approved allowlist.
+    applies_to: [tool_call, mcp_call]
+    effect: deny
+    when:
+      all:
+        - {field: guardrails.pii, op: eq, value: true}
+        - {field: egress.host, op: not_in, list_ref: egress_allowlist}
+  - id: "3.5"
+    title: Rename-then-drop is forbidden
+    statement: A rename followed by destruction of the renamed resource is forbidden, even when each step looks benign alone.
+    kind: sequence
+    sequence: [RESOURCE_RENAME, DATA_DESTRUCTION]
+    effect: deny
+  - id: "4.1"
+    title: External sends proceed under governance review
+    statement: Outbound communication to approved hosts proceeds, but is opened for asynchronous governance review.
+    applies_to: [tool_call]
+    effect: governance_review
+    when: {field: egress.host, op: in, list_ref: egress_allowlist}
+    side_effects: [notify]
