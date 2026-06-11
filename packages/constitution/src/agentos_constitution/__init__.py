@@ -9,8 +9,11 @@ from agentos_constitution.schema import (
     Principle,
     load_constitution,
 )
+from agentos_constitution.version import canonical_form, constitution_version
 
 __all__ = [
+    "canonical_form",
+    "constitution_version",
     "Constitution",
     "GraduatedSection",
     "GraduatedThresholdsCfg",
