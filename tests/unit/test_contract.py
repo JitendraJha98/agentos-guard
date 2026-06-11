@@ -183,3 +183,84 @@ def test_reason_rejects_long_rationale():
 def test_reason_rejects_unknown_field():
     with pytest.raises(ValidationError):
         Reason(stage="x", code="y", bogus=1)
+
+
+# --- H2: evidence must be JSON-native and URL-free (audit hash safety) ---------
+
+
+def test_reason_rejects_non_json_native_evidence():
+    # A UUID validates under a lenient default=str measure but CRASHES the audit
+    # writer's strict canonical_json at hash time — reject at the contract.
+    from uuid import uuid4
+
+    with pytest.raises(ValidationError):
+        Reason(stage="risk", code="x", evidence={"id": uuid4()})
+
+
+def test_reason_rejects_url_in_evidence_value():
+    # Full URLs carry query-string secrets; host-only is the audit convention.
+    with pytest.raises(ValidationError):
+        Reason(stage="risk", code="x", evidence={"u": "https://x.example/p?k=s"})
+
+
+def test_reason_rejects_url_in_nested_evidence():
+    with pytest.raises(ValidationError):
+        Reason(stage="risk", code="x", evidence={"a": {"b": "http://x"}})
+
+
+def test_reason_plain_small_evidence_still_ok():
+    r = Reason(stage="risk", code="x", evidence={"host": "api.example.com", "n": 3})
+    assert r.evidence == {"host": "api.example.com", "n": 3}
+
+
+# --- H6: bounds on audit-bound Decision/Reason fields --------------------------
+
+
+def test_reason_rejects_long_detail():
+    with pytest.raises(ValidationError):
+        Reason(stage="policy", code="x", detail="a" * 513)
+
+
+def test_decision_rejects_long_inferred_intent():
+    with pytest.raises(ValidationError):
+        Decision(
+            action_id="11111111-1111-1111-1111-111111111111",
+            outcome=Outcome.allow,
+            inferred_intent="a" * 65,
+        )
+
+
+def test_decision_rejects_too_many_remediation_items():
+    with pytest.raises(ValidationError):
+        Decision(
+            action_id="11111111-1111-1111-1111-111111111111",
+            outcome=Outcome.allow,
+            remediation=[f"step {i}" for i in range(11)],
+        )
+
+
+def test_decision_rejects_oversized_remediation_item():
+    with pytest.raises(ValidationError):
+        Decision(
+            action_id="11111111-1111-1111-1111-111111111111",
+            outcome=Outcome.allow,
+            remediation=["a" * 257],
+        )
+
+
+def test_decision_rejects_tz_naive_expires_at():
+    with pytest.raises(ValidationError):
+        Decision(
+            action_id="11111111-1111-1111-1111-111111111111",
+            outcome=Outcome.allow,
+            expires_at=datetime(2026, 6, 11, 12, 0),  # naive — no tzinfo
+        )
+
+
+def test_decision_accepts_tz_aware_expires_at():
+    d = Decision(
+        action_id="11111111-1111-1111-1111-111111111111",
+        outcome=Outcome.allow,
+        expires_at=datetime(2026, 6, 11, 12, 0, tzinfo=timezone.utc),
+    )
+    assert d.expires_at.tzinfo is not None
