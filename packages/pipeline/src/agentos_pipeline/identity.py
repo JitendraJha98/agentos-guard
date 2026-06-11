@@ -19,7 +19,8 @@ engine is `agentos_controlplane.identity_engine.IdentityEngine`; its result type
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+import time
+from typing import Callable, Protocol, runtime_checkable
 
 from agentos_contract import AgentAction
 
@@ -48,3 +49,55 @@ class IdentityStage:
     def verify(self, action: AgentAction) -> IdentityVerdict:
         """Delegate to the engine using the action's own token + claimed agent_id."""
         return self._engine.verify(action.identity_token, action.agent_id)
+
+
+class CachingIdentityStage:
+    """The PIPE-06 identity-verification cache: a bounded TTL dict over a wrapped
+    `IdentityStage` (same `verify(action)` shape, so `Pipeline` accepts it
+    transparently — wire it explicitly, never by default).
+
+    Rules:
+      - only SUCCESSFUL verdicts are cached; a failed verdict (forged/unknown
+        token) is always re-verified — caching denials would let an attacker
+        probe freely, and caching nothing on failure keeps the deny path exact;
+      - entries expire after `ttl_seconds` (injectable `clock` for tests);
+      - the dict is bounded at `max_entries` with FIFO eviction (dict order);
+      - `invalidate()` clears everything — the policy-version-change hook.
+
+    Whole-Decision caching is deliberately REJECTED (trust drifts between calls
+    and every action must produce its own audit record); only the verification
+    verdict — pure identity, no decision state — is cached here.
+    """
+
+    def __init__(
+        self,
+        stage: IdentityStage,
+        *,
+        ttl_seconds: float = 60.0,
+        max_entries: int = 1024,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._stage = stage
+        self._ttl = ttl_seconds
+        self._max = max_entries
+        self._clock = clock
+        self._cache: dict[tuple[str | None, str], tuple[IdentityVerdict, float]] = {}
+
+    def verify(self, action: AgentAction) -> IdentityVerdict:
+        key = (action.identity_token, action.agent_id)
+        now = self._clock()
+        hit = self._cache.get(key)
+        if hit is not None and hit[1] > now:
+            return hit[0]
+        verdict = self._stage.verify(action)
+        if verdict.ok:
+            if key not in self._cache and len(self._cache) >= self._max:
+                self._cache.pop(next(iter(self._cache)))  # FIFO: evict oldest
+            self._cache[key] = (verdict, now + self._ttl)
+        else:
+            self._cache.pop(key, None)  # never serve a stale ok after a failure
+        return verdict
+
+    def invalidate(self) -> None:
+        """Drop every cached verdict (call on policy/constitution version change)."""
+        self._cache.clear()
