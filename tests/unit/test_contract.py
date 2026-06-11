@@ -7,6 +7,8 @@ Covers the <behavior> cases in 01-01-PLAN Task 2:
 - RiskFinding rejects raw payload in `matched` and is frozen
 """
 
+from datetime import datetime, timezone
+
 import pytest
 from pydantic import ValidationError
 
@@ -137,9 +139,6 @@ def test_reason_carries_explainable_denial_fields():
     assert restored.evidence == {"matched": "email_address", "host": "attacker.example"}
 
 
-from datetime import datetime, timezone
-
-
 def test_decision_full_phase3_shape_roundtrip():
     d = Decision(
         action_id="11111111-1111-1111-1111-111111111111",
@@ -163,3 +162,24 @@ def test_decision_defaults_are_empty_and_still_forbid_unknown():
     assert d.inferred_intent is None and d.policy_version is None and d.expires_at is None
     with pytest.raises(ValidationError):
         Decision(action_id="11111111-1111-1111-1111-111111111111", outcome=Outcome.allow, mystery=1)
+
+
+def test_reason_small_evidence_roundtrips():
+    r = Reason(stage="risk", code="pii_egress", evidence={"matched": "email_address", "host": "api.example.com"})
+    assert Reason.model_validate_json(r.model_dump_json()) == r
+
+
+def test_reason_rejects_oversized_evidence():
+    # evidence flows into the un-redactable, hash-covered audit log (T-01-02).
+    with pytest.raises(ValidationError):
+        Reason(stage="risk", code="pii_egress", evidence={"payload": "a" * 2000})
+
+
+def test_reason_rejects_long_rationale():
+    with pytest.raises(ValidationError):
+        Reason(stage="policy", code="x", rationale="a" * 600)
+
+
+def test_reason_rejects_unknown_field():
+    with pytest.raises(ValidationError):
+        Reason(stage="x", code="y", bogus=1)
