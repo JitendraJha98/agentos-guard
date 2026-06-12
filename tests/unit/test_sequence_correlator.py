@@ -51,8 +51,8 @@ def test_max_conversations_fifo_bound():
     c.observe("c1", "RESOURCE_RENAME", SEQS)
     c.observe("c2", "RESOURCE_RENAME", SEQS)
     c.observe("c3", "RESOURCE_RENAME", SEQS)          # evicts c1
-    assert c.observe("c1", "DATA_DESTRUCTION", SEQS) == ()   # window gone -> fresh
-    assert c.observe("c2", "DATA_DESTRUCTION", SEQS) == ("3.5",)
+    assert c.observe("c1", "DATA_DESTRUCTION", SEQS) == ()   # window gone -> fresh (re-inserts c1, evicting c2)
+    assert c.observe("c3", "DATA_DESTRUCTION", SEQS) == ("3.5",)   # c3 survived with its rename
 
 
 def test_multi_match_is_sorted_and_deterministic():
