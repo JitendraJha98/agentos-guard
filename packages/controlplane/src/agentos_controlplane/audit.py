@@ -74,6 +74,9 @@ EVENT_KINDS = frozenset(
     }
 )
 
+# Chain fields the writer computes itself — an event body may never shadow them.
+_RESERVED_EVENT_KEYS = frozenset({"seq", "prev_hash", "kind"})
+
 
 def canonical_json(obj: dict) -> bytes:
     """Reproducible canonical JSON: sorted keys, no whitespace (RFC-8785-ish)."""
@@ -207,6 +210,11 @@ class AuditWriter:
         """
         if kind not in EVENT_KINDS:
             raise ValueError(f"unknown audit event kind: {kind!r}")
+        # A body key shadowing the chain fields would overwrite exactly what the
+        # hash must cover — reject fail-closed, write NOTHING.
+        shadowed = _RESERVED_EVENT_KEYS & body.keys()
+        if shadowed:
+            raise ValueError(f"audit event body shadows reserved keys: {sorted(shadowed)}")
         async with self._lock:
             prev_hash, seq = self._chain_head()
             full_body = {"seq": seq, "prev_hash": prev_hash, "kind": kind, **body}
@@ -215,7 +223,13 @@ class AuditWriter:
 
     def _chain_head(self) -> tuple[str | None, int]:
         """Return (prior record_hash, next monotonic seq) — cached after the
-        first lookup; only ever read/written under `self._lock`."""
+        first lookup; only ever read/written under `self._lock`.
+
+        ONE AuditWriter instance per store: the cache assumes this writer is
+        the store's only appender. A second instance over the same store gets
+        a stale head, but cannot fork the chain silently — its INSERT collides
+        with the UNIQUE `seq` constraint and raises IntegrityError (fail
+        closed; the colliding record is never written)."""
         if self._head is not None:
             return self._head
         with self.session_factory() as session:

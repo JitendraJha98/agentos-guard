@@ -136,6 +136,22 @@ def test_resolve_deny_with_note(client, approvals) -> None:
     assert body["resolution_note"] == "too risky today"
 
 
+def test_resolve_bounds_operator_inputs(client, approvals) -> None:
+    """Operator inputs are bounded: resolver > 128 or note > 512 chars -> 422."""
+    approval_id = _park(approvals)
+    resp = client.post(
+        f"/approvals/{approval_id}/resolve",
+        json={"approved": True, "resolver": "x" * 200},
+    )
+    assert resp.status_code == 422
+    resp = client.post(
+        f"/approvals/{approval_id}/resolve",
+        json={"approved": True, "resolver": "op", "note": "n" * 513},
+    )
+    assert resp.status_code == 422
+    assert approvals.get(approval_id).status == "pending"  # nothing resolved
+
+
 def test_resolve_with_exception_expires_at_grants_exception(
     client, approvals, store
 ) -> None:

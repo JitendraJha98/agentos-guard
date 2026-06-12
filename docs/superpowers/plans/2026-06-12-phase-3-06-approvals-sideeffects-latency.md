@@ -43,7 +43,9 @@ onto one core; and the p95 cached-path latency budget becomes a CI gate (PIPE-04
   Risk still applies (may re-restrict — defense in depth). If the FINAL outcome is `allow` and an
   exception was applied → relabel outcome `temporary_exception` with `expires_at` = earliest
   consumed expiry. **Auto-revoke = read-time expiry check** (`expires_at > now()` in the lookup
-  query) — no background job; plus explicit `revoke(exception_id)`.
+  query) — no background job; plus explicit `revoke(exception_id)`. Review correction: the floor
+  does NOT become `allow` — it re-derives from the remaining non-deny matched principles (or
+  `allow` if none), so a co-fired restrictive principle (e.g. `require_approval`) still governs.
 - **Outcome-enforcement map (replaces interim `should_execute`):**
   | Outcome | Enforcement |
   |---|---|

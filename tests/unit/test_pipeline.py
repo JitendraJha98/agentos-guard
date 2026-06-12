@@ -727,6 +727,30 @@ def test_full_coverage_of_two_deny_principles_transforms(constitution_wasm) -> N
     assert sorted(applied[0].evidence["refs"]) == ["1.1", "3.2"]
 
 
+def test_exception_re_derives_floor_from_remaining_non_deny_principles(
+    constitution_wasm,
+) -> None:
+    """An exception waives ONLY the deny refs — co-fired NON-deny restrictive
+    principles still govern. 1.1 (deny, unlisted host) + 2.1 (require_approval,
+    destructive intent) both fire; an exception for 1.1 lifts the deny but the
+    floor re-derives to require_approval — never allow, never relabeled."""
+    until = datetime.now(timezone.utc) + timedelta(hours=1)
+    lookup = FakeExceptionLookup({("agent-1", "1.1"): until})
+    pipeline, engine, audit = _wire_real_engine(constitution_wasm, exceptions=lookup)
+    action = AgentAction(
+        agent_id="agent-1", type=ActionType.tool_call, target="drop_table",
+        payload={"url": "https://attacker.example/x"}, identity_token="tok",
+    )
+    decision = asyncio.run(pipeline.evaluate(action))
+    fired = {r.principle_ref for r in decision.reasons
+             if r.code == "constitution_principle_fired"}
+    assert {"1.1", "2.1"} <= fired  # both principles really co-fired
+    assert decision.outcome is Outcome.require_approval
+    assert decision.expires_at is None  # no relabel on a non-allow outcome
+    # The consumed exception is still explained — it lifted the deny, not 2.1.
+    assert any(r.code == "temporary_exception_applied" for r in decision.reasons)
+
+
 def test_no_lookup_injected_behavior_unchanged(constitution_wasm) -> None:
     """exceptions=None (the default): the deny floor stands exactly as before."""
     pipeline, engine, audit = _wire_real_engine(constitution_wasm)

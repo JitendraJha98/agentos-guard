@@ -13,7 +13,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agentos_controlplane.approvals import AlreadyResolvedError, ApprovalStore
 from agentos_controlplane.store.models import ApprovalRequest, GovernanceReview
@@ -23,8 +23,8 @@ class ResolveRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
     approved: bool
-    resolver: str
-    note: str | None = None
+    resolver: str = Field(max_length=128)  # bounded operator input -> 422
+    note: str | None = Field(default=None, max_length=512)
     # POL-13: the ONLY door a temporary exception comes through (human-ratified).
     exception_expires_at: datetime | None = None
 

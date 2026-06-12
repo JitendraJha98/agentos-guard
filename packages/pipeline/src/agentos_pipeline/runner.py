@@ -324,8 +324,11 @@ class Pipeline:
         matched: Sequence[MatchedPrinciple],
         reasons: list[Reason],
     ) -> tuple[Outcome, datetime | None]:
-        """POL-13: convert a matched-principle deny floor to allow IFF every
-        deny-effect ref has an active unexpired exception for this agent.
+        """POL-13: lift a matched-principle deny floor IFF every deny-effect ref
+        has an active unexpired exception for this agent. The exception waives
+        ONLY the deny refs — the floor RE-DERIVES from the remaining non-deny
+        matched principles (allow when none), so a co-fired restrictive
+        principle (e.g. require_approval) still governs.
 
         Returns (floor, earliest consumed expiry | None). Expiry is re-checked
         HERE (not only in the store's read-time query) — defense in depth: a
@@ -356,7 +359,13 @@ class Pipeline:
                 evidence={"refs": deny_refs, "expires_at": earliest.isoformat()},
             )
         )
-        return Outcome.allow, earliest
+        # Re-derive from the surviving (non-deny) principles — the exception
+        # lifts the deny refs, never the co-fired restrictive floors.
+        floor = (
+            select_floor([m for m in matched if m.effect != Outcome.deny.value])
+            or Outcome.allow
+        )
+        return floor, earliest
 
     def _derive_side_effects(
         self, matched: Sequence[MatchedPrinciple], findings: Sequence[RiskFinding]

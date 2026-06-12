@@ -95,8 +95,35 @@ def test_all_lifecycle_kinds_accepted(audit_writer: AuditWriter, kind: str) -> N
     assert _rows(audit_writer)[-1].body["kind"] == kind
 
 
+@pytest.mark.parametrize("reserved", ["seq", "prev_hash", "kind"])
+def test_reserved_body_key_raises_and_writes_nothing(
+    audit_writer: AuditWriter, reserved: str
+) -> None:
+    """A body key shadowing the chain fields would silently overwrite what the
+    hash is supposed to cover — rejected fail-closed, nothing written."""
+    with pytest.raises(ValueError):
+        asyncio.run(audit_writer.append_event("side_effect", {reserved: "shadow"}))
+    with audit_writer.session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(AuditRecord)) == 0
+
+
 def test_unknown_kind_raises_and_writes_nothing(audit_writer: AuditWriter) -> None:
     with pytest.raises(ValueError):
         asyncio.run(audit_writer.append_event("made_up_kind", {"ref": "x"}))
     with audit_writer.session_factory() as session:
         assert session.scalar(select(func.count()).select_from(AuditRecord)) == 0
+
+
+def test_second_writer_on_same_store_fails_closed(audit_writer: AuditWriter) -> None:
+    """One-writer-per-store discipline: a second AuditWriter's stale cached head
+    collides with the UNIQUE seq constraint -> IntegrityError, never a silent
+    chain fork (two records at one seq)."""
+    from sqlalchemy.exc import IntegrityError
+
+    second = AuditWriter(audit_writer.session_factory)
+    asyncio.run(audit_writer.append_event("side_effect", {"ref": "a"}))  # seq 0; caches head
+    asyncio.run(second.append_event("side_effect", {"ref": "b"}))        # fresh SELECT -> seq 1
+    with pytest.raises(IntegrityError):  # first writer's stale cache -> seq 1 collision
+        asyncio.run(audit_writer.append_event("side_effect", {"ref": "c"}))
+    with audit_writer.session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(AuditRecord)) == 2

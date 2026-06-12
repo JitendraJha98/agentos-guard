@@ -29,6 +29,7 @@ the concrete dispatcher arrives with PIPE-09 dispatch.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Protocol, TypeVar
 
@@ -119,9 +120,18 @@ async def governed_call(
     if dispatcher is not None:
         # PIPE-09: side effects ride EVERY decision (a deny can still risk_flag).
         await dispatcher.dispatch(action, decision)
-    if coordinator is not None and _review_obliged(decision):
-        # POL-14: open the async review — non-blocking; never awaited-on.
-        await coordinator.open_review(action, decision)
+    if _review_obliged(decision):
+        if coordinator is not None:
+            # POL-14: open the async review — non-blocking; never awaited-on.
+            await coordinator.open_review(action, decision)
+        else:
+            # Execution still proceeds (non-blocking semantics), but a dropped
+            # review obligation must never vanish silently.
+            logging.getLogger(__name__).warning(
+                "governance_review obligation dropped for action %s: "
+                "no coordinator wired to open the review",
+                action.id,
+            )
     outcome = decision.outcome
     if outcome in _EXECUTABLE:
         return await run()

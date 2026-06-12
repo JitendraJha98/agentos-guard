@@ -19,6 +19,7 @@ approve/deny/timeout flows exercise the persisted-row rendezvous (D3).
 from __future__ import annotations
 
 import asyncio
+import logging
 from uuid import uuid4
 
 import pytest
@@ -47,10 +48,13 @@ def approvals(store) -> ApprovalStore:
 
 
 def _coordinator(
-    approvals: ApprovalStore, store, *, deadline_s: float = 5.0
+    approvals: ApprovalStore, *, deadline_s: float = 5.0
 ) -> StoreApprovalCoordinator:
+    # One-writer-per-store discipline (see AuditWriter._chain_head): the
+    # coordinator shares the ApprovalStore's writer — a second instance over
+    # the same store would collide on the cached chain head.
     return StoreApprovalCoordinator(
-        approvals, AuditWriter(store), PostureMap(), deadline_s=deadline_s, poll_s=0.05
+        approvals, approvals._audit, PostureMap(), deadline_s=deadline_s, poll_s=0.05
     )
 
 
@@ -112,7 +116,7 @@ async def _resolve_when_parked(approvals: ApprovalStore, *, approved: bool) -> N
 def test_approve_flow_parks_blocks_then_executes(approvals, store) -> None:
     action = _action()
     pipeline = _Pipeline(_decision(action, Outcome.require_approval))
-    coord = _coordinator(approvals, store)
+    coord = _coordinator(approvals)
     op = _Op()
 
     async def scenario():
@@ -132,7 +136,7 @@ def test_approve_flow_parks_blocks_then_executes(approvals, store) -> None:
 def test_deny_resolution_blocks_without_running(approvals, store) -> None:
     action = _action()
     pipeline = _Pipeline(_decision(action, Outcome.require_approval))
-    coord = _coordinator(approvals, store)
+    coord = _coordinator(approvals)
     op = _Op()
 
     async def scenario():
@@ -153,7 +157,7 @@ def test_timeout_fail_closed_class_blocks_and_marks_row(approvals, store) -> Non
     GovernanceDenied with code approval_timeout; the row is timed_out + audited."""
     action = _action()
     pipeline = _Pipeline(_decision(action, Outcome.require_approval))
-    coord = _coordinator(approvals, store, deadline_s=0.15)
+    coord = _coordinator(approvals, deadline_s=0.15)
     op = _Op()
 
     with pytest.raises(GovernanceDenied) as exc:
@@ -182,7 +186,7 @@ def test_no_coordinator_require_approval_fail_closed() -> None:
 def test_unrealized_outcomes_escalate_to_approval_path(approvals, store, outcome) -> None:
     action = _action()
     pipeline = _Pipeline(_decision(action, outcome))
-    coord = _coordinator(approvals, store)
+    coord = _coordinator(approvals)
     op = _Op()
 
     async def scenario():
@@ -213,7 +217,7 @@ def test_unrealized_outcomes_without_coordinator_blocked(outcome) -> None:
 def test_governance_review_executes_and_opens_review(approvals, store) -> None:
     action = _action()
     pipeline = _Pipeline(_decision(action, Outcome.governance_review))
-    coord = _coordinator(approvals, store)
+    coord = _coordinator(approvals)
     op = _Op()
     result = asyncio.run(governed_call(pipeline, action, op, coordinator=coord))
     assert result == "ran" and op.ran == 1  # proceeded — NO wait on the review
@@ -224,6 +228,24 @@ def test_governance_review_executes_and_opens_review(approvals, store) -> None:
     # Non-blocking proof: nothing was parked (no approval row, no wait).
     with store() as session:
         assert session.scalars(select(ApprovalRequest)).first() is None
+
+
+def test_governance_review_without_coordinator_executes_but_warns(caplog) -> None:
+    """No coordinator: execution proceeds (non-blocking semantics) but the
+    dropped review obligation is logged loudly — never silently vanished."""
+    action = _action()
+    pipeline = _Pipeline(_decision(action, Outcome.governance_review))
+    op = _Op()
+    with caplog.at_level(logging.WARNING, logger="agentos_sdk.enforce"):
+        result = asyncio.run(governed_call(pipeline, action, op))
+    assert result == "ran" and op.ran == 1  # still executed
+    dropped = [
+        r for r in caplog.records
+        if r.levelno == logging.WARNING
+        and "governance_review" in r.getMessage()
+        and str(action.id) in r.getMessage()
+    ]
+    assert len(dropped) == 1  # the dropped review names itself and the action
 
 
 def test_review_obligation_survives_risk_escalation(approvals, store) -> None:
@@ -241,7 +263,7 @@ def test_review_obligation_survives_risk_escalation(approvals, store) -> None:
             Reason(stage="graduated", code="require_approval"),
         ],
     )
-    coord = _coordinator(approvals, store)
+    coord = _coordinator(approvals)
     op = _Op()
 
     async def scenario():
@@ -339,7 +361,7 @@ def test_parity_tool_hook_vs_wrapper_same_map(approvals, store) -> None:
 
     action = _action()
     decision = _decision(action, Outcome.require_approval)
-    coord = _coordinator(approvals, store)
+    coord = _coordinator(approvals)
 
     # Wrapper path
     op = _Op()
