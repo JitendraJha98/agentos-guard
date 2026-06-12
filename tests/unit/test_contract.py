@@ -249,6 +249,20 @@ def test_decision_rejects_oversized_remediation_item():
         )
 
 
+# --- Slice 4: guardrail finding categories (SEC-02) ----------------------------
+
+
+def test_risk_finding_accepts_guardrail_categories():
+    for category in ("pii", "unsafe_content", "format_violation"):
+        finding = RiskFinding(scorer="g.v1", category=category, risk_score=0.2)
+        assert finding.category == category
+
+
+def test_risk_finding_rejects_unknown_category():
+    with pytest.raises(ValidationError):
+        RiskFinding(scorer="g.v1", category="bogus", risk_score=0.2)
+
+
 def test_decision_rejects_tz_naive_expires_at():
     with pytest.raises(ValidationError):
         Decision(
