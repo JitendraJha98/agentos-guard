@@ -36,7 +36,7 @@ class names) instead of importing the control plane's RedactionError type.
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, Sequence
 from uuid import UUID
 
 from agentos_contract import AgentAction, Decision, Outcome, Reason, RiskScorer
@@ -87,6 +87,7 @@ class Pipeline:
         audit: _AuditWriter,
         thresholds: GraduatedThresholds = GraduatedThresholds(),
         posture: PostureMap = PostureMap(),
+        expensive_scorers: Sequence[RiskScorer] = (),
     ) -> None:
         self._identity = identity
         self._policy = policy
@@ -94,6 +95,9 @@ class Pipeline:
         self._audit = audit
         self._thresholds = thresholds  # POL-06: injectable graduated risk bands
         self._posture = posture        # PIPE-05: per-action-class failure posture
+        # SEC-03: inline=False detectors, run by stage 4 ONLY on inline flags —
+        # never unconditionally (Pitfall 1).
+        self._expensive_scorers = expensive_scorers
 
     async def evaluate(self, action: AgentAction) -> Decision:
         # Mutable holder: _evaluate records the computed floor as soon as it is
@@ -165,9 +169,13 @@ class Pipeline:
             reasons.append(Reason(stage="policy", code="no_principle_matched"))
 
         # Stage 4 — Risk (SEC-01): inline, pure-CPU (plain call — not awaited).
-        # The enrichment-carried guardrail findings (SEC-02) merge here — not re-run.
+        # The enrichment-carried guardrail findings (SEC-02) merge here — not
+        # re-run; the expensive tier is gated on inline flags (SEC-03).
         risk_score, findings = assess_risk(
-            action, self._scorers, extra_findings=enrichment.guardrail_findings
+            action,
+            self._scorers,
+            extra_findings=enrichment.guardrail_findings,
+            expensive_scorers=self._expensive_scorers,
         )
         for finding in findings:
             reasons.append(
