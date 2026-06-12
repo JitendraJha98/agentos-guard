@@ -115,11 +115,13 @@ def test_delegation_deny_does_not_dispatch_subagent() -> None:
     assert op.ran == 0  # the sub-agent was never dispatched
 
 
-# --- Interim Phase-3 fail-closed posture (H1): unrealized outcomes BLOCK ----------
+# --- Outcome map without a coordinator: blocking outcomes fail CLOSED (6b-2) ------
+# (The full coordinator-wired map lives in tests/unit/test_outcome_enforcement.py.)
 
 
 def test_sandbox_blocks_fail_closed_and_does_not_execute() -> None:
-    # sandbox enforcement is not realized yet (Slice 6) — it must NOT silently run.
+    # sandbox escalates to the approval path; with NO coordinator it must NOT
+    # silently run — GovernanceDenied, fail-closed.
     op = _Op()
     with pytest.raises(GovernanceDenied) as exc:
         asyncio.run(

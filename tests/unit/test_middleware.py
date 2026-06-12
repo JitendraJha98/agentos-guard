@@ -129,7 +129,8 @@ def test_deny_blocks_handler_and_returns_tool_message() -> None:
     assert "constitution_principle_fired" in result.content
 
 
-# --- Interim Phase-3 fail-closed posture (H1): unrealized outcomes BLOCK ----------
+# --- Outcome map without a coordinator: blocking outcomes fail CLOSED (6b-2) ------
+# (The full coordinator-wired map lives in tests/unit/test_outcome_enforcement.py.)
 
 
 def _outcome_decision(outcome: Outcome) -> Decision:
@@ -143,7 +144,7 @@ def _outcome_decision(outcome: Outcome) -> Decision:
 
 
 def test_sandbox_blocks_tool_fail_closed() -> None:
-    # sandbox enforcement is not realized yet (Slice 6) — the tool must NOT run.
+    # sandbox escalates to the approval path; with NO coordinator the tool must NOT run.
     mw = GovernanceMiddleware(_FakePipeline(_outcome_decision(Outcome.sandbox)), TOKEN)
     handler = _SpyHandler()
     result = asyncio.run(mw.awrap_tool_call(_request(call_id="call_sbx_7"), handler))

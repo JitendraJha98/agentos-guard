@@ -254,6 +254,10 @@ class ApprovalStore:
                     active[row.principle_ref] = expiry
         return active
 
+    # The pipeline's ExceptionLookup Protocol spells this `active_for` — same
+    # signature, one implementation (the read-time auto-revoke above).
+    active_for = active_exceptions
+
     def revoke(self, exception_id: UUID) -> None:
         """The explicit kill switch alongside read-time expiry."""
         with self.session_factory() as session:
