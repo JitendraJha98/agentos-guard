@@ -12,7 +12,7 @@ Behavior (plan 2026-06-12 Tasks 2–3):
 """
 
 from agentos_contract import ActionType, AgentAction
-from agentos_pipeline.risk import PiiScorer
+from agentos_pipeline.risk import FormatViolationScorer, PiiScorer, UnsafeContentScorer
 
 
 def _tool(payload):  # helper used across this file
@@ -48,3 +48,58 @@ def test_clean_payload_scores_zero():
 def test_matched_never_carries_raw_values():
     f = PiiScorer().score(_tool({"content": "jane.doe@example.com 123-45-6789"}))
     assert all(m in {"email", "ssn", "credit_card", "phone"} for m in f.matched)
+
+
+# --- UnsafeContentScorer (Task 3) ----------------------------------------------
+
+
+def test_destructive_shell_rm_detected():
+    f = UnsafeContentScorer().score(_tool({"content": "run rm -rf / now"}))
+    assert f.category == "unsafe_content"
+    assert "destructive_shell" in f.matched and f.risk_score == 0.45
+
+
+def test_destructive_sql_in_payload_content_detected():
+    f = UnsafeContentScorer().score(_tool({"content": "then DROP TABLE users;"}))
+    assert "destructive_sql" in f.matched
+
+
+def test_fork_bomb_detected():
+    assert "fork_bomb" in UnsafeContentScorer().score(_tool({"content": ":(){ :|:& };:"})).matched
+
+
+def test_destructive_powershell_detected():
+    f = UnsafeContentScorer().score(_tool({"content": "Remove-Item -Recurse -Force C:\\data"}))
+    assert "destructive_shell" in f.matched
+
+
+def test_unsafe_clean_payload_scores_zero():
+    f = UnsafeContentScorer().score(_tool({"content": "list the files please"}))
+    assert f.risk_score == 0.0 and f.matched == []
+
+
+# --- FormatViolationScorer (Task 3) ---------------------------------------------
+
+
+def test_control_chars_detected():
+    f = FormatViolationScorer().score(_tool({"content": "abc\x00def"}))
+    assert f.category == "format_violation"
+    assert "control_chars" in f.matched and f.risk_score == 0.2
+
+
+def test_oversized_value_detected():
+    f = FormatViolationScorer().score(_tool({"content": "a" * (32_768 + 1)}))
+    assert "oversized_value" in f.matched
+
+
+def test_excessive_nesting_detected():
+    nested = "leaf"
+    for _ in range(9):  # 9 levels of dict around the leaf — deeper than 8
+        nested = {"k": nested}
+    f = FormatViolationScorer().score(_tool({"content": nested}))
+    assert "excessive_nesting" in f.matched
+
+
+def test_format_clean_payload_scores_zero():
+    f = FormatViolationScorer().score(_tool({"content": "plain\ttext\nwith\r\nallowed ws"}))
+    assert f.risk_score == 0.0 and f.matched == []
