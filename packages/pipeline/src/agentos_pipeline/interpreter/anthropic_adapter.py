@@ -16,6 +16,7 @@ params: removed/unneeded on claude-opus-4-8 (400 if sent)."""
 from __future__ import annotations
 
 from typing import Literal
+from xml.sax.saxutils import escape
 
 from pydantic import BaseModel, Field
 
@@ -35,7 +36,7 @@ class _VerdictModel(BaseModel):
         "require_approval",
         "deny",
     ]
-    principle_ref: str | None
+    principle_ref: str | None = Field(max_length=64)
     rationale: str = Field(max_length=512)
 
 
@@ -61,12 +62,20 @@ def _system_prompt(request: InterpretationRequest) -> str:
     )
 
 
+_ATTR_QUOTE = {'"': "&quot;"}  # extra entity for attribute positions
+
+
 def _data_block(request: InterpretationRequest) -> str:
+    """The labelled untrusted block. The action-sourced values (target,
+    intent_class, payload excerpt) are XML-escaped so payload text like
+    </payload_excerpt> cannot terminate the block (Pitfall 5)."""
     guardrails = ",".join(f"{name}={flag}" for name, flag in request.guardrails)
     return (
-        f'<action_data type="{request.action_type}" target="{request.target}" '
-        f'intent="{request.intent_class}" guardrails="{guardrails}">\n'
-        f"<payload_excerpt>{request.payload_excerpt}</payload_excerpt>\n"
+        f'<action_data type="{request.action_type}" '
+        f'target="{escape(request.target, _ATTR_QUOTE)}" '
+        f'intent="{escape(request.intent_class, _ATTR_QUOTE)}" '
+        f'guardrails="{guardrails}">\n'
+        f"<payload_excerpt>{escape(request.payload_excerpt)}</payload_excerpt>\n"
         "</action_data>\n"
         "Return the verdict."
     )

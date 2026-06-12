@@ -140,6 +140,13 @@ def test_reason_carries_explainable_denial_fields():
     assert restored.evidence == {"matched": "email_address", "host": "attacker.example"}
 
 
+def test_reason_rejects_oversized_principle_ref():
+    # principle_ref is audit-bound and live-model-controlled (interpreter advisory):
+    # bound it like the other Reason string fields. Real refs are short ("3.2").
+    with pytest.raises(ValidationError):
+        Reason(stage="interpreter", code="interpreter_advisory", principle_ref="x" * 65)
+
+
 def test_decision_full_phase3_shape_roundtrip():
     d = Decision(
         action_id="11111111-1111-1111-1111-111111111111",

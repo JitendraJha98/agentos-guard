@@ -53,7 +53,7 @@ class Reason(BaseModel):
     code: str                        # e.g. "constitution_principle_fired", "forged_identity"
     detail: str = Field(default="", max_length=512)      # short human string; NEVER raw attacker payload
     policy_id: str | None = None     # fired principle / policy id (Phase 1: the egress rule id)
-    principle_ref: str | None = None   # constitution principle id (e.g. "3.2") — PIPE-08
+    principle_ref: str | None = Field(default=None, max_length=64)   # constitution principle id (e.g. "3.2") — PIPE-08
     rationale: str = Field(default="", max_length=512)   # short human rationale — PIPE-08 (NEVER raw payload)
     evidence: dict | None = None       # small structured evidence — PIPE-08
 

@@ -157,6 +157,9 @@ class Pipeline:
         if floor is None:
             # Ambiguity ≡ no_match (D4): the floor is the per-class posture default.
             floor = self._posture.no_match_floor(action.type)
+            # Captured BEFORE the interpreter runs: a malformed verdict raising
+            # below must inherit this floor through the fail-safe, never relax it.
+            floor_box[0] = floor
             # POL-04: the advisory interpreter runs ONLY here (no_match) — never
             # when a principle matched, so it can never touch a real policy floor.
             if self._interpreter is not None:
@@ -177,17 +180,12 @@ class Pipeline:
                     constitution_version=self._policy.constitution_version,
                     policy_version=self._policy.policy_version,
                 )
+                # The try covers the WHOLE verdict-handling block: a malformed
+                # verdict (unhashable outcome, non-str rationale/principle_ref)
+                # degrades to interpreter_error exactly like a backend failure —
+                # advisory failure, floor stands, NEVER _fail_safe.
                 try:
                     verdict = await self._interpreter.interpret(request)
-                except Exception as exc:  # advisory failure: floor stands, NEVER _fail_safe
-                    reasons.append(
-                        Reason(
-                            stage="interpreter",
-                            code="interpreter_error",
-                            detail=type(exc).__name__,
-                        )
-                    )
-                else:
                     if verdict.outcome not in AUTHORABLE_EFFECTS:
                         reasons.append(
                             Reason(
@@ -205,11 +203,19 @@ class Pipeline:
                             Reason(
                                 stage="interpreter",
                                 code="interpreter_advisory",
-                                principle_ref=verdict.principle_ref,
+                                principle_ref=(verdict.principle_ref or "")[:64] or None,
                                 rationale=verdict.rationale[:512],
                                 evidence={"recommended": verdict.outcome},
                             )
                         )
+                except Exception as exc:  # advisory failure: floor stands, NEVER _fail_safe
+                    reasons.append(
+                        Reason(
+                            stage="interpreter",
+                            code="interpreter_error",
+                            detail=type(exc).__name__,
+                        )
+                    )
         # Captured the moment it is known: an exception in the reason loop below
         # (or any later stage) inherits the computed floor — it can never relax.
         floor_box[0] = floor

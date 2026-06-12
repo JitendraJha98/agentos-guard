@@ -546,6 +546,50 @@ def test_interpreter_exception_degrades_to_reason_never_fail_safe() -> None:
     assert decision.evidence_ref is not None
 
 
+def test_malformed_verdict_on_fail_open_class_keeps_the_no_match_floor() -> None:
+    """A type-broken verdict (unhashable outcome) must degrade to an
+    interpreter_error reason with the no-match floor unchanged — it may NEVER
+    escape to the fail-safe and turn a require_approval floor into a
+    fail-open allow."""
+    from agentos_pipeline.interpreter import InterpreterVerdict
+
+    interp = CountingStubInterpreter(
+        verdict=InterpreterVerdict(outcome=["deny"], principle_ref=None, rationale="x")
+    )
+    pipeline = _build_with_interpreter(
+        interp,
+        policy=Outcome.allow,  # no_match
+        posture=PostureMap(
+            fail_open_types=frozenset({ActionType.model_invocation}),
+            no_match_floors={ActionType.model_invocation: Outcome.require_approval},
+        ),
+    )
+    action = AgentAction(
+        agent_id="agent-1", type=ActionType.model_invocation, target="m",
+        payload={"model": "m", "messages": "hi"}, identity_token="tok",
+    )
+    decision = asyncio.run(pipeline.evaluate(action))
+    assert decision.outcome is Outcome.require_approval  # the floor stands
+    errs = [r for r in decision.reasons if r.code == "interpreter_error"]
+    assert len(errs) == 1 and errs[0].detail == "TypeError"
+    assert not any("control_plane_failure" in r.code for r in decision.reasons)
+
+
+def test_oversized_principle_ref_is_truncated_into_the_advisory_reason() -> None:
+    """The principle_ref is live-model-controlled and audit-bound: the runner
+    truncates it to 64 chars before it enters the advisory Reason — no exception."""
+    from agentos_pipeline.interpreter import InterpreterVerdict
+
+    interp = CountingStubInterpreter(
+        verdict=InterpreterVerdict(outcome="deny", principle_ref="r" * 100, rationale="x")
+    )
+    pipeline = _build_with_interpreter(interp, policy=Outcome.allow)  # no_match
+    decision = asyncio.run(pipeline.evaluate(_action()))
+    advisory = [r for r in decision.reasons if r.code == "interpreter_advisory"]
+    assert len(advisory) == 1
+    assert advisory[0].principle_ref == "r" * 64
+
+
 def test_cached_interpreter_end_to_end_two_identical_actions_one_interpret() -> None:
     """PIPE-06 e2e: behind CachedInterpreter, two identical actions hit the
     inner interpreter exactly once (shape-keyed verdict cache)."""
