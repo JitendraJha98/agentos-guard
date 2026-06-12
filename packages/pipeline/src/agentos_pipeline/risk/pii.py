@@ -4,15 +4,17 @@ It implements the RiskScorer Protocol (agentos_contract) and returns a typed
 RiskFinding (category "pii").
 
 INVARIANTS (tested):
-  - inline=True, pure CPU, sub-ms. NO model, NO network, NO LLM on the hot path
-    (P0-killer Pitfall 1). stdlib re only.
+  - inline=True, pure CPU, bounded, no catastrophic backtracking (adversarial
+    32 KB inputs measured low-single-digit ms). NO model, NO network, NO LLM on
+    the hot path (P0-killer Pitfall 1). stdlib re only.
   - Patterns compiled ONCE as class attributes (never per-call) with BOUNDED
     quantifiers (ReDoS-safe, Pitfall 2).
   - Inspected text is the raw 32 KiB-capped payload join (_text.payload_text —
     NO normalize(): PII patterns match literal separators); truncation is
     recorded in `detail` so a past-cap match is auditable, not silently missed.
-  - Credit-card candidates are Luhn-verified — a 16-digit string alone is not a
-    finding (kills random-number false positives).
+  - Credit-card candidates are IIN-guarded (first digit 2-6) then Luhn-verified —
+    a 16-digit string alone is not a finding, and Luhn-passing digit runs that
+    start "1" (epoch-ms timestamps, snowflake IDs) are not cards.
   - matched holds pattern IDs only ("email", "ssn", "credit_card", "phone") —
     never raw values (the RiskFinding validator enforces this; threat T-01-11).
   - Advisory only: 0.35 when matched — below the 0.4 sandbox band by design.
@@ -65,6 +67,12 @@ class PiiScorer:
             matched.append("ssn")
         for candidate in self._CARD_CANDIDATE.findall(text):
             digits = re.sub(r"[ -]", "", candidate)
+            # IIN guard BEFORE Luhn: real card networks issue first digits 2-6
+            # only. 13-19-digit runs starting "1" (epoch-ms timestamps until
+            # 2033, snowflake IDs) Luhn-pass ~10% of the time — without this
+            # they become false credit_card findings and false 3.2 denies.
+            if digits[:1] not in {"2", "3", "4", "5", "6"}:
+                continue
             if 13 <= len(digits) <= 19 and _luhn_valid(digits):
                 matched.append("credit_card")
                 break

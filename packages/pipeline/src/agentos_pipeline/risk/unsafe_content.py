@@ -4,8 +4,9 @@ It implements the RiskScorer Protocol (agentos_contract) and returns a typed
 RiskFinding (category "unsafe_content").
 
 INVARIANTS (tested):
-  - inline=True, pure CPU, sub-ms. NO model, NO network, NO LLM on the hot path
-    (P0-killer Pitfall 1). stdlib re only.
+  - inline=True, pure CPU, bounded, no catastrophic backtracking (adversarial
+    32 KB inputs measured low-single-digit ms). NO model, NO network, NO LLM on
+    the hot path (P0-killer Pitfall 1). stdlib re only.
   - Patterns compiled ONCE as class attributes (never per-call) with BOUNDED
     quantifiers (ReDoS-safe, Pitfall 2).
   - Inspected text is the raw 32 KiB-capped payload join (_text.payload_text);

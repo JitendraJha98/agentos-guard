@@ -36,6 +36,23 @@ def test_credit_card_requires_luhn():
     assert "credit_card" not in PiiScorer().score(_tool({"content": "1234 5678 9012 3456"})).matched  # Luhn-invalid
 
 
+def test_luhn_passing_timestamp_is_not_a_credit_card():
+    # 1718198400000 (epoch-ms, 2024-06-12T13:20:00Z) is 13 digits AND Luhn-valid —
+    # without the IIN first-digit guard it would be a false credit_card finding.
+    # Card IINs start 2-6; epoch-ms timestamps/snowflake IDs start "1" until 2033.
+    f = PiiScorer().score(_tool({"ts": "1718198400000"}))
+    assert "credit_card" not in f.matched and f.risk_score == 0.0
+
+
+def test_real_card_iins_still_match():
+    for card in (
+        "4111 1111 1111 1111",   # Visa 16
+        "5500 0000 0000 0004",   # Mastercard 16
+        "340000031003006",       # Amex 15 (Luhn-verified)
+    ):
+        assert "credit_card" in PiiScorer().score(_tool({"content": card})).matched, card
+
+
 def test_phone_e164_detected():
     assert "phone" in PiiScorer().score(_tool({"content": "+14155550123"})).matched
 
@@ -43,6 +60,16 @@ def test_phone_e164_detected():
 def test_clean_payload_scores_zero():
     f = PiiScorer().score(_tool({"content": "the weather is nice"}))
     assert f.risk_score == 0.0 and f.matched == []
+
+
+def test_pii_in_nested_payload_values_detected():
+    # Pins the str(value) nested surface (_text.payload_text) against future
+    # refactors: PII inside a nested dict value and inside a list-of-dicts value
+    # must both reach the scanner.
+    assert "email" in PiiScorer().score(_tool({"args": {"to": "jane@example.com"}})).matched
+    assert "credit_card" in PiiScorer().score(
+        _tool({"recipients": [{"cc": "4111 1111 1111 1111"}]})
+    ).matched
 
 
 def test_matched_never_carries_raw_values():
@@ -85,6 +112,12 @@ def test_control_chars_detected():
     f = FormatViolationScorer().score(_tool({"content": "abc\x00def"}))
     assert f.category == "format_violation"
     assert "control_chars" in f.matched and f.risk_score == 0.2
+
+
+def test_control_chars_in_dict_key_detected():
+    # Keys are attacker-controlled too — the walk must inspect them, not just values.
+    f = FormatViolationScorer().score(_tool({"bad\x00key": "v"}))
+    assert "control_chars" in f.matched
 
 
 def test_oversized_value_detected():
