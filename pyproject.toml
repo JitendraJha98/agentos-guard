@@ -13,6 +13,7 @@ dependencies = [
     "alembic>=1.18",
     "PyJWT>=2.13",
     "cryptography>=48",
+    "anthropic>=0.92",
     "agentos-constitution",
     "agentos-contract",
     "agentos-controlplane",
