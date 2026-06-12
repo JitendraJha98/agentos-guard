@@ -5,8 +5,9 @@ Behavior (Slice-3 Task 2):
   - rename-shaped targets tag RESOURCE_RENAME;
   - a memory_access with operation=delete tags DATA_DESTRUCTION (payload signal);
   - benign targets tag None;
-  - enrich() bundles the intent class with the Slice-4 guardrail-flag seam
-    (always {pii, unsafe, format} = False until the real detectors land);
+  - enrich() bundles the intent class with the REAL guardrail flags (Slice 4,
+    SEC-02): the PII/unsafe/format scorers run once here and the findings are
+    carried for the stage-4 risk merge;
   - IntentScorer mirrors the RiskScorer protocol: advisory finding (category
     "intent"), risk_score 0.15 when tagged — never alone reaching the sandbox band.
 """
@@ -53,7 +54,22 @@ def test_intent_classes_export_is_the_emitted_vocabulary() -> None:
 def test_enrich_shape() -> None:
     e = enrich(_act(ActionType.tool_call, "drop_table"))
     assert e.intent_class == "DATA_DESTRUCTION"
-    assert e.guardrails == {"pii": False, "unsafe": False, "format": False}  # Slice-4 seam
+    assert e.guardrails == {"pii": False, "unsafe": False, "format": False}  # clean payload
+
+
+# --- Slice 4: real guardrail flags + carried findings (SEC-02) ------------------
+
+
+def test_pii_payload_sets_flag_and_carries_finding() -> None:
+    e = enrich(_act(ActionType.tool_call, "http_post", {"content": "mail jane.doe@example.com"}))
+    assert e.guardrails["pii"] is True
+    assert any(f.category == "pii" for f in e.guardrail_findings)
+
+
+def test_clean_payload_all_flags_false() -> None:
+    e = enrich(_act(ActionType.tool_call, "http_post", {"content": "hello"}))
+    assert e.guardrails == {"pii": False, "unsafe": False, "format": False}
+    assert all(not f.matched for f in e.guardrail_findings)
 
 
 def test_intent_scorer_contributes_advisory_finding() -> None:

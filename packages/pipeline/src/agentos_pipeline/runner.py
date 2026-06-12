@@ -165,7 +165,10 @@ class Pipeline:
             reasons.append(Reason(stage="policy", code="no_principle_matched"))
 
         # Stage 4 — Risk (SEC-01): inline, pure-CPU (plain call — not awaited).
-        risk_score, findings = assess_risk(action, self._scorers)
+        # The enrichment-carried guardrail findings (SEC-02) merge here — not re-run.
+        risk_score, findings = assess_risk(
+            action, self._scorers, extra_findings=enrichment.guardrail_findings
+        )
         for finding in findings:
             reasons.append(
                 Reason(stage="risk", code=finding.category, detail=finding.detail)

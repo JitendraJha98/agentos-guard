@@ -6,22 +6,26 @@ on `intent.class` and the guardrail flags. Intent classes are a small closed
 vocabulary; matching is exact/prefix on the normalized target (lower/strip) +
 the memory operation — NO regex, NO models.
 
-The guardrail flags are a SEAM in this slice: always
-{pii: False, unsafe: False, format: False} — the real detectors land in Slice 4
-(SEC-02). Intent tagging is real now.
+The guardrail flags are REAL since Slice 4 (SEC-02): the PII / unsafe-content /
+format-violation scorers run ONCE here (pre-policy, pure CPU, deterministic).
+`Enrichment` carries both the derived boolean flags (the policy-input fields
+principle 3.2 conditions on) and the typed findings themselves, which stage 4
+merges into the risk score via the aggregator's `extra_findings` — the scorers
+are never re-run.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agentos_contract import ActionType, AgentAction
+from agentos_contract import ActionType, AgentAction, RiskFinding
 
 
 @dataclass(frozen=True)
 class Enrichment:
     intent_class: str | None
-    guardrails: dict[str, bool]  # real detectors land in Slice 4 (SEC-02)
+    guardrails: dict[str, bool]                        # real detectors (SEC-02)
+    guardrail_findings: tuple[RiskFinding, ...] = ()   # merged into stage-4 risk
 
 
 # The tagger's full output vocabulary — what principle authors may condition on.
@@ -51,9 +55,29 @@ def tag_intent(action: AgentAction) -> str | None:
     return None
 
 
+# Imported BELOW tag_intent deliberately: `agentos_pipeline.risk.__init__` pulls
+# in IntentScorer, which imports tag_intent from THIS module — so the scorer
+# imports must run after tag_intent exists for either entry point of the cycle
+# to resolve.
+from agentos_pipeline.risk.format_check import FormatViolationScorer  # noqa: E402
+from agentos_pipeline.risk.pii import PiiScorer  # noqa: E402
+from agentos_pipeline.risk.unsafe_content import UnsafeContentScorer  # noqa: E402
+
+# Stateless, patterns compiled once as class attributes — instantiate ONCE.
+_GUARDRAIL_SCORERS = (PiiScorer(), UnsafeContentScorer(), FormatViolationScorer())
+
+_FLAG_BY_CATEGORY = {"pii": "pii", "unsafe_content": "unsafe", "format_violation": "format"}
+
+
 def enrich(action: AgentAction) -> Enrichment:
     """Build the full enrichment document the policy-input builder consumes (D4)."""
+    findings = tuple(s.score(action) for s in _GUARDRAIL_SCORERS)
+    flags = {"pii": False, "unsafe": False, "format": False}
+    for finding in findings:
+        if finding.matched:
+            flags[_FLAG_BY_CATEGORY[finding.category]] = True
     return Enrichment(
         intent_class=tag_intent(action),
-        guardrails={"pii": False, "unsafe": False, "format": False},
+        guardrails=flags,
+        guardrail_findings=findings,
     )
