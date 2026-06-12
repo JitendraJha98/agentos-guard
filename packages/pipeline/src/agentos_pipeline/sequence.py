@@ -20,6 +20,14 @@ single-process Phase-3 deployment; distributed/persistent correlation state is
 Phase-7 reconciler territory. Bounded by ``max_conversations`` (FIFO eviction)
 and ``window`` (deque maxlen), so a hostile flood of conversation ids cannot
 grow memory unboundedly.
+
+Detection bounds (the honest flip side of those memory bounds): correlation is
+per-key, so an agent that SWITCHES conversation_id between the rename and the
+drop evades the window; flooding > ``max_conversations`` fresh ids evicts older
+windows; padding > ``window`` tagged actions between steps ages the rename out.
+These are deliberate Phase-3 bounded-memory tradeoffs — cross-conversation and
+persistent lineage correlation arrive with the Phase-7 reconcilers (SEC-13 is
+scoped to in-conversation evasions here).
 """
 
 from __future__ import annotations

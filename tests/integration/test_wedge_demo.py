@@ -23,3 +23,4 @@ def test_wedge_demo_script_runs_and_denies_the_sequence():
     assert "outcome: allow" in out          # the individually-permitted steps
     assert "outcome: deny" in out           # the forbidden sequence
     assert "3.5" in out and "remediation:" in out
+    assert "audit-chain tail" in out and "hash=" in out   # the evidence leg

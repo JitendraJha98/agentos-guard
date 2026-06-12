@@ -100,8 +100,19 @@ async def main() -> int:
 
         print("\nEvery action above was individually allowed; the SEQUENCE was denied")
         print("with principle 3.5 cited and concrete remediation -- the durable gap")
-        print("a stateless, per-action policy kernel cannot close. Audit evidence is")
-        print("hash-chained; decision ids:", d1.action_id, d2.action_id, d3.action_id)
+        print("a stateless, per-action policy kernel cannot close.")
+
+        # The evidence leg: the hash-chained audit tail for the three decisions.
+        from sqlalchemy import select  # noqa: E402
+        from agentos_controlplane.store.models import AuditRecord  # noqa: E402
+        with sessions() as s:
+            tail = s.scalars(
+                select(AuditRecord).order_by(AuditRecord.seq.desc()).limit(3)
+            ).all()
+        print("\naudit-chain tail (hash-chained evidence):")
+        for rec in reversed(tail):
+            print(f"    seq={rec.seq}  outcome={rec.body['outcome']}  "
+                  f"prev={str(rec.prev_hash)[:12]}...  hash={rec.record_hash[:12]}...")
     return 0
 
 
