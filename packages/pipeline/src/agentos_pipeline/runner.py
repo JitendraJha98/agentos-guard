@@ -40,7 +40,15 @@ from datetime import datetime, timezone
 from typing import Mapping, Protocol, Sequence
 from uuid import UUID
 
-from agentos_contract import AgentAction, Decision, Outcome, Reason, RiskScorer
+from agentos_contract import (
+    AgentAction,
+    Decision,
+    Outcome,
+    Reason,
+    RiskFinding,
+    RiskScorer,
+    SideEffect,
+)
 from agentos_contract.policy_io import (
     AUTHORABLE_EFFECTS,
     OUTCOME_RESTRICTIVENESS,
@@ -298,6 +306,7 @@ class Pipeline:
             risk_score=risk_score,
             trust_score=trust,
             reasons=reasons,
+            side_effects=self._derive_side_effects(res.matched, findings),  # PIPE-09
             inferred_intent=enrichment.intent_class,        # SEC-12 explainability
             # PIPE-08: set BEFORE the audit append — remediation is hash-covered.
             remediation=self._derive_remediation(outcome, res.matched),
@@ -348,6 +357,29 @@ class Pipeline:
             )
         )
         return Outcome.allow, earliest
+
+    def _derive_side_effects(
+        self, matched: Sequence[MatchedPrinciple], findings: Sequence[RiskFinding]
+    ) -> list[SideEffect]:
+        """PIPE-09 producers: fired principles' authored side_effects (via
+        principles_meta; dedup, order-stable) + `risk_flag` for any finding with
+        non-empty `matched`. Malformed meta declares less, never crashes —
+        the same non-throwing discipline as the reason loop. Outcome-orthogonal:
+        an allow can carry escalations (permit AND escalate)."""
+        effects: list[SideEffect] = []
+        for m in matched:
+            meta = self._policy.principles_meta.get(m.principle_ref)
+            declared = meta.get("side_effects") if isinstance(meta, dict) else None
+            for value in declared if isinstance(declared, list) else []:
+                try:
+                    effect = SideEffect(value)
+                except ValueError:
+                    continue  # unknown authored value: skip, never crash
+                if effect not in effects:
+                    effects.append(effect)
+        if any(f.matched for f in findings) and SideEffect.risk_flag not in effects:
+            effects.append(SideEffect.risk_flag)
+        return effects
 
     def _derive_remediation(
         self, outcome: Outcome, matched: Sequence[MatchedPrinciple]
@@ -429,7 +461,11 @@ class Pipeline:
                 detail=type(exc).__name__,  # exception CLASS only, never payload
             )
         ]
-        decision = Decision(action_id=action.id, outcome=outcome, reasons=reasons)
+        # PIPE-09: a fail-OPEN proceeds only with a human escalation riding on it.
+        side_effects = [SideEffect.notify] if posture is FailPosture.open else []
+        decision = Decision(
+            action_id=action.id, outcome=outcome, reasons=reasons, side_effects=side_effects
+        )
         stripped = action.model_copy(update={"payload": {}})
         try:
             decision.evidence_ref = await self._audit.append(stripped, decision)
@@ -440,6 +476,7 @@ class Pipeline:
                     outcome=Outcome.deny,
                     reasons=reasons
                     + [Reason(stage="pipeline", code="fail_open_unaudited_demoted_to_deny")],
+                    side_effects=side_effects,
                 )
             return decision  # deny stands even without evidence
         return decision
