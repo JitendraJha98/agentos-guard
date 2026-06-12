@@ -343,6 +343,52 @@ def test_pii_to_allowlisted_host_stays_allow(constitution_wasm) -> None:
     assert decision.risk_score == 0.35  # the carried pii finding reached stage 4
 
 
+# --- Slice 4: restrictive decisions carry remediation (PIPE-08) ---------------
+
+
+def test_denied_action_carries_authored_remediation(constitution_wasm) -> None:
+    """(a) An unlisted-host deny surfaces 1.1's authored hint."""
+    pipeline, engine, audit = _wire_real_engine(constitution_wasm)
+    decision = asyncio.run(pipeline.evaluate(_action(url="https://attacker.example/x")))
+    assert decision.outcome is Outcome.deny
+    assert (
+        "Add the destination host to the egress_allowlist list and re-apply the constitution."
+        in decision.remediation
+    )
+
+
+def test_require_approval_uses_authored_hint_over_fallback(constitution_wasm) -> None:
+    """(b) Destructive intent -> 2.1 require_approval; the authored hint wins
+    over the await-operator fallback."""
+    pipeline, engine, audit = _wire_real_engine(constitution_wasm)
+    action = AgentAction(
+        agent_id="agent-1", type=ActionType.tool_call, target="drop_table",
+        payload={"url": "https://api.example.com/x"}, identity_token="tok",
+    )
+    decision = asyncio.run(pipeline.evaluate(action))
+    assert decision.outcome is Outcome.require_approval
+    assert decision.remediation == [
+        "Request operator approval, or use a non-destructive alternative."
+    ]
+
+
+def test_deny_without_authored_hint_falls_back_to_review_line() -> None:
+    """(c) A fired principle with NO authored remediation falls back to the
+    per-principle review line (SpyPolicyEngine's meta has no remediation)."""
+    pipeline, ident, pol, scorer, audit = _build(identity_ok=True, policy=Outcome.deny, risk=0.0)
+    decision = asyncio.run(pipeline.evaluate(_action()))
+    assert decision.outcome is Outcome.deny
+    assert decision.remediation == ["Review principle 1.1 — Egress allowlist"]
+
+
+def test_plain_allow_has_no_remediation() -> None:
+    """(d) Remediation is derived only on restrictive outcomes."""
+    pipeline, ident, pol, scorer, audit = _build(identity_ok=True, policy=Outcome.allow, risk=0.0)
+    decision = asyncio.run(pipeline.evaluate(_action()))
+    assert decision.outcome is Outcome.allow
+    assert decision.remediation == []
+
+
 # --- Slice 3: PIPE-05 failure semantics (kill-the-control-plane) --------------
 
 

@@ -196,12 +196,44 @@ class Pipeline:
             trust_score=trust,
             reasons=reasons,
             inferred_intent=enrichment.intent_class,        # SEC-12 explainability
+            # PIPE-08: set BEFORE the audit append — remediation is hash-covered.
+            remediation=self._derive_remediation(outcome, res.matched),
             constitution_version=self._policy.constitution_version,  # POL-08
             policy_version=self._policy.policy_version,               # POL-08
         )
         # SYNC audit write on the hot path (AUD-01); sets evidence_ref before returning.
         await self._append_with_redaction_fallback(action, decision)
         return decision
+
+    def _derive_remediation(self, outcome: Outcome, matched) -> list[str]:
+        """PIPE-08: concrete next steps on restrictive outcomes (rank >= sandbox).
+
+        Authored-first: the fired principles' `remediation` hints (dedup, order
+        preserved, cap 10) via the same non-throwing meta access as the reason
+        loop — malformed meta explains less, never crashes the verdict. When no
+        hint is authored: require_approval -> the await-operator line; otherwise
+        a per-fired-principle review line. Non-restrictive outcomes (and the
+        engine-failure paths, which never reach here) keep remediation == []."""
+        if OUTCOME_RESTRICTIVENESS[outcome] < OUTCOME_RESTRICTIVENESS[Outcome.sandbox]:
+            return []
+        hints: list[str] = []
+        seen: set[str] = set()
+        for m in matched:
+            meta = self._policy.principles_meta.get(m.principle_ref)
+            authored = meta.get("remediation") if isinstance(meta, dict) else None
+            for hint in authored if isinstance(authored, list) else []:
+                if isinstance(hint, str) and hint not in seen:
+                    seen.add(hint)
+                    hints.append(hint)
+        if not hints:
+            if outcome is Outcome.require_approval:
+                hints = ["Await operator resolution of the parked approval request"]
+            else:
+                for m in matched:
+                    meta = self._policy.principles_meta.get(m.principle_ref)
+                    title = meta.get("title", "") if isinstance(meta, dict) else ""
+                    hints.append(f"Review principle {m.principle_ref} — {title}")
+        return hints[:10]  # Decision.remediation is audit-bound (<= 10 items)
 
     async def _append_with_redaction_fallback(
         self, action: AgentAction, decision: Decision
