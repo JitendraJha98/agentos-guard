@@ -133,6 +133,13 @@ def test_remediation_rejects_oversized_item():
         Constitution(**BASE, principles=[_p(remediation=["a" * 300])])
 
 
+def test_remediation_rejects_control_chars():
+    # Hints flow onto audit-bound Decisions and operator UIs — same control-char
+    # discipline as title.
+    with pytest.raises(ValidationError, match="control"):
+        Constitution(**BASE, principles=[_p(remediation=["line one\nline two"])])
+
+
 # --- the shipped example operator constitution (POL-01, Task 7) ---
 
 def test_example_constitution_loads_and_compiles_with_stable_version():

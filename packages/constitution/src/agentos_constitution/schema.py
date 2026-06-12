@@ -158,10 +158,14 @@ class Principle(BaseModel):
     @field_validator("remediation")
     @classmethod
     def _remediation_items_bounded(cls, v: list[str]) -> list[str]:
-        # Remediation flows onto audit-bound Decisions (T-01-02): keep items small.
+        # Remediation flows onto audit-bound Decisions (T-01-02): keep items small,
+        # and reject control characters (same discipline as title — hints surface
+        # verbatim on Decisions and operator UIs).
         for item in v:
             if len(item) > 256:
                 raise ValueError("remediation items must be <= 256 chars")
+            if any(ch < " " for ch in item):
+                raise ValueError("remediation items must not contain control characters")
         return v
 
     @field_validator("effect")

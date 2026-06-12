@@ -43,6 +43,7 @@ from agentos_contract import AgentAction, Decision, Outcome, Reason, RiskScorer
 from agentos_contract.policy_io import (
     OUTCOME_RESTRICTIVENESS,
     ConstitutionResult,
+    MatchedPrinciple,
     select_floor,
 )
 
@@ -205,16 +206,21 @@ class Pipeline:
         await self._append_with_redaction_fallback(action, decision)
         return decision
 
-    def _derive_remediation(self, outcome: Outcome, matched) -> list[str]:
+    def _derive_remediation(
+        self, outcome: Outcome, matched: Sequence[MatchedPrinciple]
+    ) -> list[str]:
         """PIPE-08: concrete next steps on restrictive outcomes (rank >= sandbox).
 
         Authored-first: the fired principles' `remediation` hints (dedup, order
         preserved, cap 10) via the same non-throwing meta access as the reason
         loop — malformed meta explains less, never crashes the verdict. When no
         hint is authored: require_approval -> the await-operator line; otherwise
-        a per-fired-principle review line. Non-restrictive outcomes (and the
+        a review line per fired principle whose OWN effect is restrictive (rank
+        >= sandbox) — advisory principles that fired alongside didn't drive the
+        outcome and get no review line. Non-restrictive outcomes (and the
         engine-failure paths, which never reach here) keep remediation == []."""
-        if OUTCOME_RESTRICTIVENESS[outcome] < OUTCOME_RESTRICTIVENESS[Outcome.sandbox]:
+        sandbox_rank = OUTCOME_RESTRICTIVENESS[Outcome.sandbox]
+        if OUTCOME_RESTRICTIVENESS[outcome] < sandbox_rank:
             return []
         hints: list[str] = []
         seen: set[str] = set()
@@ -230,6 +236,10 @@ class Pipeline:
                 hints = ["Await operator resolution of the parked approval request"]
             else:
                 for m in matched:
+                    # Outcome(m.effect) cannot raise here: select_floor already
+                    # coerced every matched effect on the way to this verdict.
+                    if OUTCOME_RESTRICTIVENESS[Outcome(m.effect)] < sandbox_rank:
+                        continue
                     meta = self._policy.principles_meta.get(m.principle_ref)
                     title = meta.get("title", "") if isinstance(meta, dict) else ""
                     hints.append(f"Review principle {m.principle_ref} — {title}")

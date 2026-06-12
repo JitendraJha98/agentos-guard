@@ -381,6 +381,39 @@ def test_deny_without_authored_hint_falls_back_to_review_line() -> None:
     assert decision.remediation == ["Review principle 1.1 — Egress allowlist"]
 
 
+def test_fallback_review_lines_skip_advisory_principles() -> None:
+    """(c2) When a warn-principle fired ALONGSIDE the deny, the fallback names
+    only the principle(s) that drove the restrictive outcome (effect rank >=
+    sandbox) — no review line for the advisory bystander."""
+
+    class TwoPrincipleEngine:
+        constitution_version = "sha256:stub-constitution"
+        policy_version = "sha256:stub-policy"
+        principles_meta = {
+            "1.1": {"title": "Egress allowlist", "effect": "deny"},
+            "4.1": {"title": "Prefer cheap models", "effect": "warn"},
+        }
+
+        def evaluate(self, input: dict) -> ConstitutionResult:
+            return ConstitutionResult(
+                matched=(
+                    MatchedPrinciple(principle_ref="1.1", effect="deny"),
+                    MatchedPrinciple(principle_ref="4.1", effect="warn"),
+                ),
+                no_match=False,
+            )
+
+    pipeline = Pipeline(
+        identity=FakeIdentityStage(ok=True),
+        policy=TwoPrincipleEngine(),
+        scorers=[SpyScorer(0.0)],
+        audit=FakeAuditWriter(),
+    )
+    decision = asyncio.run(pipeline.evaluate(_action()))
+    assert decision.outcome is Outcome.deny
+    assert decision.remediation == ["Review principle 1.1 — Egress allowlist"]
+
+
 def test_plain_allow_has_no_remediation() -> None:
     """(d) Remediation is derived only on restrictive outcomes."""
     pipeline, ident, pol, scorer, audit = _build(identity_ok=True, policy=Outcome.allow, risk=0.0)
