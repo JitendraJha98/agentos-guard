@@ -133,6 +133,9 @@ class Principle(BaseModel):
     when: Node | None = None            # action kind only
     sequence: list[str] | None = None   # sequence kind only
     side_effects: list[SideEffect] = Field(default_factory=list)
+    # PIPE-08: authored next-step hints surfaced on restrictive Decisions.
+    # Metadata only — never enforcement (the Rego is unchanged by it).
+    remediation: list[str] = Field(default_factory=list, max_length=5)
 
     @field_validator("title")
     @classmethod
@@ -150,6 +153,15 @@ class Principle(BaseModel):
         # but every other control character is rejected.
         if any(ch < " " and ch != "\n" for ch in v):
             raise ValueError("statement must not contain control characters other than newline")
+        return v
+
+    @field_validator("remediation")
+    @classmethod
+    def _remediation_items_bounded(cls, v: list[str]) -> list[str]:
+        # Remediation flows onto audit-bound Decisions (T-01-02): keep items small.
+        for item in v:
+            if len(item) > 256:
+                raise ValueError("remediation items must be <= 256 chars")
         return v
 
     @field_validator("effect")

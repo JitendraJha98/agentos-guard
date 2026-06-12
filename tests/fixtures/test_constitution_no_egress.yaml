@@ -14,6 +14,8 @@ principles:
     title: Destructive or exfiltrating intent requires approval
     statement: Destructive or exfiltrating actions require human approval.
     effect: require_approval
+    remediation:
+      - Request operator approval, or use a non-destructive alternative.
     when:
       any:
         - {field: intent.class, op: eq, value: DATA_DESTRUCTION}

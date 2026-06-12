@@ -1,4 +1,4 @@
-constitution_version: sha256:4f8698bb8543fab0d68105eddaed95e943a3122a61e4b685142a5b7a8d21049d
+constitution_version: sha256:169e568c1f51d28074f13eb5f889240df0e20aa4c8b05d5aa4cd323e635dc2e7
 policies:
 - applies_to:
   - tool_call
@@ -10,6 +10,7 @@ policies:
   effect: deny
   id: '1.1'
   kind: action
+  remediation: []
   side_effects: []
   statement: An agent may only make outbound requests to allowlisted hosts.
   title: Egress allowlist
@@ -27,6 +28,7 @@ policies:
   effect: require_approval
   id: '2.1'
   kind: action
+  remediation: []
   side_effects: []
   statement: Destructive or exfiltrating actions require human approval.
   title: Destructive or exfiltrating intent requires approval
@@ -46,6 +48,7 @@ policies:
   effect: deny
   id: '3.2'
   kind: action
+  remediation: []
   side_effects: []
   statement: An agent must never send user PII to a host outside the approved allowlist.
   title: PII never leaves approved hosts
@@ -53,6 +56,7 @@ policies:
   effect: deny
   id: '3.5'
   kind: sequence
+  remediation: []
   sequence:
   - RESOURCE_RENAME
   - DATA_DESTRUCTION
@@ -76,6 +80,7 @@ policies:
   effect: require_approval
   id: '5.1'
   kind: action
+  remediation: []
   side_effects: []
   statement: Memory writes outside read-like operations require approval.
   title: Non-GET-like writes to memory require approval

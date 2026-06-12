@@ -162,6 +162,8 @@ def _policy_doc(p: dict) -> dict:
         "applies_to": p["applies_to"],
         "effect": p["effect"],
         "side_effects": p["side_effects"],
+        # PIPE-08: reviewable metadata only — the Rego is UNCHANGED by it.
+        "remediation": p["remediation"],
     }
     if p["kind"] == "sequence":
         doc["sequence"] = p["sequence"]

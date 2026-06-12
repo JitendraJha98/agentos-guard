@@ -19,10 +19,14 @@ principles:
     applies_to: [tool_call]
     effect: deny
     when: {field: egress.host, op: not_in, list_ref: egress_allowlist}
+    remediation:
+      - Add the destination host to the egress_allowlist list and re-apply the constitution.
   - id: "2.1"
     title: Destructive or exfiltrating intent requires approval
     statement: Destructive or exfiltrating actions require human approval.
     effect: require_approval
+    remediation:
+      - Request operator approval, or use a non-destructive alternative.
     when:
       any:
         - {field: intent.class, op: eq, value: DATA_DESTRUCTION}

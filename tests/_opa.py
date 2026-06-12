@@ -26,7 +26,7 @@ class BuiltPolicy:
 
     wasm_path: Path
     bundle: CompiledBundle
-    principles_meta: dict[str, dict]  # {ref: {title, statement, effect, side_effects}}
+    principles_meta: dict[str, dict]  # {ref: {title, statement, effect, side_effects, remediation}}
 
 
 def build_constitution_wasm(constitution_path: Path, out_dir: Path) -> BuiltPolicy:
@@ -40,6 +40,7 @@ def build_constitution_wasm(constitution_path: Path, out_dir: Path) -> BuiltPoli
             "statement": p.statement,
             "effect": p.effect,
             "side_effects": [s.value for s in p.side_effects],
+            "remediation": p.remediation,
         }
         for p in constitution.principles
     }

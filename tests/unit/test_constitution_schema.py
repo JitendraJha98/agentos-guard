@@ -111,6 +111,28 @@ def test_happy_path_full_construction():
     assert c.principles[0].applies_to == ["tool_call", "mcp_call"]
 
 
+# --- Slice 4: authored remediation hints (PIPE-08) ---
+
+def test_remediation_accepted_on_principle():
+    c = Constitution(**BASE, principles=[_p(remediation=["Add the host to egress_allowlist"])])
+    assert c.principles[0].remediation == ["Add the host to egress_allowlist"]
+
+
+def test_remediation_defaults_empty():
+    c = Constitution(**BASE, principles=[_p()])
+    assert c.principles[0].remediation == []
+
+
+def test_remediation_rejects_more_than_five_items():
+    with pytest.raises(ValidationError):
+        Constitution(**BASE, principles=[_p(remediation=[f"hint {i}" for i in range(6)])])
+
+
+def test_remediation_rejects_oversized_item():
+    with pytest.raises(ValidationError):
+        Constitution(**BASE, principles=[_p(remediation=["a" * 300])])
+
+
 # --- the shipped example operator constitution (POL-01, Task 7) ---
 
 def test_example_constitution_loads_and_compiles_with_stable_version():

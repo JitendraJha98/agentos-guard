@@ -105,6 +105,33 @@ def test_emitter_sanitizes_control_chars_in_title():
     assert all(l.startswith("#") for l in lines_with_payload)
 
 
+# --- Slice 4: authored remediation flows through the bundle (PIPE-08) ---
+
+
+def test_yaml_policy_carries_remediation():
+    c = Constitution(
+        schema_version=1, name="t",
+        principles=[{"id": "1.1", "title": "t", "statement": "s", "effect": "deny",
+                     "when": {"field": "intent.class", "op": "eq", "value": "X"},
+                     "remediation": ["Do the safe thing instead"]}],
+    )
+    bundle = compile_constitution(c)
+    assert "remediation" in bundle.yaml_policy
+    assert "Do the safe thing instead" in bundle.yaml_policy
+    # Rego is UNCHANGED by remediation — it is metadata, not enforcement.
+    assert "remediation" not in bundle.rego
+
+
+def test_principles_meta_remediation_round_trips(constitution_wasm):
+    """build_constitution_wasm carries the authored fixture hints into principles_meta."""
+    assert constitution_wasm.principles_meta["1.1"]["remediation"] == [
+        "Add the destination host to the egress_allowlist list and re-apply the constitution."
+    ]
+    assert constitution_wasm.principles_meta["2.1"]["remediation"] == [
+        "Request operator approval, or use a non-destructive alternative."
+    ]
+
+
 @pytest.mark.skipif(not OPA.exists(), reason="vendored OPA CLI not present")
 def test_generated_rego_passes_opa_check_strict(tmp_path):
     rego_path = tmp_path / "constitution.rego"
