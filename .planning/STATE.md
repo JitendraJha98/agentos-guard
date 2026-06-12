@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: phase_complete
-stopped_at: Phase 3 complete (7 slices) on branch phase-3-constitution-graduated-approvals — pending live-interpreter checkpoint + merge
+stopped_at: Phase 3 complete (7 slices); branch pushed for PR review. Live-interpreter checkpoint (tests/integration/test_interpreter_live.py with ANTHROPIC_API_KEY) delegated to reviewing developers
 last_updated: 2026-06-12
 last_activity: 2026-06-12
 progress:
