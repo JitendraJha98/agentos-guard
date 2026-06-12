@@ -146,6 +146,12 @@ class AuditWriter:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self.session_factory = session_factory
         self._lock = asyncio.Lock()  # serial chain: single in-process writer
+        # PIPE-04 hot-path lever (Slice 6c): the chain head is cached INSIDE the
+        # writer-lock discipline, so steady-state appends are one INSERT, not
+        # SELECT+INSERT. Safe under the same single-writer assumption the lock
+        # already encodes (D-14); a failed insert rolls back without touching
+        # the cache, so the prior head stays correct. (prev record_hash, next seq)
+        self._head: tuple[str | None, int] | None = None
 
     async def append(self, action: AgentAction, decision: Decision) -> UUID:
         """Append one AuditRecord; return its id (the Decision.evidence_ref)."""
@@ -208,7 +214,10 @@ class AuditWriter:
             return self._insert(seq, prev_hash, record_hash, full_body)
 
     def _chain_head(self) -> tuple[str | None, int]:
-        """Return (prior record_hash, next monotonic seq)."""
+        """Return (prior record_hash, next monotonic seq) — cached after the
+        first lookup; only ever read/written under `self._lock`."""
+        if self._head is not None:
+            return self._head
         with self.session_factory() as session:
             last = session.scalars(
                 select(AuditRecord).order_by(AuditRecord.seq.desc()).limit(1)
@@ -232,4 +241,7 @@ class AuditWriter:
                 )
             )
             session.commit()
+        # Advance the cached head only AFTER the commit succeeded (a failed
+        # insert raises above, leaving the prior head correct).
+        self._head = (record_hash, seq + 1)
         return record_id
