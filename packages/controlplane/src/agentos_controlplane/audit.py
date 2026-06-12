@@ -60,6 +60,21 @@ class RedactionError(Exception):
     """
 
 
+# Lifecycle event kinds (Slice 6): every approval / exception / review /
+# enforcement lifecycle event is an AuditRecord through the SAME hash chain.
+# Allowlisted so a typo'd or invented kind can never enter the chain.
+EVENT_KINDS = frozenset(
+    {
+        "approval_resolved",
+        "approval_timed_out",
+        "exception_granted",
+        "review_opened",
+        "enforcement_substitution",
+        "side_effect",
+    }
+)
+
+
 def canonical_json(obj: dict) -> bytes:
     """Reproducible canonical JSON: sorted keys, no whitespace (RFC-8785-ish)."""
     return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -173,6 +188,24 @@ class AuditWriter:
             }
             record_hash = hashlib.sha256(canonical_json(body)).hexdigest()
             return self._insert(seq, prev_hash, record_hash, body)
+
+    async def append_event(self, kind: str, body: dict) -> UUID:
+        """Append one lifecycle EVENT record through the SAME hash chain.
+
+        Shares the lock / seq / prev_hash discipline with action records, so
+        events and decisions interleave on one tamper-evident chain. `body` is
+        ids / enums / short strings only — constructed by the control plane,
+        never attacker payload (the redactor is for action payloads). The hash
+        covers {seq, prev_hash, kind, ...body}, so the kind itself is
+        tamper-evident. Unknown kinds raise and write NOTHING.
+        """
+        if kind not in EVENT_KINDS:
+            raise ValueError(f"unknown audit event kind: {kind!r}")
+        async with self._lock:
+            prev_hash, seq = self._chain_head()
+            full_body = {"seq": seq, "prev_hash": prev_hash, "kind": kind, **body}
+            record_hash = hashlib.sha256(canonical_json(full_body)).hexdigest()
+            return self._insert(seq, prev_hash, record_hash, full_body)
 
     def _chain_head(self) -> tuple[str | None, int]:
         """Return (prior record_hash, next monotonic seq)."""
