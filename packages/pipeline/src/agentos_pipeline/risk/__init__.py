@@ -8,6 +8,7 @@ model, network, or LLM — that is a tested invariant (the import-guard test).
 from agentos_pipeline.risk.aggregator import assess_risk
 from agentos_pipeline.risk.intent_scorer import IntentScorer
 from agentos_pipeline.risk.normalize import normalize
+from agentos_pipeline.risk.pii import PiiScorer
 from agentos_pipeline.risk.prompt_injection import PromptInjectionScorer
 
-__all__ = ["assess_risk", "IntentScorer", "normalize", "PromptInjectionScorer"]
+__all__ = ["assess_risk", "IntentScorer", "normalize", "PiiScorer", "PromptInjectionScorer"]
