@@ -41,6 +41,7 @@ from uuid import UUID
 
 from agentos_contract import AgentAction, Decision, Outcome, Reason, RiskScorer
 from agentos_contract.policy_io import (
+    AUTHORABLE_EFFECTS,
     OUTCOME_RESTRICTIVENESS,
     ConstitutionResult,
     MatchedPrinciple,
@@ -50,9 +51,11 @@ from agentos_contract.policy_io import (
 from agentos_pipeline.enrichment import enrich
 from agentos_pipeline.graduated import GraduatedThresholds, graduated_response
 from agentos_pipeline.identity import IdentityStage, IdentityVerdict
+from agentos_pipeline.interpreter import InterpretationRequest, SemanticInterpreter
 from agentos_pipeline.policy_input import build_policy_input
 from agentos_pipeline.posture import FailPosture, PostureMap
 from agentos_pipeline.risk import assess_risk
+from agentos_pipeline.risk._text import payload_text
 
 
 class _PolicyEngine(Protocol):
@@ -89,6 +92,7 @@ class Pipeline:
         thresholds: GraduatedThresholds = GraduatedThresholds(),
         posture: PostureMap = PostureMap(),
         expensive_scorers: Sequence[RiskScorer] = (),
+        interpreter: SemanticInterpreter | None = None,
     ) -> None:
         self._identity = identity
         self._policy = policy
@@ -99,6 +103,10 @@ class Pipeline:
         # SEC-03: inline=False detectors, run by stage 4 ONLY on inline flags —
         # never unconditionally (Pitfall 1).
         self._expensive_scorers = expensive_scorers
+        # POL-04/POL-05: the advisory semantic interpreter — runs ONLY on no_match,
+        # may only RESTRICT the class-posture floor. None default: no new reasons
+        # (and no network) anywhere unless explicitly wired at composition time.
+        self._interpreter = interpreter
 
     async def evaluate(self, action: AgentAction) -> Decision:
         # Mutable holder: _evaluate records the computed floor as soon as it is
@@ -149,6 +157,59 @@ class Pipeline:
         if floor is None:
             # Ambiguity ≡ no_match (D4): the floor is the per-class posture default.
             floor = self._posture.no_match_floor(action.type)
+            # POL-04: the advisory interpreter runs ONLY here (no_match) — never
+            # when a principle matched, so it can never touch a real policy floor.
+            if self._interpreter is not None:
+                request = InterpretationRequest(
+                    action_type=action.type.value,
+                    target=action.target,
+                    intent_class=enrichment.intent_class or "",
+                    guardrails=tuple(sorted(enrichment.guardrails.items())),
+                    payload_excerpt=payload_text(action)[0][:2048],
+                    principles=tuple(
+                        (
+                            ref,
+                            meta.get("title", "") if isinstance(meta, dict) else "",
+                            meta.get("statement", "") if isinstance(meta, dict) else "",
+                        )
+                        for ref, meta in sorted(self._policy.principles_meta.items())
+                    ),
+                    constitution_version=self._policy.constitution_version,
+                    policy_version=self._policy.policy_version,
+                )
+                try:
+                    verdict = await self._interpreter.interpret(request)
+                except Exception as exc:  # advisory failure: floor stands, NEVER _fail_safe
+                    reasons.append(
+                        Reason(
+                            stage="interpreter",
+                            code="interpreter_error",
+                            detail=type(exc).__name__,
+                        )
+                    )
+                else:
+                    if verdict.outcome not in AUTHORABLE_EFFECTS:
+                        reasons.append(
+                            Reason(
+                                stage="interpreter",
+                                code="interpreter_invalid_verdict",
+                                detail=str(verdict.outcome)[:64],
+                            )
+                        )
+                    else:
+                        rec = Outcome(verdict.outcome)
+                        # POL-05 clamp: restrict-only — the verdict may tighten the
+                        # no-match floor, never relax it.
+                        floor = max(floor, rec, key=OUTCOME_RESTRICTIVENESS.__getitem__)
+                        reasons.append(
+                            Reason(
+                                stage="interpreter",
+                                code="interpreter_advisory",
+                                principle_ref=verdict.principle_ref,
+                                rationale=verdict.rationale[:512],
+                                evidence={"recommended": verdict.outcome},
+                            )
+                        )
         # Captured the moment it is known: an exception in the reason loop below
         # (or any later stage) inherits the computed floor — it can never relax.
         floor_box[0] = floor

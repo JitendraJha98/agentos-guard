@@ -422,6 +422,142 @@ def test_plain_allow_has_no_remediation() -> None:
     assert decision.remediation == []
 
 
+# --- Slice 5: conditional advisory interpreter on no_match (POL-04/POL-05) ----
+
+
+class CountingStubInterpreter:
+    """A counting SemanticInterpreter returning a fixed verdict (or raising)."""
+
+    name = "counting-stub.v1"
+
+    def __init__(self, verdict=None, raises: bool = False) -> None:
+        from agentos_pipeline.interpreter import InterpreterVerdict
+
+        self.calls = 0
+        self._verdict = verdict or InterpreterVerdict(
+            outcome="allow", principle_ref=None, rationale="counted"
+        )
+        self.raises = raises
+
+    async def interpret(self, request):
+        self.calls += 1
+        if self.raises:
+            raise RuntimeError("interpreter backend down")
+        return self._verdict
+
+
+def _build_with_interpreter(interpreter, *, policy: Outcome, posture: PostureMap | None = None):
+    pipeline = Pipeline(
+        identity=FakeIdentityStage(ok=True),
+        policy=SpyPolicyEngine(policy),
+        scorers=[SpyScorer(0.0)],
+        audit=FakeAuditWriter(),
+        posture=posture if posture is not None else PostureMap(),
+        interpreter=interpreter,
+    )
+    return pipeline
+
+
+def test_interpreter_never_invoked_when_a_principle_matched() -> None:
+    """POL-05: the interpreter runs ONLY on no_match — it can never touch a real
+    policy floor. A matched deny stands and the interpreter is never called."""
+    interp = CountingStubInterpreter()
+    pipeline = _build_with_interpreter(interp, policy=Outcome.deny)
+    decision = asyncio.run(pipeline.evaluate(_action()))
+    assert decision.outcome is Outcome.deny
+    assert interp.calls == 0
+
+
+def test_no_match_interpreter_deny_restricts_with_advisory_reason() -> None:
+    """POL-04: on no_match, a deny verdict tightens the floor and the Decision
+    carries the typed advisory reason (principle cited, recommendation in evidence)."""
+    from agentos_pipeline.interpreter import InterpreterVerdict
+
+    interp = CountingStubInterpreter(
+        verdict=InterpreterVerdict(
+            outcome="deny", principle_ref="3.2", rationale="semantically a PII export"
+        )
+    )
+    pipeline = _build_with_interpreter(interp, policy=Outcome.allow)  # no_match
+    decision = asyncio.run(pipeline.evaluate(_action()))
+    assert decision.outcome is Outcome.deny
+    assert interp.calls == 1
+    advisory = [r for r in decision.reasons if r.code == "interpreter_advisory"]
+    assert len(advisory) == 1
+    assert advisory[0].stage == "interpreter"
+    assert advisory[0].principle_ref == "3.2"
+    assert advisory[0].rationale == "semantically a PII export"
+    assert advisory[0].evidence == {"recommended": "deny"}
+
+
+def test_interpreter_allow_cannot_relax_the_no_match_floor() -> None:
+    """POL-05 clamp: with a require_approval no-match floor, an allow verdict
+    cannot relax it — restrict-only by OUTCOME_RESTRICTIVENESS max."""
+    from agentos_pipeline.interpreter import InterpreterVerdict
+
+    interp = CountingStubInterpreter(
+        verdict=InterpreterVerdict(outcome="allow", principle_ref=None, rationale="benign")
+    )
+    pipeline = _build_with_interpreter(
+        interp,
+        policy=Outcome.allow,  # no_match
+        posture=PostureMap(no_match_floors={ActionType.tool_call: Outcome.require_approval}),
+    )
+    decision = asyncio.run(pipeline.evaluate(_action()))
+    assert decision.outcome is Outcome.require_approval  # the floor stands
+    assert interp.calls == 1
+
+
+def test_out_of_vocabulary_verdict_is_rejected_floor_unchanged() -> None:
+    """ADR-0005: temporary_exception is NOT an authorable effect — an
+    out-of-vocabulary verdict yields interpreter_invalid_verdict, floor unchanged."""
+    from agentos_pipeline.interpreter import InterpreterVerdict
+
+    interp = CountingStubInterpreter(
+        verdict=InterpreterVerdict(
+            outcome="temporary_exception", principle_ref=None, rationale="nope"
+        )
+    )
+    pipeline = _build_with_interpreter(interp, policy=Outcome.allow)
+    decision = asyncio.run(pipeline.evaluate(_action()))
+    assert decision.outcome is Outcome.allow  # the no-match floor unchanged
+    invalid = [r for r in decision.reasons if r.code == "interpreter_invalid_verdict"]
+    assert len(invalid) == 1
+    assert invalid[0].stage == "interpreter"
+    assert invalid[0].detail == "temporary_exception"
+    assert not any(r.code == "interpreter_advisory" for r in decision.reasons)
+
+
+def test_interpreter_exception_degrades_to_reason_never_fail_safe() -> None:
+    """Advisory failure != control-plane failure: a raising interpreter yields
+    interpreter_error, the outcome is the no-match floor, and there is NO
+    control_plane_failure reason (the exception never reached _fail_safe)."""
+    interp = CountingStubInterpreter(raises=True)
+    pipeline = _build_with_interpreter(interp, policy=Outcome.allow)
+    decision = asyncio.run(pipeline.evaluate(_action()))
+    assert decision.outcome is Outcome.allow  # the no-match floor stands
+    errs = [r for r in decision.reasons if r.code == "interpreter_error"]
+    assert len(errs) == 1
+    assert errs[0].stage == "interpreter"
+    assert errs[0].detail == "RuntimeError"
+    assert not any("control_plane_failure" in r.code for r in decision.reasons)
+    # The normal stages all still ran and the decision is audited.
+    assert {r.stage for r in decision.reasons} >= {"identity", "policy", "risk", "graduated"}
+    assert decision.evidence_ref is not None
+
+
+def test_cached_interpreter_end_to_end_two_identical_actions_one_interpret() -> None:
+    """PIPE-06 e2e: behind CachedInterpreter, two identical actions hit the
+    inner interpreter exactly once (shape-keyed verdict cache)."""
+    from agentos_pipeline.interpreter import CachedInterpreter
+
+    inner = CountingStubInterpreter()
+    pipeline = _build_with_interpreter(CachedInterpreter(inner), policy=Outcome.allow)
+    asyncio.run(pipeline.evaluate(_action()))
+    asyncio.run(pipeline.evaluate(_action()))
+    assert inner.calls == 1
+
+
 # --- Slice 3: PIPE-05 failure semantics (kill-the-control-plane) --------------
 
 
