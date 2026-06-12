@@ -36,7 +36,8 @@ class names) instead of importing the control plane's RedactionError type.
 
 from __future__ import annotations
 
-from typing import Protocol, Sequence
+from datetime import datetime, timezone
+from typing import Mapping, Protocol, Sequence
 from uuid import UUID
 
 from agentos_contract import AgentAction, Decision, Outcome, Reason, RiskScorer
@@ -72,6 +73,18 @@ class _AuditWriter(Protocol):
     async def append(self, action: AgentAction, decision: Decision) -> UUID: ...
 
 
+class ExceptionLookup(Protocol):
+    """The injected POL-13 seam (ApprovalStore.active_for satisfies it).
+
+    Sync and pure-read: returns the ACTIVE (unexpired, unrevoked) temporary
+    exceptions for (agent_id, ref in refs) as {ref: tz-aware expiry}.
+    """
+
+    def active_for(
+        self, agent_id: str, refs: tuple[str, ...]
+    ) -> Mapping[str, datetime]: ...
+
+
 def _is_redaction_error(exc: BaseException) -> bool:
     """Structurally detect the audit writer's RedactionError (D-15) without
     importing the control plane (this package's one internal dependency is the
@@ -93,6 +106,7 @@ class Pipeline:
         posture: PostureMap = PostureMap(),
         expensive_scorers: Sequence[RiskScorer] = (),
         interpreter: SemanticInterpreter | None = None,
+        exceptions: ExceptionLookup | None = None,
     ) -> None:
         self._identity = identity
         self._policy = policy
@@ -107,6 +121,9 @@ class Pipeline:
         # may only RESTRICT the class-posture floor. None default: no new reasons
         # (and no network) anywhere unless explicitly wired at composition time.
         self._interpreter = interpreter
+        # POL-13: the temporary-exception lookup. None default: the transform
+        # never runs and deny floors stand exactly as before.
+        self._exceptions = exceptions
 
     async def evaluate(self, action: AgentAction) -> Decision:
         # Mutable holder: _evaluate records the computed floor as soon as it is
@@ -219,6 +236,7 @@ class Pipeline:
         # Captured the moment it is known: an exception in the reason loop below
         # (or any later stage) inherits the computed floor — it can never relax.
         floor_box[0] = floor
+        applied_expiry: datetime | None = None
         if res.matched:
             for m in res.matched:
                 meta = self._policy.principles_meta.get(m.principle_ref)
@@ -232,6 +250,15 @@ class Pipeline:
                         rationale=meta.get("title", "") if isinstance(meta, dict) else "",
                         evidence={"effect": m.effect},
                     )
+                )
+            # POL-13 pre-graduated transform: a deny floor FROM MATCHED PRINCIPLES
+            # converts to allow ONLY when every deny-effect ref carries an active
+            # unexpired human-ratified exception. floor_box deliberately keeps the
+            # deny — a mid-stage crash must fail-safe against the UNtransformed
+            # floor; the box catches up to the final verdict after stage 5.
+            if floor is Outcome.deny and self._exceptions is not None:
+                floor, applied_expiry = self._apply_exception_transform(
+                    action, res.matched, reasons
                 )
         else:
             reasons.append(Reason(stage="policy", code="no_principle_matched"))
@@ -252,6 +279,14 @@ class Pipeline:
 
         # Stage 5 — Graduated (POL-06): risk/trust may only RESTRICT the policy floor.
         outcome = graduated_response(floor, risk_score, trust, self._thresholds)
+        expires_at: datetime | None = None
+        if applied_expiry is not None and outcome is Outcome.allow:
+            # POL-13 relabel: an exception-transformed floor that SURVIVED the
+            # risk/trust stage is labeled as what it is — a ratified, time-boxed
+            # allow — carrying the earliest consumed expiry. Any re-restricted
+            # outcome (risk re-restricts, defense in depth) keeps its label.
+            outcome = Outcome.temporary_exception
+            expires_at = applied_expiry
         floor_box[0] = outcome  # the fail-safe inherits the FINAL verdict, not just
         # the policy floor — a post-verdict audit failure can never relax a
         # risk-driven deny on a fail-open class.
@@ -268,10 +303,51 @@ class Pipeline:
             remediation=self._derive_remediation(outcome, res.matched),
             constitution_version=self._policy.constitution_version,  # POL-08
             policy_version=self._policy.policy_version,               # POL-08
+            expires_at=expires_at,                                    # POL-13
         )
         # SYNC audit write on the hot path (AUD-01); sets evidence_ref before returning.
         await self._append_with_redaction_fallback(action, decision)
         return decision
+
+    def _apply_exception_transform(
+        self,
+        action: AgentAction,
+        matched: Sequence[MatchedPrinciple],
+        reasons: list[Reason],
+    ) -> tuple[Outcome, datetime | None]:
+        """POL-13: convert a matched-principle deny floor to allow IFF every
+        deny-effect ref has an active unexpired exception for this agent.
+
+        Returns (floor, earliest consumed expiry | None). Expiry is re-checked
+        HERE (not only in the store's read-time query) — defense in depth: a
+        lookup that returns a stale grant still cannot revive it. Any partial
+        coverage (one uncovered deny ref) keeps the deny floor untouched.
+        """
+        deny_refs: list[str] = []
+        for m in matched:
+            if m.effect == Outcome.deny.value and m.principle_ref not in deny_refs:
+                deny_refs.append(m.principle_ref)
+        if not deny_refs:
+            # A deny floor with no deny-effect refs cannot be principle-attributed
+            # (never the case for select_floor output) — never transform it.
+            return Outcome.deny, None
+        active = self._exceptions.active_for(action.agent_id, tuple(deny_refs))
+        now = datetime.now(timezone.utc)
+        expiries: list[datetime] = []
+        for ref in deny_refs:
+            expiry = active.get(ref)
+            if expiry is None or expiry <= now:
+                return Outcome.deny, None  # ALL deny refs must be covered
+            expiries.append(expiry)
+        earliest = min(expiries)
+        reasons.append(
+            Reason(
+                stage="policy",
+                code="temporary_exception_applied",
+                evidence={"refs": deny_refs, "expires_at": earliest.isoformat()},
+            )
+        )
+        return Outcome.allow, earliest
 
     def _derive_remediation(
         self, outcome: Outcome, matched: Sequence[MatchedPrinciple]
