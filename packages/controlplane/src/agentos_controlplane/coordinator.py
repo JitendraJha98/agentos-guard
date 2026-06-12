@@ -17,12 +17,15 @@ discipline as the pipeline's injected collaborators.
 
 from __future__ import annotations
 
-from typing import Protocol
+import logging
+from typing import Callable, Protocol
 
-from agentos_contract import ActionType, AgentAction, Decision, Reason
+from agentos_contract import ActionType, AgentAction, Decision, Reason, SideEffect
 
 from agentos_controlplane.approvals import ApprovalStore
 from agentos_controlplane.audit import AuditWriter
+
+logger = logging.getLogger(__name__)
 
 
 class _Posture(Protocol):
@@ -85,3 +88,46 @@ class StoreApprovalCoordinator:
                 "substituted": substituted,
             },
         )
+
+
+# A sink receives (action, decision, effect) per dispatched effect — the hook
+# for real notify/incident integrations (Phase 11). Failures are CONTAINED.
+SideEffectSink = Callable[[AgentAction, Decision, SideEffect], None]
+
+
+class AuditSideEffectDispatcher:
+    """The concrete SDK SideEffectDispatcher (PIPE-09 dispatch).
+
+    One `side_effect` audit event per Decision effect through the ONE hash
+    chain, then the optional callback sink. A raising SINK is contained —
+    logged, never blocking the action result, never raised into the caller
+    (the audit event was already written, so the escalation is never lost).
+    An audit failure, by contrast, propagates: no event, no quiet proceed.
+    """
+
+    def __init__(self, audit: AuditWriter, sink: SideEffectSink | None = None) -> None:
+        self._audit = audit
+        self._sink = sink
+
+    async def dispatch(self, action: AgentAction, decision: Decision) -> None:
+        for effect in decision.side_effects:
+            await self._audit.append_event(
+                "side_effect",
+                {
+                    "action_id": str(action.id),
+                    "agent_id": action.agent_id,
+                    "effect": effect.value,
+                    "outcome": decision.outcome.value,
+                },
+            )
+            if self._sink is None:
+                continue
+            try:
+                self._sink(action, decision, effect)
+            except Exception:
+                logger.warning(
+                    "side-effect sink failed for effect %s on action %s",
+                    effect.value,
+                    action.id,
+                    exc_info=True,
+                )
