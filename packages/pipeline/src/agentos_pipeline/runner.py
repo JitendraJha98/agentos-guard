@@ -65,6 +65,7 @@ from agentos_pipeline.policy_input import build_policy_input
 from agentos_pipeline.posture import FailPosture, PostureMap
 from agentos_pipeline.risk import assess_risk
 from agentos_pipeline.risk._text import payload_text
+from agentos_pipeline.sequence import SequenceCorrelator
 
 
 class _PolicyEngine(Protocol):
@@ -115,6 +116,8 @@ class Pipeline:
         expensive_scorers: Sequence[RiskScorer] = (),
         interpreter: SemanticInterpreter | None = None,
         exceptions: ExceptionLookup | None = None,
+        sequences: list[dict] | None = None,
+        correlator: "SequenceCorrelator | None" = None,
     ) -> None:
         self._identity = identity
         self._policy = policy
@@ -129,6 +132,12 @@ class Pipeline:
         # may only RESTRICT the class-posture floor. None default: no new reasons
         # (and no network) anywhere unless explicitly wired at composition time.
         self._interpreter = interpreter
+        # SEC-13: declared forbidden sequences (bundle.sequences) + the windowed
+        # correlator. Wiring sequences without a correlator constructs the default.
+        self._sequences = sequences or []
+        if correlator is None and self._sequences:
+            correlator = SequenceCorrelator()
+        self._correlator = correlator
         # POL-13: the temporary-exception lookup. None default: the transform
         # never runs and deny floors stand exactly as before.
         self._exceptions = exceptions
@@ -175,9 +184,19 @@ class Pipeline:
 
         # Stage 2 — Enrichment (SEC-12/D6): deterministic, pure CPU, pre-policy.
         enrichment = enrich(action)
+        # SEC-13: sequence-intent correlation over the conversation/lineage window;
+        # matches feed the compiled membership rules as a REAL deterministic floor.
+        sequence_refs: tuple[str, ...] = ()
+        if self._correlator is not None:
+            key = action.context.conversation_id or action.agent_id
+            sequence_refs = self._correlator.observe(
+                key, enrichment.intent_class, self._sequences
+            )
 
         # Stage 3 — Policy (POL-03): the compiled-constitution floor.
-        res = self._policy.evaluate(build_policy_input(action, enrichment))
+        res = self._policy.evaluate(
+            build_policy_input(action, enrichment, sequence_matched_refs=sequence_refs)
+        )
         floor = select_floor(res.matched)
         if floor is None:
             # Ambiguity ≡ no_match (D4): the floor is the per-class posture default.

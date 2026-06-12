@@ -46,6 +46,8 @@ principles:
     kind: sequence
     sequence: [RESOURCE_RENAME, DATA_DESTRUCTION]
     effect: deny
+    remediation:
+      - "Request an operator-approved temporary exception, or perform the rename and destruction as separately approved operations."
   - id: "4.1"
     title: External sends proceed under governance review
     statement: Outbound communication to approved hosts proceeds, but is opened for asynchronous governance review.

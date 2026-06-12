@@ -35,3 +35,5 @@ principles:
     kind: sequence
     sequence: [RESOURCE_RENAME, DATA_DESTRUCTION]
     effect: deny
+    remediation:
+      - "Request an operator-approved temporary exception, or perform the rename and destruction as separately approved operations."

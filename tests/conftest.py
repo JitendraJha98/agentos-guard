@@ -100,7 +100,7 @@ def _new_store():
     return create_session_factory(engine)
 
 
-def _wire(policy_engine) -> WiredPipeline:
+def _wire(policy_engine, sequences=None) -> WiredPipeline:
     """Register the agent and build a Pipeline over the given policy engine.
 
     Both pipeline fixtures share the SAME identity engine / store / audit writer
@@ -117,6 +117,7 @@ def _wire(policy_engine) -> WiredPipeline:
         scorers=[PromptInjectionScorer()],
         audit=AuditWriter(session_factory),
         posture=PostureMap(),  # defaults: every class fail-closed, no-match floor allow
+        sequences=sequences,  # SEC-13: declared forbidden sequences (bundle.sequences)
     )
     return WiredPipeline(pipeline=pipeline, token=token, agent_id=AGENT_ID)
 
@@ -159,7 +160,7 @@ def pipeline_with_principle(constitution_wasm) -> WiredPipeline:
     Policy stage = the real `ConstitutionPolicyEngine` over the compiled
     multi-principle WASM floor. Returns the pipeline + the registered agent's token.
     """
-    return _wire(_engine(constitution_wasm))
+    return _wire(_engine(constitution_wasm), sequences=constitution_wasm.bundle.sequences)
 
 
 @pytest.fixture

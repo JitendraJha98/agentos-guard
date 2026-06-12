@@ -34,7 +34,11 @@ def _host(action: AgentAction) -> str:
     return urlsplit(url).hostname or ""
 
 
-def build_policy_input(action: AgentAction, enrichment: Enrichment) -> dict:
+def build_policy_input(
+    action: AgentAction,
+    enrichment: Enrichment,
+    sequence_matched_refs: tuple[str, ...] = (),
+) -> dict:
     """Emit the complete D4 policy-input document for one action."""
     payload = action.payload or {}
     doc: dict = {
@@ -42,7 +46,9 @@ def build_policy_input(action: AgentAction, enrichment: Enrichment) -> dict:
         "target": action.target,
         "intent": {"class": enrichment.intent_class or ""},
         "guardrails": dict(enrichment.guardrails),
-        "sequence": {"matched_refs": []},  # populated by the Slice-7 correlator
+        # SEC-13: the SequenceCorrelator's matches — compiled membership rules
+        # turn these refs into REAL fired principles (deterministic floor).
+        "sequence": {"matched_refs": list(sequence_matched_refs)},
     }
     if action.type is ActionType.tool_call:
         doc["egress"] = {"host": _host(action)}
