@@ -163,6 +163,6 @@ def test_example_constitution_rego_passes_opa_check_strict(tmp_path):
     bundle = compile_constitution(load_constitution(EXAMPLE))
     rego_path = tmp_path / "constitution.rego"
     rego_path.write_text(bundle.rego, encoding="utf-8")
-    proc = subprocess.run([str(OPA), "check", "--strict", str(rego_path)],
-                          capture_output=True, text=True)
+    proc = subprocess.run([str(OPA), "check", "--strict", "constitution.rego"],
+                          capture_output=True, text=True, cwd=tmp_path)
     assert proc.returncode == 0, proc.stderr

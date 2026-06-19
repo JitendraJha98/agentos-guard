@@ -28,10 +28,14 @@ def build_wasm(rego_text: str, out_dir: Path, opa_bin: str | None = None) -> Pat
     rego_path = out_dir / "constitution.rego"
     rego_path.write_text(rego_text, encoding="utf-8")
     bundle_path = out_dir / "bundle.tar.gz"
+    # Pass bare relative names with cwd=out_dir: OPA's loader parses the "C:" of a
+    # drive-lettered absolute path as a `prefix:path` data-root annotation, stripping
+    # the drive — which only resolves by accident when CWD shares that drive (breaks
+    # cross-drive on Windows, e.g. repo on E: + temp on C:).
     subprocess.run(
         [str(opa), "build", "-t", "wasm", "-e", ENTRYPOINT,
-         str(rego_path), "-o", str(bundle_path)],
-        check=True, capture_output=True,
+         "constitution.rego", "-o", "bundle.tar.gz"],
+        check=True, capture_output=True, cwd=out_dir,
     )
     with tarfile.open(bundle_path, "r:gz") as tf:   # member is "/policy.wasm"
         member = next(m for m in tf.getmembers() if m.name.lstrip("/") == "policy.wasm")
