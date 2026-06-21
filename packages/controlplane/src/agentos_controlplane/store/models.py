@@ -20,6 +20,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Float,
+    LargeBinary,
     String,
     Text,
     Uuid,
@@ -157,4 +158,25 @@ class GovernanceReview(Base):
     )
     closed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class ChainCheckpoint(Base):
+    """AUD-05 — an external anchor binding the chain head {seq, record_hash} to an unforgeable proof.
+
+    Checkpointing is operator-/schedule-driven (NOT on the per-action hot path). The CI verifier
+    re-derives the head hash at `seq` and proves it still matches `record_hash` (no rewrite of
+    checkpointed history) and that the chain is no shorter than a checkpointed seq (no truncation).
+    """
+
+    __tablename__ = "chain_checkpoint"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    seq: Mapped[int] = mapped_column(BigInteger, nullable=False)          # the head seq anchored
+    record_hash: Mapped[str] = mapped_column(Text, nullable=False)       # the head record_hash anchored
+    anchor_kind: Mapped[str] = mapped_column(String(32), nullable=False)  # local_ed25519_v1 | rfc3161_v1
+    proof: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)     # opaque per kind (sig | DER TimeStampResp)
+    tsa_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
