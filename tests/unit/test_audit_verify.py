@@ -70,6 +70,20 @@ def test_body_edit_caught_at_record_hash():
     assert not r.ok and r.violation.seq == 1 and r.violation.check == "record_hash"
 
 
+def test_body_seq_disagreeing_with_column_caught_at_body_column_agreement():
+    # Directly exercise step 3 (body<->column agreement): tamper body.seq while leaving
+    # the seq COLUMN, so seq_continuity passes and the body/column check fires first.
+    sf, pub = _signed_chain()
+    with sf() as s:
+        row = s.scalars(select(AuditRecord).where(AuditRecord.seq == 2)).one()
+        body = dict(row.body)
+        body["seq"] = 99
+        s.execute(update(AuditRecord).where(AuditRecord.seq == 2).values(body=body))
+        s.commit()
+    r = verify_chain(sf, public_key_pem=pub)
+    assert not r.ok and r.violation.seq == 2 and r.violation.check == "body_column_agreement"
+
+
 def test_deleted_middle_row_caught_at_seq_continuity():
     sf, pub = _signed_chain()
     with sf() as s:
