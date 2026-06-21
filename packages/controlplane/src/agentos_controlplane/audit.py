@@ -24,14 +24,46 @@ an `asyncio.Lock` (single writer) — the seam a Postgres advisory lock replaces
 import asyncio
 import hashlib
 import json
+from typing import Protocol, runtime_checkable
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from agentos_contract import AgentAction, Decision
 from agentos_controlplane.store.models import AuditRecord
+
+# AUD-08 domain prefix. The control-plane Ed25519 key ALSO signs agent JWTs;
+# this fixed context byte-string makes an audit-record signature unusable as a
+# JWT (and vice-versa). Prepended to canonical_json(body) before signing.
+SIG_DOMAIN = b"agentos-guard/audit-record/v1\x00"
+
+
+@runtime_checkable
+class RecordSigner(Protocol):
+    """The slice of IdentityEngine the writer needs to sign records (AUD-08).
+
+    Structural: any object exposing a stable `public_key_id` and a `sign_record`
+    over raw bytes satisfies it — the writer never touches the private key.
+    """
+
+    public_key_id: str
+
+    def sign_record(self, data: bytes) -> bytes: ...
+
+
+def verify_record_signature(public_key_pem, signature: bytes, canonical_body: bytes) -> bool:
+    """True iff `signature` is a valid Ed25519 sig over SIG_DOMAIN + canonical_body under
+    `public_key_pem`. Shared by the writer's tests and the Slice-4b CI verifier."""
+    pem = public_key_pem.encode() if isinstance(public_key_pem, str) else public_key_pem
+    try:
+        load_pem_public_key(pem).verify(signature, SIG_DOMAIN + canonical_body)
+        return True
+    except InvalidSignature:
+        return False
 
 # Payload keys the redactor knows how to classify. A key NOT classified here is
 # unclassifiable -> fail closed (D-15). This is intentionally minimal; the
@@ -79,7 +111,12 @@ _RESERVED_EVENT_KEYS = frozenset({"seq", "prev_hash", "kind"})
 
 
 def canonical_json(obj: dict) -> bytes:
-    """Reproducible canonical JSON: sorted keys, no whitespace (RFC-8785-ish)."""
+    """agentos-guard canonical JSON v1 — the EXACT bytes that are both hashed (record_hash)
+    and signed (AUD-08). Defined precisely (NOT RFC-8785/JCS) as:
+        json.dumps(obj, sort_keys=True, separators=(",", ":"))  # default ensure_ascii=True
+    An independent verifier MUST import THIS function (do not reimplement). Bodies are restricted
+    to JSON-native scalars + ASCII keys; float fields (risk/trust scores) use CPython's repr —
+    reproducible by another CPython, with cross-language verification a documented later concern."""
     return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
@@ -146,8 +183,16 @@ class AuditWriter:
     DB-level trigger is the production-target second line of defense.
     """
 
-    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        *,
+        signer: RecordSigner | None = None,
+    ) -> None:
         self.session_factory = session_factory
+        # AUD-08: optional record signer (the control-plane IdentityEngine). None
+        # -> unsigned records (backward compat); the production path always wires one.
+        self._signer = signer
         self._lock = asyncio.Lock()  # serial chain: single in-process writer
         # PIPE-04 hot-path lever (Slice 6c): the chain head is cached INSIDE the
         # writer-lock discipline, so steady-state appends are one INSERT, not
@@ -195,8 +240,12 @@ class AuditWriter:
                 "policy_version": decision.policy_version,
                 "expires_at": decision.expires_at.isoformat() if decision.expires_at else None,
             }
-            record_hash = hashlib.sha256(canonical_json(body)).hexdigest()
-            return self._insert(seq, prev_hash, record_hash, body)
+            # Compute the canonical bytes ONCE — the SAME bytes feed the hash AND
+            # the signature (AUD-08), so a verifier reproduces both from `body`.
+            canonical = canonical_json(body)
+            record_hash = hashlib.sha256(canonical).hexdigest()
+            signature, signing_key_id = self._sign(canonical)
+            return self._insert(seq, prev_hash, record_hash, body, signature, signing_key_id)
 
     async def append_event(self, kind: str, body: dict) -> UUID:
         """Append one lifecycle EVENT record through the SAME hash chain.
@@ -218,8 +267,22 @@ class AuditWriter:
         async with self._lock:
             prev_hash, seq = self._chain_head()
             full_body = {"seq": seq, "prev_hash": prev_hash, "kind": kind, **body}
-            record_hash = hashlib.sha256(canonical_json(full_body)).hexdigest()
-            return self._insert(seq, prev_hash, record_hash, full_body)
+            canonical = canonical_json(full_body)
+            record_hash = hashlib.sha256(canonical).hexdigest()
+            signature, signing_key_id = self._sign(canonical)
+            return self._insert(seq, prev_hash, record_hash, full_body, signature, signing_key_id)
+
+    def _sign(self, canonical: bytes) -> tuple[str | None, str | None]:
+        """Detached EdDSA signature over SIG_DOMAIN + the canonical body bytes (AUD-08).
+
+        Returns (hex signature, signing_key_id) or (None, None) when unsigned.
+        Signing the BODY bytes (not the record_hash digest) keeps Ed25519's
+        built-in collision resistance (RFC 8032 §8.7); the body already covers
+        seq + prev_hash, so authorship binds to the full chain-linked content.
+        """
+        if self._signer is None:
+            return None, None
+        return self._signer.sign_record(SIG_DOMAIN + canonical).hex(), self._signer.public_key_id
 
     def _chain_head(self) -> tuple[str | None, int]:
         """Return (prior record_hash, next monotonic seq) — cached after the
@@ -241,7 +304,13 @@ class AuditWriter:
             return last.record_hash, last.seq + 1
 
     def _insert(
-        self, seq: int, prev_hash: str | None, record_hash: str, body: dict
+        self,
+        seq: int,
+        prev_hash: str | None,
+        record_hash: str,
+        body: dict,
+        signature: str | None,
+        signing_key_id: str | None,
     ) -> UUID:
         record_id = uuid4()
         with self.session_factory() as session:
@@ -252,6 +321,8 @@ class AuditWriter:
                     prev_hash=prev_hash,
                     record_hash=record_hash,
                     body=body,
+                    signature=signature,
+                    signing_key_id=signing_key_id,
                 )
             )
             session.commit()

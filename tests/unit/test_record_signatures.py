@@ -92,3 +92,128 @@ def test_audit_record_signature_columns_nullable():
         loaded = session.get(AuditRecord, rec.id)
         assert loaded.signature is None
         assert loaded.signing_key_id is None
+
+
+# --- Task 3: AuditWriter signs each record + verify_record_signature ---------
+
+
+def _action():
+    from agentos_contract import ActionType, AgentAction
+
+    return AgentAction(
+        agent_id="agent-1",
+        type=ActionType.tool_call,
+        target="http_get",
+        payload={"url": "https://api.example.com/x", "content": "hello"},
+    )
+
+
+def _decision(action):
+    from agentos_contract import Decision, Outcome
+
+    return Decision(action_id=action.id, outcome=Outcome.allow)
+
+
+def _rows(writer):
+    from sqlalchemy import select
+
+    from agentos_controlplane.store.models import AuditRecord
+
+    with writer.session_factory() as session:
+        return list(session.scalars(select(AuditRecord).order_by(AuditRecord.seq)))
+
+
+def test_append_signs_record_and_verifies():
+    import asyncio
+
+    from agentos_controlplane.audit import (
+        AuditWriter,
+        canonical_json,
+        verify_record_signature,
+    )
+
+    eng = _engine()
+    writer = AuditWriter(_store(), signer=eng)
+    a = _action()
+    asyncio.run(writer.append(a, _decision(a)))
+    (row,) = _rows(writer)
+    assert row.signature is not None
+    assert row.signing_key_id == eng.public_key_id
+    assert verify_record_signature(
+        eng.public_key_pem, bytes.fromhex(row.signature), canonical_json(row.body)
+    )
+
+
+def test_tampered_body_fails_verification():
+    import asyncio
+
+    from agentos_controlplane.audit import (
+        AuditWriter,
+        canonical_json,
+        verify_record_signature,
+    )
+
+    eng = _engine()
+    writer = AuditWriter(_store(), signer=eng)
+    a = _action()
+    asyncio.run(writer.append(a, _decision(a)))
+    (row,) = _rows(writer)
+    tampered = dict(row.body)
+    tampered["outcome"] = "deny"  # flip the decision
+    assert not verify_record_signature(
+        eng.public_key_pem, bytes.fromhex(row.signature), canonical_json(tampered)
+    )
+
+
+def test_domain_prefix_is_load_bearing():
+    """A signature over the domain-prefixed body must NOT verify against the bare body."""
+    import asyncio
+
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+    from agentos_controlplane.audit import AuditWriter, canonical_json
+
+    eng = _engine()
+    writer = AuditWriter(_store(), signer=eng)
+    a = _action()
+    asyncio.run(writer.append(a, _decision(a)))
+    (row,) = _rows(writer)
+    pub = load_pem_public_key(eng.public_key_pem.encode())
+    with pytest.raises(InvalidSignature):
+        pub.verify(bytes.fromhex(row.signature), canonical_json(row.body))  # no SIG_DOMAIN
+
+
+def test_append_event_is_signed():
+    import asyncio
+
+    from agentos_controlplane.audit import (
+        AuditWriter,
+        canonical_json,
+        verify_record_signature,
+    )
+
+    eng = _engine()
+    writer = AuditWriter(_store(), signer=eng)
+    asyncio.run(
+        writer.append_event("approval_resolved", {"approval_id": "abc", "status": "approved"})
+    )
+    (row,) = _rows(writer)
+    assert row.signature is not None
+    assert row.signing_key_id == eng.public_key_id
+    assert verify_record_signature(
+        eng.public_key_pem, bytes.fromhex(row.signature), canonical_json(row.body)
+    )
+
+
+def test_no_signer_leaves_signature_null():
+    import asyncio
+
+    from agentos_controlplane.audit import AuditWriter
+
+    writer = AuditWriter(_store())  # no signer -> backward compat
+    a = _action()
+    asyncio.run(writer.append(a, _decision(a)))
+    (row,) = _rows(writer)
+    assert row.signature is None
+    assert row.signing_key_id is None
