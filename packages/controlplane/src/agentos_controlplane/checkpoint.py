@@ -86,9 +86,62 @@ def verify_checkpoint_proof(
     raise CheckpointVerifyUnavailable(f"unknown checkpoint kind {kind!r}")
 
 
+class Rfc3161Anchor:
+    """External-authority anchor: RFC-3161 trusted timestamp of the checkpoint message.
+
+    The TSA is a notary, not a blockchain — it signs {our message digest, its trusted time} with
+    a key the in-house operator does NOT hold, so a rewrite of checkpointed history cannot be
+    re-anchored. The POST uses the already-present httpx; the token (DER TimeStampResp) is stored
+    and later verified OFFLINE (the library does no network I/O on the verify path)."""
+
+    kind = "rfc3161_v1"
+
+    def __init__(
+        self, *, tsa_url: str = "http://timestamp.digicert.com", timeout: float = 15.0
+    ) -> None:
+        self.tsa_url, self._timeout = tsa_url, timeout
+
+    def anchor(self, message: bytes) -> bytes:
+        import httpx
+        from rfc3161_client import (
+            HashAlgorithm,
+            TimestampRequestBuilder,
+            decode_timestamp_response,
+        )
+
+        # DEVIATION (rfc3161-client 1.0.6): hash_algorithm() takes the library's own
+        # HashAlgorithm.SHA256 enum, NOT cryptography's hashes.SHA256() instance (which raises
+        # TypeError on this version). .data() still hashes its input internally, so the
+        # messageImprint is sha256(message) and verification mirrors it with sha256(message).
+        req = (
+            TimestampRequestBuilder().data(message).hash_algorithm(HashAlgorithm.SHA256).build()
+        )
+        resp = httpx.post(
+            self.tsa_url,
+            content=req.as_bytes(),
+            headers={"Content-Type": "application/timestamp-query"},
+            timeout=self._timeout,
+        )
+        resp.raise_for_status()
+        decode_timestamp_response(resp.content)  # parse-validate shape; raises on a bad TSA reply
+        return resp.content  # store the DER TimeStampResp
+
+
 def _verify_rfc3161(proof: bytes, message: bytes, tsa_root_pem) -> bool:
-    # Replaced in Task 4 with the real offline RFC-3161 token verification.
-    raise CheckpointVerifyUnavailable("rfc3161 support not yet wired")
+    import hashlib
+
+    from cryptography import x509
+    from rfc3161_client import VerifierBuilder, VerificationError, decode_timestamp_response
+
+    pem = tsa_root_pem.encode() if isinstance(tsa_root_pem, str) else tsa_root_pem
+    root = x509.load_pem_x509_certificate(pem)
+    verifier = VerifierBuilder().add_root_certificate(root).build()
+    try:
+        # .anchor() hashes `message` internally (messageImprint == sha256(message)); mirror it.
+        verifier.verify(decode_timestamp_response(proof), hashlib.sha256(message).digest())
+        return True
+    except VerificationError:
+        return False
 
 
 class CheckpointService:

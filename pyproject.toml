@@ -13,6 +13,7 @@ dependencies = [
     "alembic>=1.18",
     "PyJWT>=2.13",
     "cryptography>=48",
+    "rfc3161-client>=1.0.3",
     "anthropic>=0.92",
     "openai>=1.40,<2",
     "fastapi>=0.115",
