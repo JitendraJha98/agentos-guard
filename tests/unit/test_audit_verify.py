@@ -155,3 +155,61 @@ def test_unsigned_chain_still_hash_verifies_without_pubkey():
     )
     asyncio.run(w.append(a, Decision(action_id=a.id, outcome=Outcome.allow)))
     assert verify_chain(sf).ok  # hash chain verifies; signature step skipped (unsigned, no pubkey)
+
+
+def test_non_hex_signature_caught_as_violation_not_crash():
+    # An attacker who can write the DB corrupts a signature column with non-hex bytes.
+    # bytes.fromhex would raise ValueError; the verifier must instead return its defined
+    # 'signature' violation (the 'return the FIRST violation' contract), never a traceback.
+    sf, pub = _signed_chain()
+    with sf() as s:
+        s.execute(update(AuditRecord).where(AuditRecord.seq == 1).values(signature="zznothex"))
+        s.commit()
+    r = verify_chain(sf, public_key_pem=pub)
+    assert not r.ok and r.violation.seq == 1 and r.violation.check == "signature"
+
+
+def test_odd_length_hex_signature_caught_as_violation_not_crash():
+    # Odd-length hex ('abc') also raises ValueError in bytes.fromhex -> same contract.
+    sf, pub = _signed_chain()
+    with sf() as s:
+        s.execute(update(AuditRecord).where(AuditRecord.seq == 1).values(signature="abc"))
+        s.commit()
+    r = verify_chain(sf, public_key_pem=pub)
+    assert not r.ok and r.violation.seq == 1 and r.violation.check == "signature"
+
+
+def test_signatures_checked_counts_verified_signatures():
+    # The strongest defense (signatures) must be observable: a clean signed chain checked
+    # WITH the pubkey reports one signature check per row.
+    sf, pub = _signed_chain()
+    r = verify_chain(sf, public_key_pem=pub)
+    assert r.ok and r.records_checked == 4 and r.signatures_checked == 4
+
+
+def test_signatures_checked_zero_when_pubkey_absent():
+    # Verifying a signed chain WITHOUT the key skips step 6 entirely — signatures_checked is 0,
+    # the operator-facing signal that the full-rewrite defense did not run.
+    sf, _pub = _signed_chain()
+    r = verify_chain(sf)
+    assert r.ok and r.records_checked == 4 and r.signatures_checked == 0
+
+
+def test_signatures_checked_zero_when_all_rows_unsigned():
+    # Pubkey present but every row unsigned -> step 6 skipped on every row -> 0 checks.
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_all(engine)
+    sf = create_session_factory(engine)
+    w = AuditWriter(sf)  # no signer -> signature IS NULL on every row
+    a = AgentAction(
+        agent_id="a",
+        type=ActionType.tool_call,
+        target="http_get",
+        payload={"url": "https://api.example.com"},
+    )
+    asyncio.run(w.append(a, Decision(action_id=a.id, outcome=Outcome.allow)))
+    fake_pub = IdentityEngine(
+        is_registered=lambda s: True, load_trust=lambda s: 0.5
+    ).public_key_pem
+    r = verify_chain(sf, public_key_pem=fake_pub)
+    assert r.ok and r.records_checked == 1 and r.signatures_checked == 0

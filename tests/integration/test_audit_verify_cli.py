@@ -37,20 +37,11 @@ def _build_file_chain(db_path):
     return sf, sign.public_key_pem
 
 
-def _run_cli(db_path, pubkey_path):
-    return subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "agentos_controlplane.audit_verify",
-            "--db",
-            str(db_path),
-            "--pubkey",
-            str(pubkey_path),
-        ],
-        capture_output=True,
-        text=True,
-    )
+def _run_cli(db_path, pubkey_path=None):
+    argv = [sys.executable, "-m", "agentos_controlplane.audit_verify", "--db", str(db_path)]
+    if pubkey_path is not None:
+        argv += ["--pubkey", str(pubkey_path)]
+    return subprocess.run(argv, capture_output=True, text=True)
 
 
 def test_cli_exit0_on_clean_chain(tmp_path):
@@ -81,3 +72,16 @@ def test_cli_exit1_on_tampered_body(tmp_path):
     proc = _run_cli(db, pem)
     assert proc.returncode == 1, proc.stdout
     assert "FAIL at seq" in proc.stdout
+
+
+def test_cli_warns_when_signature_check_skipped(tmp_path):
+    # A signed chain verified WITHOUT --pubkey is still 'OK', but the strongest defense
+    # (full-rewrite detection) did not run. The CLI must surface that prominently so a
+    # rewritten-but-OK chain cannot look identical to a genuinely intact one.
+    db = tmp_path / "audit.db"
+    _build_file_chain(db)
+
+    proc = _run_cli(db)  # no --pubkey
+    assert proc.returncode == 0, proc.stderr
+    assert "OK:" in proc.stdout
+    assert "WARNING" in proc.stdout and "signature check skipped" in proc.stdout

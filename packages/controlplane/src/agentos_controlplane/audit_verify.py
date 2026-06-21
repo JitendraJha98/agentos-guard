@@ -35,6 +35,7 @@ class VerifyResult:
     ok: bool
     records_checked: int
     violation: Violation | None = None
+    signatures_checked: int = 0  # rows whose Ed25519 signature was actually verified (step 6)
 
 
 def verify_chain(
@@ -47,6 +48,7 @@ def verify_chain(
 
     prev_recomputed = None  # the RECOMPUTED record_hash of the previous row
     n = 0
+    sigs = 0  # rows whose signature was actually verified (the full-rewrite defense)
     for expected_seq, row in enumerate(rows):
         # (1) genesis / (2) seq continuity — strict, no gaps/dups/reorder
         if row.seq != expected_seq:
@@ -54,10 +56,11 @@ def verify_chain(
                 False,
                 n,
                 Violation(row.seq, "seq_continuity", f"expected seq {expected_seq}, got {row.seq}"),
+                sigs,
             )
         if expected_seq == 0 and row.prev_hash is not None:
             return VerifyResult(
-                False, n, Violation(row.seq, "genesis", "genesis prev_hash must be NULL")
+                False, n, Violation(row.seq, "genesis", "genesis prev_hash must be NULL"), sigs
             )
         # (3) body must agree with the columns (defeats fix-column-leave-body and vice-versa)
         body = row.body
@@ -70,6 +73,7 @@ def verify_chain(
                     "body_column_agreement",
                     "body seq/prev_hash disagree with the row columns",
                 ),
+                sigs,
             )
         # (4) record_hash recompute — THE retroactive-edit detector
         canonical = canonical_json(body)
@@ -79,6 +83,7 @@ def verify_chain(
                 False,
                 n,
                 Violation(row.seq, "record_hash", "recomputed record_hash != stored record_hash"),
+                sigs,
             )
         # (5) prev_hash linkage — against the prior RECOMPUTED hash, not the stored one
         if row.prev_hash != prev_recomputed:
@@ -88,12 +93,23 @@ def verify_chain(
                 Violation(
                     row.seq, "prev_hash_linkage", "prev_hash != prior row's recomputed record_hash"
                 ),
+                sigs,
             )
         # (6) per-record signature (AUD-08) — catches a forger without the private key
         if public_key_pem is not None and row.signature is not None:
-            if not verify_record_signature(
-                public_key_pem, bytes.fromhex(row.signature), canonical
-            ):
+            # A DB attacker can corrupt the signature column with non-hex/odd-length bytes;
+            # bytes.fromhex raises ValueError there, so decode INSIDE the try and turn a
+            # malformed signature into the defined 'signature' violation (never a crash).
+            try:
+                sig_bytes = bytes.fromhex(row.signature)
+            except ValueError:
+                return VerifyResult(
+                    False,
+                    n,
+                    Violation(row.seq, "signature", "signature is not valid hex"),
+                    sigs,
+                )
+            if not verify_record_signature(public_key_pem, sig_bytes, canonical):
                 return VerifyResult(
                     False,
                     n,
@@ -102,10 +118,12 @@ def verify_chain(
                         "signature",
                         "Ed25519 signature invalid under the provided public key",
                     ),
+                    sigs,
                 )
+            sigs += 1
         prev_recomputed = recomputed
         n += 1
-    return VerifyResult(True, n, None)
+    return VerifyResult(True, n, None, sigs)
 
 
 def _main(argv: list[str] | None = None) -> int:
@@ -130,6 +148,14 @@ def _main(argv: list[str] | None = None) -> int:
     result = verify_chain(sf, public_key_pem=pub)
     if result.ok:
         print(f"OK: {result.records_checked} records verified")
+        # The signature step is the ONLY defense against a full consistent rewrite. If it ran
+        # zero times on a non-empty chain (no --pubkey, or every row unsigned) the strongest
+        # check was entirely skipped — say so loudly so 'OK' is not mistaken for 'intact'.
+        if result.records_checked > 0 and result.signatures_checked == 0:
+            print(
+                f"WARNING: signature check skipped (no pubkey / {result.records_checked} "
+                "unsigned rows) — a full rewrite would NOT have been detected"
+            )
         return 0
     v = result.violation
     print(f"FAIL at seq {v.seq}: {v.check} — {v.detail}")
