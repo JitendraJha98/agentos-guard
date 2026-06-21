@@ -46,3 +46,49 @@ def test_public_key_id_stable_16_hex():
     assert kid == eng.public_key_id and len(kid) == 16 and all(
         c in "0123456789abcdef" for c in kid
     )
+
+
+# --- Task 2: AuditRecord signature + signing_key_id columns (both nullable) --
+
+
+def _store():
+    from sqlalchemy import create_engine
+
+    from agentos_controlplane.store.engine import create_all, create_session_factory
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_all(engine)
+    return create_session_factory(engine)
+
+
+def test_audit_record_persists_signature_columns():
+    from agentos_controlplane.store.models import AuditRecord
+
+    sf = _store()
+    with sf() as session:
+        rec = AuditRecord(
+            seq=0,
+            prev_hash=None,
+            record_hash="deadbeef",
+            body={"seq": 0},
+            signature="ab" * 64,
+            signing_key_id="0123456789abcdef",
+        )
+        session.add(rec)
+        session.commit()
+        loaded = session.get(AuditRecord, rec.id)
+        assert loaded.signature == "ab" * 64
+        assert loaded.signing_key_id == "0123456789abcdef"
+
+
+def test_audit_record_signature_columns_nullable():
+    from agentos_controlplane.store.models import AuditRecord
+
+    sf = _store()
+    with sf() as session:
+        rec = AuditRecord(seq=0, prev_hash=None, record_hash="deadbeef", body={"seq": 0})
+        session.add(rec)
+        session.commit()
+        loaded = session.get(AuditRecord, rec.id)
+        assert loaded.signature is None
+        assert loaded.signing_key_id is None

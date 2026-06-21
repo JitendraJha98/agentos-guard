@@ -65,6 +65,11 @@ class AuditRecord(Base):
     seq: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True)
     prev_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     record_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # AUD-08: detached per-record EdDSA signature over SIG_DOMAIN + canonical_json(body),
+    # and a short fingerprint of the signing public key. Nullable: a writer without a signer
+    # produces unsigned records (backward compat); the production path always signs.
+    signature: Mapped[str | None] = mapped_column(Text, nullable=True)        # 64-byte sig, hex
+    signing_key_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Generic JSON (NOT JSONB) so the column maps to SQLite TEXT-JSON now and to
     # Postgres JSONB at the production target.
     body: Mapped[dict] = mapped_column(JSON, nullable=False)
