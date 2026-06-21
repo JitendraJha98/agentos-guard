@@ -219,13 +219,21 @@ def _main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--pubkey", help="path to the control-plane public-key PEM (enables signature checks)"
     )
+    p.add_argument(
+        "--tsa-root",
+        help="path to the TSA root-certificate PEM (enables rfc3161 checkpoint verification)",
+    )
     args = p.parse_args(argv)
     url = args.db if "://" in args.db else f"sqlite+pysqlite:///{args.db}"
     sf = create_session_factory(create_engine(url))
     pub = open(args.pubkey, encoding="utf-8").read() if args.pubkey else None
-    result = verify_chain(sf, public_key_pem=pub)
+    tsa_root = open(args.tsa_root, encoding="utf-8").read() if args.tsa_root else None
+    result = verify_chain(sf, public_key_pem=pub, tsa_root_pem=tsa_root)
     if result.ok:
-        print(f"OK: {result.records_checked} records verified")
+        print(
+            f"OK: {result.records_checked} records, {result.checkpoints_checked} checkpoints "
+            f"verified, {result.skipped_checkpoints} skipped"
+        )
         # The signature step is the ONLY defense against a full consistent rewrite. If it ran
         # zero times on a non-empty chain (no --pubkey, or every row unsigned) the strongest
         # check was entirely skipped — say so loudly so 'OK' is not mistaken for 'intact'.
@@ -233,6 +241,13 @@ def _main(argv: list[str] | None = None) -> int:
             print(
                 f"WARNING: signature check skipped (no pubkey / {result.records_checked} "
                 "unsigned rows) — a full rewrite would NOT have been detected"
+            )
+        # A skipped checkpoint means its external/durability anchor was NOT verified (no pubkey
+        # for a local anchor, no --tsa-root for an rfc3161 one) — surface it, not a false pass.
+        if result.skipped_checkpoints > 0:
+            print(
+                f"WARNING: {result.skipped_checkpoints} checkpoint(s) skipped "
+                "(missing pubkey / --tsa-root) — their anchor proof was NOT verified"
             )
         return 0
     v = result.violation

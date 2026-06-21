@@ -37,10 +37,12 @@ def _build_file_chain(db_path):
     return sf, sign.public_key_pem
 
 
-def _run_cli(db_path, pubkey_path=None):
+def _run_cli(db_path, pubkey_path=None, tsa_root_path=None):
     argv = [sys.executable, "-m", "agentos_controlplane.audit_verify", "--db", str(db_path)]
     if pubkey_path is not None:
         argv += ["--pubkey", str(pubkey_path)]
+    if tsa_root_path is not None:
+        argv += ["--tsa-root", str(tsa_root_path)]
     return subprocess.run(argv, capture_output=True, text=True)
 
 
@@ -72,6 +74,61 @@ def test_cli_exit1_on_tampered_body(tmp_path):
     proc = _run_cli(db, pem)
     assert proc.returncode == 1, proc.stdout
     assert "FAIL at seq" in proc.stdout
+
+
+def test_cli_reports_verified_checkpoint(tmp_path):
+    # A local-anchor checkpoint verified WITH --pubkey reports "1 checkpoints verified, 0 skipped".
+    from agentos_controlplane.checkpoint import CheckpointService, LocalEd25519Anchor
+
+    db = tmp_path / "audit.db"
+    engine = create_engine(f"sqlite+pysqlite:///{db}")
+    create_all(engine)
+    sf = create_session_factory(engine)
+    sign = IdentityEngine(is_registered=lambda s: True, load_trust=lambda s: 0.5)
+    w = AuditWriter(sf, signer=sign)
+    for _ in range(2):
+        a = AgentAction(
+            agent_id="a",
+            type=ActionType.tool_call,
+            target="http_get",
+            payload={"url": "https://api.example.com"},
+        )
+        asyncio.run(w.append(a, Decision(action_id=a.id, outcome=Outcome.allow)))
+    CheckpointService(sf, LocalEd25519Anchor(sign)).checkpoint()
+    engine.dispose()
+    pem = tmp_path / "pub.pem"
+    pem.write_text(sign.public_key_pem, encoding="utf-8")
+
+    proc = _run_cli(db, pem)
+    assert proc.returncode == 0, proc.stderr
+    assert "1 checkpoints verified, 0 skipped" in proc.stdout
+
+
+def test_cli_warns_when_checkpoint_skipped(tmp_path):
+    # The SAME checkpoint verified WITHOUT --pubkey is skipped (local anchor needs the key):
+    # OK stays, but the CLI must warn that the anchor proof was NOT verified.
+    from agentos_controlplane.checkpoint import CheckpointService, LocalEd25519Anchor
+
+    db = tmp_path / "audit.db"
+    engine = create_engine(f"sqlite+pysqlite:///{db}")
+    create_all(engine)
+    sf = create_session_factory(engine)
+    sign = IdentityEngine(is_registered=lambda s: True, load_trust=lambda s: 0.5)
+    w = AuditWriter(sf, signer=sign)
+    a = AgentAction(
+        agent_id="a",
+        type=ActionType.tool_call,
+        target="http_get",
+        payload={"url": "https://api.example.com"},
+    )
+    asyncio.run(w.append(a, Decision(action_id=a.id, outcome=Outcome.allow)))
+    CheckpointService(sf, LocalEd25519Anchor(sign)).checkpoint()
+    engine.dispose()
+
+    proc = _run_cli(db)  # no --pubkey
+    assert proc.returncode == 0, proc.stderr
+    assert "OK:" in proc.stdout
+    assert "1 checkpoint(s) skipped" in proc.stdout
 
 
 def test_cli_warns_when_signature_check_skipped(tmp_path):
