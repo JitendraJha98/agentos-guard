@@ -8,8 +8,10 @@ what was hashed and signed (the canonicalization-pin invariant).
 Guarantee: any retroactive edit by someone WITHOUT the control-plane private key is caught — a body
 edit breaks record_hash (step 4); recomputing that row's hash breaks the next row's prev_hash link
 (step 5); and a forger who cannot re-sign fails the signature check (step 6). A full consistent
-rewrite requires the private key (the live-compromise/key-custody case) and the external anchoring
-of Slice 4c; checkpoint-anchor + tail-truncation checks are added there.
+rewrite requires the private key (the live-compromise/key-custody case) — which Slice-4c external
+anchoring catches: the checkpoint binds the ORIGINAL head {seq, record_hash} to an unforgeable
+proof, so a rewrite of already-checkpointed history no longer matches (checkpoint_mismatch) and a
+chain truncated below a checkpointed seq is detected (checkpoint_truncation).
 """
 from __future__ import annotations
 
@@ -20,7 +22,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from agentos_controlplane.audit import canonical_json, verify_record_signature
-from agentos_controlplane.store.models import AuditRecord
+from agentos_controlplane.checkpoint import (
+    CheckpointVerifyUnavailable,
+    checkpoint_message,
+    verify_checkpoint_proof,
+)
+from agentos_controlplane.store.models import AuditRecord, ChainCheckpoint
 
 
 @dataclass(frozen=True)
@@ -36,19 +43,29 @@ class VerifyResult:
     records_checked: int
     violation: Violation | None = None
     signatures_checked: int = 0  # rows whose Ed25519 signature was actually verified (step 6)
+    checkpoints_checked: int = 0  # checkpoints whose anchor proof was actually verified (AUD-05)
+    skipped_checkpoints: int = 0  # checkpoints skipped for want of verification material (AUD-05)
 
 
 def verify_chain(
-    session_factory: sessionmaker[Session], public_key_pem: str | bytes | None = None
+    session_factory: sessionmaker[Session],
+    public_key_pem: str | bytes | None = None,
+    tsa_root_pem: str | bytes | None = None,
 ) -> VerifyResult:
     """Verify the whole chain. If `public_key_pem` is given, every signed row's Ed25519
-    signature is checked under it; unsigned rows skip step 6."""
+    signature is checked under it; unsigned rows skip step 6. After the per-row loop, every
+    ChainCheckpoint is validated (AUD-05): the head hash recomputed at the checkpointed seq must
+    match the bound record_hash (checkpoint_mismatch), the chain must be no shorter than a
+    checkpointed seq (checkpoint_truncation), and the anchor proof must verify (checkpoint_proof);
+    a checkpoint whose verification material was not supplied is SKIPPED (counted, not failed)."""
     with session_factory() as session:
         rows = session.scalars(select(AuditRecord).order_by(AuditRecord.seq.asc())).all()
 
     prev_recomputed = None  # the RECOMPUTED record_hash of the previous row
     n = 0
     sigs = 0  # rows whose signature was actually verified (the full-rewrite defense)
+    recomputed_by_seq: dict[int, str] = {}  # {seq: recomputed record_hash} for checkpoint checks
+    max_seq = -1
     for expected_seq, row in enumerate(rows):
         # (1) genesis / (2) seq continuity — strict, no gaps/dups/reorder
         if row.seq != expected_seq:
@@ -122,8 +139,69 @@ def verify_chain(
                 )
             sigs += 1
         prev_recomputed = recomputed
+        recomputed_by_seq[row.seq] = recomputed
+        max_seq = row.seq
         n += 1
-    return VerifyResult(True, n, None, sigs)
+
+    # (7) AUD-05 checkpoint anchors — proves no already-checkpointed history was rewritten and
+    # the chain was not truncated below a checkpointed seq. Re-derives from the VERIFIED chain
+    # (recomputed_by_seq), never the stored derived columns. First-violation-wins, like above.
+    with session_factory() as session:
+        checkpoints = session.scalars(
+            select(ChainCheckpoint).order_by(ChainCheckpoint.seq.asc())
+        ).all()
+    cps_checked = 0
+    cps_skipped = 0
+    for cp in checkpoints:
+        # Tail-truncation: a checkpoint for a seq past the chain's end means rows were deleted.
+        if cp.seq > max_seq:
+            return VerifyResult(
+                False,
+                n,
+                Violation(cp.seq, "checkpoint_truncation", "chain shorter than a checkpointed seq"),
+                sigs,
+                cps_checked,
+                cps_skipped,
+            )
+        # Rewrite-of-checkpointed-history: the recomputed head hash must still match the bound one.
+        if recomputed_by_seq.get(cp.seq) != cp.record_hash:
+            return VerifyResult(
+                False,
+                n,
+                Violation(
+                    cp.seq,
+                    "checkpoint_mismatch",
+                    "recomputed head hash != checkpoint-bound record_hash (rewritten history)",
+                ),
+                sigs,
+                cps_checked,
+                cps_skipped,
+            )
+        # Anchor proof: the external/durability proof must verify over the bound message. A skip
+        # (verification material absent) is surfaced, NOT a false pass and NOT a crash.
+        msg = checkpoint_message(cp.seq, cp.record_hash)
+        try:
+            proof_ok = verify_checkpoint_proof(
+                cp.anchor_kind,
+                cp.proof,
+                msg,
+                public_key_pem=public_key_pem,
+                tsa_root_pem=tsa_root_pem,
+            )
+        except CheckpointVerifyUnavailable:
+            cps_skipped += 1
+            continue
+        if not proof_ok:
+            return VerifyResult(
+                False,
+                n,
+                Violation(cp.seq, "checkpoint_proof", "checkpoint anchor proof did not verify"),
+                sigs,
+                cps_checked,
+                cps_skipped,
+            )
+        cps_checked += 1
+    return VerifyResult(True, n, None, sigs, cps_checked, cps_skipped)
 
 
 def _main(argv: list[str] | None = None) -> int:
