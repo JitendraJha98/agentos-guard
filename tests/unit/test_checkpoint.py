@@ -107,6 +107,47 @@ def test_unknown_kind_raises_verify_unavailable():
         verify_checkpoint_proof("not_a_kind", b"x", b"y", public_key_pem="pem")
 
 
+def _self_signed_root_pem():
+    """A throwaway self-signed cert PEM — valid x509 so the rfc3161 path reaches the DER
+    decode (not the load_pem_x509_certificate). The garbage proof never authenticates against
+    it; this only exercises the malformed-DER decode branch."""
+    import datetime
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.serialization import Encoding
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test-root")])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime(2020, 1, 1))
+        .not_valid_after(datetime.datetime(2030, 1, 1))
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(Encoding.PEM)
+
+
+@pytest.mark.parametrize("proof", [b"garbage", b"", b"\x30\x82\x01"], ids=["garbage", "empty", "truncated"])
+def test_rfc3161_malformed_proof_returns_false_not_crash(proof):
+    # A malformed/truncated/garbage DER token makes decode_timestamp_response raise ValueError
+    # (ASN.1 parse error) — which is NOT a VerificationError. The verifier must turn that into a
+    # clean False (a defined 'checkpoint_proof' violation), mirroring the 4b malformed-hex fix,
+    # never an uncaught crash.
+    assert (
+        verify_checkpoint_proof(
+            "rfc3161_v1", proof, checkpoint_message(1, "abc"), tsa_root_pem=_self_signed_root_pem()
+        )
+        is False
+    )
+
+
 def test_chain_checkpoint_row_round_trips_on_sqlite():
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_all(engine)

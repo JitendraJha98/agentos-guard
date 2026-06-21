@@ -119,6 +119,52 @@ def test_corrupted_checkpoint_proof_caught():
     assert not r.ok and r.violation.check == "checkpoint_proof" and r.violation.seq == 2
 
 
+def _self_signed_root_pem():
+    """A throwaway valid self-signed cert PEM so the rfc3161 verify path reaches the DER
+    decode rather than failing to load the root. The garbage proof never authenticates."""
+    import datetime
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.serialization import Encoding
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test-root")])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime(2020, 1, 1))
+        .not_valid_after(datetime.datetime(2030, 1, 1))
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(Encoding.PEM)
+
+
+def test_malformed_rfc3161_proof_caught_as_checkpoint_proof_not_crash():
+    # An insider corrupts an rfc3161_v1 checkpoint's stored DER proof with garbage. The DER
+    # decode raises ValueError (ASN.1 parse error), NOT VerificationError — the verifier must
+    # turn it into a clean 'checkpoint_proof' violation (mirroring the 4b malformed-hex fix),
+    # not crash with an uncaught traceback. End-to-end through verify_chain with --tsa-root.
+    sf, sign = _signed_chain(3)
+    cp = _checkpoint(sf, sign)  # checkpoints seq 2
+    with sf() as s:
+        s.execute(
+            update(ChainCheckpoint)
+            .where(ChainCheckpoint.id == cp.id)
+            .values(anchor_kind="rfc3161_v1", proof=b"garbage")
+        )
+        s.commit()
+    r = verify_chain(
+        sf, public_key_pem=sign.public_key_pem, tsa_root_pem=_self_signed_root_pem()
+    )
+    assert not r.ok and r.violation.check == "checkpoint_proof" and r.violation.seq == 2
+
+
 def test_checkpoint_skipped_when_pubkey_absent_not_a_false_fail():
     # A local_ed25519_v1 checkpoint needs the control-plane pubkey to verify. Without it the
     # verifier must SKIP it (surfaced as a skip count), NOT crash and NOT false-fail.

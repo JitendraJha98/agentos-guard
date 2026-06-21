@@ -136,11 +136,15 @@ def _verify_rfc3161(proof: bytes, message: bytes, tsa_root_pem) -> bool:
     pem = tsa_root_pem.encode() if isinstance(tsa_root_pem, str) else tsa_root_pem
     root = x509.load_pem_x509_certificate(pem)
     verifier = VerifierBuilder().add_root_certificate(root).build()
+    # A DB attacker (or genuine corruption) can replace the stored DER token with garbage/truncated
+    # bytes; decode_timestamp_response raises ValueError ('ASN.1 parse error') there — NOT a
+    # VerificationError — so decode INSIDE the try and turn a malformed token into the defined
+    # 'checkpoint_proof' violation (never a crash), mirroring the 4b malformed-hex signature fix.
     try:
         # .anchor() hashes `message` internally (messageImprint == sha256(message)); mirror it.
         verifier.verify(decode_timestamp_response(proof), hashlib.sha256(message).digest())
         return True
-    except VerificationError:
+    except (VerificationError, ValueError):
         return False
 
 
