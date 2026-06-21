@@ -11,6 +11,7 @@ header (algorithm-confusion — GHSA-ffqj-6fqr-9h24). The issuer is checked,
 is terminal -> ok=False.
 """
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable
@@ -52,7 +53,10 @@ class IdentityEngine:
         self._is_registered = is_registered
         self._load_trust = load_trust
         # Generate the signing keypair once and hold it in the control plane.
+        # The private-key OBJECT is retained (AUD-08 sign_record); it never
+        # leaves this engine — callers receive only signatures and the public PEM.
         priv = private_key or Ed25519PrivateKey.generate()
+        self._priv = priv
         self._priv_pem = priv.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
@@ -66,6 +70,18 @@ class IdentityEngine:
     @property
     def public_key_pem(self) -> str:
         return self._pub_pem.decode("utf-8")
+
+    @property
+    def public_key_id(self) -> str:
+        """Short stable fingerprint of the public key (AUD-08 signing_key_id) — lets a
+        verifier pick the right historical key and makes a re-key auditable."""
+        return hashlib.sha256(self._pub_pem).hexdigest()[:16]
+
+    def sign_record(self, data: bytes) -> bytes:
+        """Detached Ed25519 signature over `data` (AUD-08). The caller prepends the
+        audit-record domain prefix; the same key signs agent JWTs, so domain separation
+        prevents cross-protocol replay. The private key never leaves this engine."""
+        return self._priv.sign(data)
 
     def issue_token(self, agent_id: str) -> str:
         """IDN-01 — issue a signed EdDSA JWT carrying the agent_id as `sub`."""
