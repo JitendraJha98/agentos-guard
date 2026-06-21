@@ -16,7 +16,11 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
+
 from agentos_controlplane.audit import canonical_json
+from agentos_controlplane.store.models import AuditRecord, ChainCheckpoint
 
 CHECKPOINT_DOMAIN = b"agentos-guard/audit-checkpoint/v1\x00"
 
@@ -85,3 +89,37 @@ def verify_checkpoint_proof(
 def _verify_rfc3161(proof: bytes, message: bytes, tsa_root_pem) -> bool:
     # Replaced in Task 4 with the real offline RFC-3161 token verification.
     raise CheckpointVerifyUnavailable("rfc3161 support not yet wired")
+
+
+class CheckpointService:
+    """Reads the current chain head, anchors it, and stores the checkpoint row.
+
+    Operator-/schedule-driven (NOT wired into the per-action hot path; Phase-5 reconcilers
+    automate the cadence)."""
+
+    def __init__(self, session_factory: sessionmaker[Session], anchor: CheckpointAnchor) -> None:
+        self._sf = session_factory
+        self._anchor = anchor
+
+    def checkpoint(self) -> ChainCheckpoint:
+        """Anchor the current chain head and persist the checkpoint. Raises if the chain is empty."""
+        with self._sf() as s:
+            head = s.scalars(
+                select(AuditRecord).order_by(AuditRecord.seq.desc()).limit(1)
+            ).first()
+        if head is None:
+            raise ValueError("cannot checkpoint an empty audit chain")
+        msg = checkpoint_message(head.seq, head.record_hash)
+        proof = self._anchor.anchor(msg)
+        row = ChainCheckpoint(
+            seq=head.seq,
+            record_hash=head.record_hash,
+            anchor_kind=self._anchor.kind,
+            proof=proof,
+            tsa_url=getattr(self._anchor, "tsa_url", None),
+        )
+        with self._sf() as s:
+            s.add(row)
+            s.commit()
+            s.refresh(row)
+        return row

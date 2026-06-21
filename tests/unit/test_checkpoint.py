@@ -7,12 +7,16 @@ verify_checkpoint_proof round-trips, catches tamper / wrong-domain, and SKIPS (r
 CheckpointVerifyUnavailable) when the verification material is absent.
 """
 
+import asyncio
+
 import pytest
 from sqlalchemy import create_engine, select
 
-from agentos_controlplane.audit import canonical_json
+from agentos_contract import ActionType, AgentAction, Decision, Outcome
+from agentos_controlplane.audit import AuditWriter, canonical_json
 from agentos_controlplane.checkpoint import (
     CHECKPOINT_DOMAIN,
+    CheckpointService,
     CheckpointVerifyUnavailable,
     LocalEd25519Anchor,
     checkpoint_message,
@@ -25,6 +29,24 @@ from agentos_controlplane.store.models import ChainCheckpoint
 
 def _engine():
     return IdentityEngine(is_registered=lambda s: True, load_trust=lambda s: 0.5)
+
+
+def _signed_chain(n=3):
+    """Build a real signed chain of `n` records; return (session_factory, IdentityEngine)."""
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_all(engine)
+    sf = create_session_factory(engine)
+    sign = _engine()
+    w = AuditWriter(sf, signer=sign)
+    for _ in range(n):
+        a = AgentAction(
+            agent_id="a",
+            type=ActionType.tool_call,
+            target="http_get",
+            payload={"url": "https://api.example.com"},
+        )
+        asyncio.run(w.append(a, Decision(action_id=a.id, outcome=Outcome.allow)))
+    return sf, sign
 
 
 def test_checkpoint_message_reuses_canonical_json():
@@ -109,3 +131,39 @@ def test_chain_checkpoint_row_round_trips_on_sqlite():
         assert row.tsa_url is None
         assert row.id is not None
         assert row.created_at is not None
+
+
+def test_checkpoint_service_anchors_the_head():
+    sf, sign = _signed_chain(3)
+    row = CheckpointService(sf, LocalEd25519Anchor(sign)).checkpoint()
+    # The checkpoint binds the CURRENT head (seq 2 on a 3-record chain).
+    head = sf().scalars(select(ChainCheckpoint).order_by(ChainCheckpoint.seq.desc())).first()
+    assert head is not None
+    assert row.seq == 2
+    assert row.anchor_kind == "local_ed25519_v1"
+    assert row.tsa_url is None
+    # The stored proof verifies over the head's checkpoint_message.
+    msg = checkpoint_message(row.seq, row.record_hash)
+    assert verify_checkpoint_proof(
+        "local_ed25519_v1", row.proof, msg, public_key_pem=sign.public_key_pem
+    ) is True
+
+
+def test_checkpoint_service_binds_actual_head_record_hash():
+    # The bound record_hash equals the actual head row's record_hash (not a stale/wrong one).
+    sf, sign = _signed_chain(3)
+    from agentos_controlplane.store.models import AuditRecord
+
+    with sf() as s:
+        head = s.scalars(select(AuditRecord).order_by(AuditRecord.seq.desc()).limit(1)).first()
+        head_seq, head_hash = head.seq, head.record_hash
+    row = CheckpointService(sf, LocalEd25519Anchor(sign)).checkpoint()
+    assert row.seq == head_seq and row.record_hash == head_hash
+
+
+def test_checkpoint_empty_chain_raises():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_all(engine)
+    sf = create_session_factory(engine)
+    with pytest.raises(ValueError):
+        CheckpointService(sf, LocalEd25519Anchor(_engine())).checkpoint()
