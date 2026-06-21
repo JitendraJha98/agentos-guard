@@ -83,6 +83,25 @@ def test_markdown_fenced_json_is_parsed():
     assert asyncio.run(it.interpret(REQ)).outcome == "sandbox"
 
 
+def test_bare_language_hint_prefix_is_parsed():
+    it = _interp(['json\n{"outcome":"warn","principle_ref":"none","rationale":"r"}'])
+    assert asyncio.run(it.interpret(REQ)).outcome == "warn"
+
+
+def test_trailing_prose_after_object_is_dropped():
+    it = _interp(['{"outcome":"deny","principle_ref":"none","rationale":"r"}\nHere is my verdict.'])
+    assert asyncio.run(it.interpret(REQ)).outcome == "deny"
+
+
+def test_brace_inside_string_does_not_truncate_object():
+    it = _interp(['{"outcome":"warn","principle_ref":"none","rationale":"uses a {curly} token"}'])
+    assert asyncio.run(it.interpret(REQ)).rationale == "uses a {curly} token"
+
+
+def test_wire_schema_rationale_bounded():
+    assert _VERDICT_SCHEMA["properties"]["rationale"]["maxLength"] == 512
+
+
 def test_json_schema_mode_uses_response_format_not_nvext():
     it = _interp(['{"outcome":"allow","principle_ref":"none","rationale":"ok"}'], structured_mode="json_schema")
     asyncio.run(it.interpret(REQ))

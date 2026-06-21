@@ -30,7 +30,10 @@ _VERDICT_SCHEMA = {
     "properties": {
         "outcome": {"type": "string", "enum": list(_OUTCOMES)},
         "principle_ref": {"type": "string", "description": "id of the most relevant principle, or the literal 'none'"},
-        "rationale": {"type": "string"},
+        # maxLength mirrors _VerdictModel.rationale so constrained decoding stops the model
+        # at the same bound Pydantic enforces — a verbose-but-valid rationale would otherwise
+        # pass the wire schema yet fail revalidation and burn a retry against the ~40 RPM tier.
+        "rationale": {"type": "string", "maxLength": 512},
     },
     "required": ["outcome", "principle_ref", "rationale"],
     "additionalProperties": False,
@@ -48,13 +51,36 @@ class InterpreterParseError(RuntimeError):
     Raised to the runner, which degrades it to an interpreter_error reason (floor intact)."""
 
 
-def _strip_fences(text: str) -> str:
+def _extract_json(text: str) -> str:
+    """Best-effort: pull the first balanced JSON object out of a model response,
+    tolerating ```json fences, a bare 'json' language hint, and prose before/after
+    the object. Free open-weight models frequently wrap or pad their output; the
+    bounded retry is the backstop, but a robust extractor avoids burning retries."""
     t = text.strip()
-    if t.startswith("```"):
-        t = t.split("\n", 1)[-1] if "\n" in t else t[3:]
-        if t.endswith("```"):
-            t = t[: -3]
-    return t.strip()
+    if t.startswith("```"):  # drop the opening fence line (``` or ```json) + trailing fence
+        t = t.split("\n", 1)[1] if "\n" in t else ""
+        if "```" in t:
+            t = t[: t.rindex("```")]
+        t = t.strip()
+    start = t.find("{")
+    if start == -1:
+        return t  # no object — let json.loads fail into the retry path
+    depth, in_str, esc = 0, False, False
+    for i in range(start, len(t)):
+        c = t[i]
+        if in_str:
+            esc = c == "\\" and not esc
+            if c == '"' and not esc:
+                in_str = False
+        elif c == '"':
+            in_str = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return t[start : i + 1]  # first balanced object — drops trailing prose
+    return t[start:]
 
 
 def _system_prompt(request: InterpretationRequest) -> str:
@@ -128,7 +154,7 @@ class NvidiaInterpreter:
             completion = await self._call(messages)
             text = (completion.choices[0].message.content or "").strip()
             try:
-                v = _VerdictModel.model_validate(json.loads(_strip_fences(text)))
+                v = _VerdictModel.model_validate(json.loads(_extract_json(text)))
             except (json.JSONDecodeError, ValidationError) as exc:
                 last_err = exc
                 messages = messages + [
