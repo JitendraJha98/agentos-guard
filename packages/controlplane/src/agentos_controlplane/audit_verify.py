@@ -106,3 +106,35 @@ def verify_chain(
         prev_recomputed = recomputed
         n += 1
     return VerifyResult(True, n, None)
+
+
+def _main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    from sqlalchemy import create_engine
+
+    from agentos_controlplane.store.engine import create_session_factory
+
+    p = argparse.ArgumentParser(
+        prog="agentos_controlplane.audit_verify",
+        description="Re-validate the tamper-evident audit chain (AUD-05).",
+    )
+    p.add_argument("--db", required=True, help="SQLite file path or a SQLAlchemy URL")
+    p.add_argument(
+        "--pubkey", help="path to the control-plane public-key PEM (enables signature checks)"
+    )
+    args = p.parse_args(argv)
+    url = args.db if "://" in args.db else f"sqlite+pysqlite:///{args.db}"
+    sf = create_session_factory(create_engine(url))
+    pub = open(args.pubkey, encoding="utf-8").read() if args.pubkey else None
+    result = verify_chain(sf, public_key_pem=pub)
+    if result.ok:
+        print(f"OK: {result.records_checked} records verified")
+        return 0
+    v = result.violation
+    print(f"FAIL at seq {v.seq}: {v.check} — {v.detail}")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())
