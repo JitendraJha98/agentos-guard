@@ -115,7 +115,11 @@ def _wire(policy_engine, sequences=None) -> WiredPipeline:
         identity=IdentityStage(registry.identity),
         policy=policy_engine,
         scorers=[PromptInjectionScorer()],
-        audit=AuditWriter(session_factory),
+        # AUD-08: sign the e2e audit chain with the control-plane keypair, so the
+        # main pipeline path produces genuinely signed records (the realistic
+        # path the Slice-4b verifier checks). registry.identity is the IdentityEngine,
+        # which satisfies RecordSigner.
+        audit=AuditWriter(session_factory, signer=registry.identity),
         posture=PostureMap(),  # defaults: every class fail-closed, no-match floor allow
         sequences=sequences,  # SEC-13: declared forbidden sequences (bundle.sequences)
     )
