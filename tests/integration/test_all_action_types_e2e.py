@@ -1,13 +1,14 @@
 """Phase 2 e2e (INT-02..06) — all five action types flow through the SAME pipeline.
 
-Driven against the real wired pipeline (identity -> OPA WASM floor -> risk -> graduated
--> hash-chained audit) from conftest. Each action type is normalized by the SDK, passes
-the same `Pipeline.evaluate`, produces one `Decision`, and appends one `AuditRecord`.
+Driven against the real wired pipeline (identity -> enrichment -> constitution WASM
+floor -> risk -> graduated -> hash-chained audit) from conftest. Each action type is
+normalized by the SDK, passes the same `Pipeline.evaluate`, produces one `Decision`,
+and appends one `AuditRecord`.
 
 Proven here:
   - the four new types (model/memory/mcp/delegation) are NOT blanket-denied by the
-    egress floor — a benign one is allowed (the egress principle governs tool egress
-    only), so "flows through the pipeline" is real, not all-deny;
+    constitution floor — a benign one is allowed (no principle matches it, the
+    no-match floor is allow), so "flows through the pipeline" is real, not all-deny;
   - injection planted in a MODEL prompt is still risk-scored and can be denied — the
     risk stage governs model inputs, not just tool inputs;
   - a delegation's parent_action_id lineage is persisted in the audit body (INT-05);
@@ -56,7 +57,7 @@ def test_benign_model_call_flows_and_is_allowed(pipeline_with_principle) -> None
     decision = asyncio.run(wired.pipeline.evaluate(action))
     assert decision.outcome == Outcome.allow
     codes = [r.code for r in decision.reasons]
-    assert "no_egress_policy_applicable" in codes  # egress floor doesn't gate model calls
+    assert "no_principle_matched" in codes  # no constitution principle gates this call
     rows = _rows(wired)
     assert len(rows) == 1
     assert rows[0].body["action_type"] == "model_invocation"

@@ -9,12 +9,15 @@ reflex:
 
 > **Distrust → Block → Log.**
 >
-> A static rule fires, the action is allowed or denied, an append-only line is written.
+> A deterministic rule fires, the action is allowed, denied, or routed to a human, and a line
+> is written.
 
-That model is a *firewall* bolted in front of a reasoning system. It treats every agent as a
-hostile string of bytes and every decision as a binary. It cannot explain itself, cannot bend
-without breaking, cannot see intent behind a novel action sequence, and cannot *prove* its log
-wasn't rewritten by whoever owns the host.
+That model is a *firewall* bolted in front of a reasoning system. By its own documentation it
+governs "actions, not reasoning": it cannot explain *why* a rule exists, cannot see the intent
+behind a multi-step action sequence (two individually-allowed actions compose into one attack),
+does not govern the memory and knowledge the agent reasons over, and logs raw, unredacted
+parameters. (AGT's current, verified feature set — it is *not* binary allow/deny anymore — is
+kept honest in [`30-comparison-agt.md`](30-comparison-agt.md), re-verified each phase.)
 
 agentos-guard runs a different reflex:
 
@@ -36,12 +39,12 @@ blockchain, tokens, or any crypto-economic apparatus — see **[Deliberately out
 | # | AGT does | agentos-guard does | Lives in |
 |---|----------|--------------------|----------|
 | 1 | **Static YAML rules** frozen at deploy | A **living semantic constitution** agents query, that compiles to deterministic policy and reasons about novel cases | [`04`](04-constitution-and-policy.md) |
-| 2 | **Binary allow/deny** | **Graduated response** — allow · warn · sandbox · consensus · approval · time-boxed exception · async review · deny, plus composable side-effects (notify · monitor · risk-flag · open-incident) — tuned by risk + trust | [`04`](04-constitution-and-policy.md) · [ADR-0005](adr/0005-graduated-response-model.md) |
-| 3 | **Action-string matching** (`action.type == 'drop_table'`) | **Intent-based policy** — catches `rename_then_drop`, copy-then-delete, and novel sequences that reach the same outcome | [`05`](05-security-and-runtime.md) |
+| 2 | **Three-outcome ceiling** (allow / deny / require_approval) | **Graduated response** — allow · warn · sandbox · consensus · approval · time-boxed exception · async review · deny, plus composable side-effects (notify · monitor · risk-flag · open-incident) — tuned by risk + trust | [`04`](04-constitution-and-policy.md) · [ADR-0005](adr/0005-graduated-response-model.md) |
+| 3 | **Per-action, stateless evaluation** — no cross-action correlation | **Intent-based policy** — catches `rename_then_drop`, copy-then-delete, and novel sequences that reach the same outcome | [`05`](05-security-and-runtime.md) |
 | 4 | **Per-agent isolated policy** | **Cross-agent permission calculus** — computes transitive permissions across delegation and catches the confused-deputy problem static rules miss | [`06`](06-identity-trust-discovery.md) · [`04`](04-constitution-and-policy.md) |
 | 5 | **`GovernanceDenied: rule X`** | **Explainable denials with remediation paths** — cited principle, evidence, and concrete next steps as a first-class `Decision` output | [`02`](02-domain-model.md) · [`04`](04-constitution-and-policy.md) |
 | 6 | **Offline, pre-deploy red team** | **Continuous, pytest-native red-team that gates CI** — a safety regression breaks the build like a failing unit test; self-play keeps probing in prod | [`08`](08-testing-and-redteam.md) |
-| 7 | **Append-only "tamper-evident" logs** | **Prove, don't just log** — policy-version provenance on every record now, Merkle inclusion proofs next, zero-knowledge compliance proofs later | [`07`](07-audit-and-compliance.md) |
+| 7 | **Raw, unredacted audit of attempts, not outcomes** (Merkle-chained, but parameters stored verbatim) | **Prove, don't just leak** — fail-closed PII redaction *before* hashing, policy-version provenance on every record now, Merkle inclusion proofs next, zero-knowledge compliance proofs later | [`07`](07-audit-and-compliance.md) |
 
 ## The one-sentence pitch
 
@@ -57,13 +60,19 @@ on that journey, because a technical reader will check.
 
 - **What AGT does well, and we keep:** declarative policy, zero-trust identity, sandboxing,
   tamper-evident audit, a red-team layer. We extend these; we do not pretend they're worthless.
-- **Where we already out-feature AGT today:** even Phase 1 (the shipped
-  [walking skeleton](20-roadmap.md)) runs a real **graduated-response** pipeline with
-  **semantic-constitution** policy and a **CI-gating red-team** test — three things AGT's
-  binary/static/offline model structurally cannot do.
+- **Where we already out-feature AGT today (verified 2026-06-10):** memory-access
+  interception (AGT's own LIMITATIONS.md calls this its "knowledge governance gap"),
+  **fail-closed redacted audit** (AGT logs raw parameters), **deny-by-default** with coverage
+  verification (AGT defaults to allow), and a **CI-gating red-team** test — a safety
+  regression breaks the build, which AGT's CLI-scan model does not do.
 - **What is parity, honestly:** the breadth of detectors, framework adapters, and compliance
-  mappings is where AGT is mature and we are building. Phase 0 (roadmap Phases 1–6) reaches
-  parity on AGT's own turf; the pillars are what pull ahead.
+  mappings is where AGT is mature and we are building — and until roadmap Phase 3 lands, AGT's
+  three shipped outcomes (allow/deny/require_approval) exceed our shipped three, because theirs
+  include approval. Phase 0 (roadmap Phases 1–6) reaches parity on AGT's own turf; the pillars
+  are what pull ahead. The durable pillars — the ones AGT's deterministic-only philosophy and
+  stateless kernel make structurally hard to copy — are the **semantic constitution** (pillar 1)
+  and **cross-action intent correlation** (pillar 3); they are front-loaded in the roadmap for
+  exactly that reason.
 - **What is research, and stays fenced:** the moonshot layer (ZK proofs, BFT consensus,
   self-play patching, decentralized stake) is hard-gated in Phase 2 and **never** gates the
   MVP. The seven pillars beat AGT *without* it.

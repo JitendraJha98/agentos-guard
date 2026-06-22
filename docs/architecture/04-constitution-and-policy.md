@@ -1,10 +1,10 @@
 # 04 — Constitution, Policy & Graduated Response
 
-> **The AGT weakness this kills (pillars 1 & 2):** AGT freezes rules as static YAML at deploy
-> time and enforces a binary allow/deny — string-matching with no rationale and no middle
-> ground, so complex workflows either pass or crash. We give agents a **living constitution**
-> they can reason about, compiled to a deterministic policy core, with a **graduated** range of
-> outcomes tuned by risk and trust.
+> **The AGT weakness this kills (pillars 1 & 2):** AGT enforces deterministic rules with no
+> semantic layer — by its own docs it governs "actions, not reasoning" — and its outcomes stop
+> at allow/deny/require_approval, with no rationale beyond the rule id. We give agents a
+> **living constitution** they can reason about, compiled to a deterministic policy core, with
+> a **graduated** range of outcomes tuned by risk and trust.
 
 This is agentos-guard's signature differentiator. We give agents a **living constitution** they
 can reason about, compiled to a deterministic policy core, with a **graduated** range of

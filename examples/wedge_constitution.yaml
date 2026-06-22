@@ -1,0 +1,26 @@
+# The wedge-demo Constitution (SEC-13) — deliberately MINIMAL: principles 1.1
+# (egress allowlist) and 3.5 (the forbidden rename->drop SEQUENCE) only. There is
+# no single-action principle against destruction, so `drop_table` alone is
+# individually ALLOWED — the demo's whole point is that only the SEQUENCE is
+# forbidden, which per-action string matching can never express.
+schema_version: 1
+name: wedge-demo
+lists:
+  egress_allowlist: [api.example.com]
+principles:
+  - id: "1.1"
+    title: Egress allowlist
+    statement: An agent may only make outbound requests to allowlisted hosts.
+    applies_to: [tool_call]
+    effect: deny
+    when: {field: egress.host, op: not_in, list_ref: egress_allowlist}
+    remediation:
+      - "Add the destination host to the egress_allowlist list and re-apply the constitution."
+  - id: "3.5"
+    title: Rename-then-drop is forbidden
+    statement: A rename followed by destruction of the renamed resource is forbidden, even when each step looks benign alone.
+    kind: sequence
+    sequence: [RESOURCE_RENAME, DATA_DESTRUCTION]
+    effect: deny
+    remediation:
+      - "Request an operator-approved temporary exception, or perform the rename and destruction as separately approved operations."

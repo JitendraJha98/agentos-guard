@@ -7,24 +7,29 @@
 > Phases 7–12, P2 → Phases 13–14. Read this for *what the phases mean*; read the planning roadmap
 > for *what to build next and its status*.
 
-The architecture describes the full vision, but it is built in three phases. **Phase 0 alone
-already beats Microsoft AGT**; Phases 1–2 deliver the moonshot differentiators.
+The architecture describes the full vision, but it is built in three phases. **Phase 0 reaches
+parity on AGT's turf and ships the wedge** — the two durable differentiators AGT's
+deterministic-only philosophy and stateless kernel make structurally hard to copy: the semantic
+constitution and cross-action sequence-intent correlation (see
+[`30-comparison-agt.md`](30-comparison-agt.md)). Phases 1–2 deliver the moonshot differentiators.
 
-## Phase 0 — MVP (beats AGT)
+## Phase 0 — MVP (AGT parity + the wedge)
 
 The complete runtime loop, end to end, for one framework.
 
 - **Interception:** Python SDK shim for LangChain / LangGraph; `AgentAction` normalization.
 - **Decision Pipeline:** basic identity (signed tokens) → policy (Constitution → YAML →
-  OPA/Rego) → risk (prompt-injection + baseline guardrails) → graduated response
-  (allow / warn / deny / require_approval).
+  OPA/Rego) → risk (prompt-injection + baseline guardrails + deterministic intent tags and
+  sequence/lineage intent correlation — the `rename_then_drop` catch, pulled forward from P1)
+  → graduated response (allow / warn / deny / require_approval).
 - **Audit:** tamper-evident hash-chained log with policy-version provenance.
 - **Compliance:** OWASP Agentic Top 10 + NIST AI RMF baseline mapping.
 - **Testing:** pytest-native red-team layer with attack library + statistical thresholds in CI.
 - **Discovery:** SDK self-registration + agent inventory.
 - **Safety levers:** operator kill switch.
 - **Platform:** Control-Plane API + Postgres + OTel + minimal dashboard (read-only, approvals,
-  kill switch).
+  kill switch); zero-infra quickstart (SQLite + in-process opa-wasm, single `pip install`) so
+  first-run friction matches AGT's one-decorator pitch.
 
 **Phase 0 done = success criteria:** a LangGraph agent's every action is intercepted, policy-
 and risk-checked, graduated-response-enforced, and written to a verifiable audit log — and a

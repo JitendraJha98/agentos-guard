@@ -21,7 +21,10 @@ class RiskFinding(BaseModel):
     model_config = {"frozen": True, "extra": "forbid"}   # immutable + reject unknown keys
 
     scorer: str                                           # "prompt_injection.v1"
-    category: Literal["prompt_injection", "egress_exfil", "secret_leak"]
+    category: Literal[
+        "prompt_injection", "egress_exfil", "secret_leak", "intent",
+        "pii", "unsafe_content", "format_violation",
+    ]
     risk_score: float = Field(ge=0.0, le=1.0)             # normalized 0–1; enforced by validator
     matched: list[str] = Field(default_factory=list)      # pattern IDs only — NEVER raw payload
     detail: str = Field(default="", max_length=512)

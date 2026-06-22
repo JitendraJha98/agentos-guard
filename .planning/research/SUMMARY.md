@@ -5,6 +5,16 @@
 > live execution state is [`.planning/`](../) (PROJECT/REQUIREMENTS/ROADMAP/STATE). Read this for
 > *why we chose what we chose*, not for current truth.
 
+> ⚠️ **Correction — 2026-06-10 re-verification (AGT v4.1.0).** The "competitive-positioning
+> correction" in the Executive Summary below **over-corrects**: AGT has **no semantic/LLM layer**
+> (its enforcement is purely deterministic — "actions, not reasoning") and its graduated
+> decisions stop at allow/deny/require_approval. Semantic/constitutional reasoning therefore
+> **remains a durable differentiator**, alongside cross-action sequence-intent correlation
+> (SEC-13, since pulled forward to roadmap Phase 3). The corrected, dated scorecard — including
+> AGT's self-admitted gaps (memory/knowledge governance, raw unredacted audit, default-allow,
+> no cross-action correlation) — is `docs/architecture/30-comparison-agt.md`. Re-verify AGT at
+> the start of every phase; it releases monthly.
+
 **Project:** agentos-guard
 **Domain:** Open-source runtime governance & security control plane for AI agents (Kubernetes-style PEP/PDP split; synchronous decision pipeline on the hot path of every agent action)
 **Researched:** 2026-06-01

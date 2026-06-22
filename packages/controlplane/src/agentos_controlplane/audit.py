@@ -60,6 +60,24 @@ class RedactionError(Exception):
     """
 
 
+# Lifecycle event kinds (Slice 6): every approval / exception / review /
+# enforcement lifecycle event is an AuditRecord through the SAME hash chain.
+# Allowlisted so a typo'd or invented kind can never enter the chain.
+EVENT_KINDS = frozenset(
+    {
+        "approval_resolved",
+        "approval_timed_out",
+        "exception_granted",
+        "review_opened",
+        "enforcement_substitution",
+        "side_effect",
+    }
+)
+
+# Chain fields the writer computes itself — an event body may never shadow them.
+_RESERVED_EVENT_KEYS = frozenset({"seq", "prev_hash", "kind"})
+
+
 def canonical_json(obj: dict) -> bytes:
     """Reproducible canonical JSON: sorted keys, no whitespace (RFC-8785-ish)."""
     return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -82,9 +100,22 @@ def _redact_url(url: str) -> str:
     return f"{parts.scheme}://{host}"
 
 
-def _redact_content(content: str) -> dict:
-    """Never persist raw fetched content — store length + SHA-256 digest only."""
-    raw = content.encode("utf-8")
+def _redact_content(content: object) -> dict:
+    """Never persist raw content — store length + SHA-256 digest only.
+
+    Digest keys accept ANY JSON-serializable value (PIPE-05 seed): a non-str
+    value is digested over its canonical JSON bytes. A value canonical_json
+    cannot serialize raises RedactionError — fail closed, never best-effort.
+    """
+    if isinstance(content, str):
+        raw = content.encode("utf-8")
+    else:
+        try:
+            raw = canonical_json(content)
+        except TypeError:
+            raise RedactionError(
+                f"undigestable payload value of type {type(content).__name__}"
+            ) from None
     return {"len": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
 
 
@@ -94,13 +125,15 @@ def _redact_or_raise(payload: dict) -> dict:
     for key, value in payload.items():
         if key not in _KNOWN_PAYLOAD_KEYS:
             raise RedactionError(f"unclassifiable payload field: {key!r}")
-        if not isinstance(value, str):
-            raise RedactionError(f"payload field {key!r} is not a string")
         if key == "url":
+            if not isinstance(value, str):
+                raise RedactionError("payload field 'url' is not a string")
             redacted["url"] = _redact_url(value)
         elif key in _DIGEST_KEYS:
             redacted[key] = _redact_content(value)
-        else:  # _VERBATIM_KEYS — short identifiers, safe to keep
+        else:  # _VERBATIM_KEYS — short string identifiers, safe to keep
+            if not isinstance(value, str):
+                raise RedactionError(f"payload field {key!r} is not a string")
             redacted[key] = value
     return redacted
 
@@ -116,6 +149,12 @@ class AuditWriter:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self.session_factory = session_factory
         self._lock = asyncio.Lock()  # serial chain: single in-process writer
+        # PIPE-04 hot-path lever (Slice 6c): the chain head is cached INSIDE the
+        # writer-lock discipline, so steady-state appends are one INSERT, not
+        # SELECT+INSERT. Safe under the same single-writer assumption the lock
+        # already encodes (D-14); a failed insert rolls back without touching
+        # the cache, so the prior head stays correct. (prev record_hash, next seq)
+        self._head: tuple[str | None, int] | None = None
 
     async def append(self, action: AgentAction, decision: Decision) -> UUID:
         """Append one AuditRecord; return its id (the Decision.evidence_ref)."""
@@ -143,15 +182,56 @@ class AuditWriter:
                 "outcome": decision.outcome.value,
                 "risk_score": decision.risk_score,
                 "trust_score": decision.trust_score,
-                "reasons": [r.model_dump() for r in decision.reasons],
+                # mode="json" keeps every reason field JSON-native for canonical_json
+                # (belt-and-braces atop the contract's JSON-native evidence validator).
+                "reasons": [r.model_dump(mode="json") for r in decision.reasons],
                 "redacted_payload": redacted,
-                # policy_version: Phase 4 (AUD-03) — nullable / omitted now.
+                # Phase-3 Slice-1 Decision fields — all bounded/typed at the contract,
+                # so the hash covers the COMPLETE decision (no un-audited field).
+                "side_effects": [s.value for s in decision.side_effects],
+                "inferred_intent": decision.inferred_intent,
+                "remediation": decision.remediation,
+                "constitution_version": decision.constitution_version,
+                "policy_version": decision.policy_version,
+                "expires_at": decision.expires_at.isoformat() if decision.expires_at else None,
             }
             record_hash = hashlib.sha256(canonical_json(body)).hexdigest()
             return self._insert(seq, prev_hash, record_hash, body)
 
+    async def append_event(self, kind: str, body: dict) -> UUID:
+        """Append one lifecycle EVENT record through the SAME hash chain.
+
+        Shares the lock / seq / prev_hash discipline with action records, so
+        events and decisions interleave on one tamper-evident chain. `body` is
+        ids / enums / short strings only — constructed by the control plane,
+        never attacker payload (the redactor is for action payloads). The hash
+        covers {seq, prev_hash, kind, ...body}, so the kind itself is
+        tamper-evident. Unknown kinds raise and write NOTHING.
+        """
+        if kind not in EVENT_KINDS:
+            raise ValueError(f"unknown audit event kind: {kind!r}")
+        # A body key shadowing the chain fields would overwrite exactly what the
+        # hash must cover — reject fail-closed, write NOTHING.
+        shadowed = _RESERVED_EVENT_KEYS & body.keys()
+        if shadowed:
+            raise ValueError(f"audit event body shadows reserved keys: {sorted(shadowed)}")
+        async with self._lock:
+            prev_hash, seq = self._chain_head()
+            full_body = {"seq": seq, "prev_hash": prev_hash, "kind": kind, **body}
+            record_hash = hashlib.sha256(canonical_json(full_body)).hexdigest()
+            return self._insert(seq, prev_hash, record_hash, full_body)
+
     def _chain_head(self) -> tuple[str | None, int]:
-        """Return (prior record_hash, next monotonic seq)."""
+        """Return (prior record_hash, next monotonic seq) — cached after the
+        first lookup; only ever read/written under `self._lock`.
+
+        ONE AuditWriter instance per store: the cache assumes this writer is
+        the store's only appender. A second instance over the same store gets
+        a stale head, but cannot fork the chain silently — its INSERT collides
+        with the UNIQUE `seq` constraint and raises IntegrityError (fail
+        closed; the colliding record is never written)."""
+        if self._head is not None:
+            return self._head
         with self.session_factory() as session:
             last = session.scalars(
                 select(AuditRecord).order_by(AuditRecord.seq.desc()).limit(1)
@@ -175,4 +255,7 @@ class AuditWriter:
                 )
             )
             session.commit()
+        # Advance the cached head only AFTER the commit succeeded (a failed
+        # insert raises above, leaving the prior head correct).
+        self._head = (record_hash, seq + 1)
         return record_id

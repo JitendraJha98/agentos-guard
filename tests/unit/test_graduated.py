@@ -20,7 +20,13 @@ from __future__ import annotations
 import pytest
 
 from agentos_contract import Outcome
-from agentos_pipeline.graduated import graduated_response
+from agentos_pipeline.graduated import (
+    _RANK,
+    GraduatedThresholds,
+    _more_restrictive,
+    _risk_to_outcome,
+    graduated_response,
+)
 
 
 @pytest.mark.floor_invariant
@@ -52,3 +58,77 @@ def test_mid_risk_on_allowed_action_lands_in_sandbox_band() -> None:
 def test_low_risk_on_allowed_action_stays_allow() -> None:
     assert graduated_response(Outcome.allow, risk_score=0.0, trust=0.9) is Outcome.allow
     assert graduated_response(Outcome.allow, risk_score=0.39, trust=1.0) is Outcome.allow
+
+
+def test_risk_to_outcome_default_bands():
+    t = GraduatedThresholds()
+    assert _risk_to_outcome(0.0, t) is Outcome.allow
+    assert _risk_to_outcome(0.39, t) is Outcome.allow
+    assert _risk_to_outcome(0.4, t) is Outcome.sandbox
+    assert _risk_to_outcome(0.69, t) is Outcome.sandbox
+    assert _risk_to_outcome(0.7, t) is Outcome.deny
+
+
+def test_more_restrictive_picks_higher_rank():
+    assert _more_restrictive(Outcome.allow, Outcome.require_approval) is Outcome.require_approval
+    assert _more_restrictive(Outcome.deny, Outcome.sandbox) is Outcome.deny
+    assert _more_restrictive(Outcome.warn, Outcome.allow) is Outcome.warn
+
+
+def test_low_trust_hardens_within_band():
+    # trust <= 0.2 tightens the risk outcome one step; never below floor, never relaxes.
+    # Mid-risk hardening keeps a human in the loop: sandbox -> require_approval, NOT deny.
+    assert graduated_response(Outcome.allow, risk_score=0.45, trust=0.1) is Outcome.require_approval
+    assert graduated_response(Outcome.allow, risk_score=0.0, trust=0.1) is Outcome.sandbox   # allow -> sandbox
+
+
+def test_high_trust_is_neutral_baseline():
+    # high trust does NOT relax risk (conservative hardening-only band).
+    assert graduated_response(Outcome.allow, risk_score=0.45, trust=1.0) is Outcome.sandbox
+    assert graduated_response(Outcome.allow, risk_score=0.0, trust=1.0) is Outcome.allow
+
+
+def test_policy_floor_is_a_lower_bound():
+    # A principle effect of require_approval is never relaxed by low risk/high trust.
+    assert graduated_response(Outcome.require_approval, risk_score=0.0, trust=1.0) is Outcome.require_approval
+    # ...but risk can still escalate ABOVE the floor.
+    assert graduated_response(Outcome.sandbox, risk_score=0.8, trust=1.0) is Outcome.deny
+    assert graduated_response(Outcome.warn, risk_score=0.0, trust=1.0) is Outcome.warn
+
+
+_ALL_RISK = [0.0, 0.1, 0.39, 0.4, 0.6, 0.69, 0.7, 0.99, 1.0]
+_ALL_TRUST = [0.0, 0.2, 0.25, 0.5, 0.75, 1.0]
+
+
+@pytest.mark.floor_invariant
+@pytest.mark.parametrize("floor", [
+    Outcome.allow, Outcome.warn, Outcome.sandbox,
+    Outcome.require_consensus, Outcome.require_approval,
+    Outcome.temporary_exception, Outcome.governance_review,
+])
+@pytest.mark.parametrize("risk", _ALL_RISK)
+@pytest.mark.parametrize("trust", _ALL_TRUST)
+def test_result_never_less_restrictive_than_policy_floor(floor, risk, trust):
+    # For ANY (risk, trust) and ANY policy floor, the result rank is >= the floor rank.
+    result = graduated_response(floor, risk_score=risk, trust=trust)
+    assert _RANK[result] >= _RANK[floor]
+
+
+@pytest.mark.floor_invariant
+@pytest.mark.parametrize("trust", _ALL_TRUST)
+def test_more_risk_is_monotonically_non_relaxing(trust):
+    # Fix trust; increasing risk never produces a LESS restrictive outcome.
+    ranks = [_RANK[graduated_response(Outcome.allow, risk_score=r, trust=trust)] for r in _ALL_RISK]
+    assert ranks == sorted(ranks)
+
+
+def test_thresholds_reject_inverted_risk_bands():
+    # sandbox_at must not exceed deny_at — inverted bands are a config error.
+    with pytest.raises(ValueError):
+        GraduatedThresholds(sandbox_at=0.8, deny_at=0.4)
+
+
+def test_trust_harden_boundary_is_inclusive():
+    # trust == trust_harden_at (0.2 default) hardens one step; just above does not.
+    assert graduated_response(Outcome.allow, risk_score=0.0, trust=0.2) is Outcome.sandbox
+    assert graduated_response(Outcome.allow, risk_score=0.0, trust=0.21) is Outcome.allow

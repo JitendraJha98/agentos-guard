@@ -13,6 +13,9 @@ dependencies = [
     "alembic>=1.18",
     "PyJWT>=2.13",
     "cryptography>=48",
+    "anthropic>=0.92",
+    "fastapi>=0.115",
+    "agentos-constitution",
     "agentos-contract",
     "agentos-controlplane",
     "agentos-pipeline",
@@ -24,6 +27,7 @@ dev = [
     "pytest>=8",
     "pytest-repeat",
     "pytest-benchmark",
+    "httpx>=0.27",
 ]
 
 # uv workspace: each package under packages/ has its own pyproject.toml and
@@ -33,6 +37,7 @@ dev = [
 members = ["packages/*"]
 
 [tool.uv.sources]
+agentos-constitution = { workspace = true }
 agentos-contract = { workspace = true }
 agentos-controlplane = { workspace = true }
 agentos-pipeline = { workspace = true }

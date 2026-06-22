@@ -9,38 +9,90 @@ risk and trust may only RESTRICT, never relax, the deterministic policy floor. A
 policy `deny` is TERMINAL — no (risk, trust) combination can upgrade it. This is
 checked explicitly by the `floor_invariant`-marked property sweep.
 
-Phase-1 scope (D-13): `allow` and `deny` are realized end-to-end; `sandbox` is in
-the Outcome vocabulary (so the contract is stable) but its enforcement lands in
-Phase 3 — the SDK only acts on allow (run) / deny (block) this phase.
+Phase-3 scope: the full graduated spectrum is mapped here — `GraduatedThresholds`
+sets the policy-driven risk bands, the restrictiveness ladder orders all outcomes,
+and a conservative (hardening-only) trust band lets low trust tighten one risk
+step while trust never relaxes. The deterministic policy floor remains a strict
+lower bound on the result.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from agentos_contract import Outcome
-
-# Risk thresholds on a policy-ALLOWED action (the band, applied only above the floor).
-_DENY_THRESHOLD = 0.7   # high risk on an allowed action -> block
-_SANDBOX_THRESHOLD = 0.4  # mid risk -> sandbox vocabulary (enforcement is Phase 3)
+from agentos_contract.policy_io import OUTCOME_RESTRICTIVENESS as _RANK
 
 
-def graduated_response(policy_outcome: Outcome, risk_score: float, trust: float) -> Outcome:
+@dataclass(frozen=True)
+class GraduatedThresholds:
+    """Policy-driven graduated thresholds (POL-06). Defaults preserve the Phase-1 risk
+    bands (sandbox at 0.4, deny at 0.7) and realize the TRST-02 trust band as
+    conservative hardening-only (low trust tightens; trust never relaxes risk)."""
+
+    sandbox_at: float = 0.4
+    deny_at: float = 0.7
+    trust_harden_at: float = 0.2   # trust <= this -> tighten one risk step (TRST-02, conservative)
+
+    def __post_init__(self) -> None:
+        if not (0.0 <= self.sandbox_at <= self.deny_at <= 1.0):
+            raise ValueError(
+                "GraduatedThresholds require 0.0 <= sandbox_at <= deny_at <= 1.0, "
+                f"got sandbox_at={self.sandbox_at}, deny_at={self.deny_at}"
+            )
+        if not (0.0 <= self.trust_harden_at <= 1.0):
+            raise ValueError(
+                f"GraduatedThresholds require 0.0 <= trust_harden_at <= 1.0, got {self.trust_harden_at}"
+            )
+
+
+# Restrictiveness ladder for the floor clamp (higher = more restrictive; `_RANK`
+# above): the graduated stage NEVER returns a result less restrictive than the
+# policy floor. Single source of truth since Slice 3: the D4 contract's
+# OUTCOME_RESTRICTIVENESS, imported as _RANK.
+# Low trust tightens one step, keeping a human in the loop: a mid-risk sandbox
+# becomes require_approval (not a hard deny) — still strictly more restrictive
+# by _RANK, so every floor/monotonicity invariant holds.
+_HARDEN_NEXT: dict[Outcome, Outcome] = {
+    Outcome.allow: Outcome.sandbox,
+    Outcome.sandbox: Outcome.require_approval,
+    Outcome.deny: Outcome.deny,
+}
+
+
+def _more_restrictive(a: Outcome, b: Outcome) -> Outcome:
+    return a if _RANK[a] >= _RANK[b] else b
+
+
+def _risk_to_outcome(risk_score: float, t: GraduatedThresholds) -> Outcome:
+    if risk_score >= t.deny_at:
+        return Outcome.deny
+    if risk_score >= t.sandbox_at:
+        return Outcome.sandbox
+    return Outcome.allow
+
+
+def _apply_trust_band(base: Outcome, trust: float, t: GraduatedThresholds) -> Outcome:
+    """TRST-02: trust modulates WITHIN a band. Conservative default = hardening-only —
+    low trust (<= trust_harden_at) tightens the risk outcome by one step; trust
+    NEVER relaxes (defends Pitfall 10 trust-farming) and never crosses the deny ceiling."""
+    if trust <= t.trust_harden_at:
+        return _HARDEN_NEXT.get(base, base)
+    return base
+
+
+def graduated_response(
+    policy_outcome: Outcome,
+    risk_score: float,
+    trust: float,
+    thresholds: GraduatedThresholds = GraduatedThresholds(),
+) -> Outcome:
     """Map {policy, risk, trust} to one outcome, never relaxing the policy floor.
 
-    Args:
-        policy_outcome: the deterministic OPA floor (the authoritative signal).
-        risk_score: advisory 0–1 risk from the inline detector (may only restrict).
-        trust: advisory 0–1 agent trust (modulates WITHIN the band; never flips deny).
-
-    Returns:
-        The graduated Outcome — equal to or more restrictive than the policy floor.
+    INVARIANT (POL-05/TRST-02): the result is never LESS restrictive than
+    `policy_outcome`; a policy `deny` is terminal; risk/trust may only RESTRICT.
     """
-    # FLOOR: a policy deny is terminal — nothing below can upgrade it (POL-05/TRST-02).
     if policy_outcome == Outcome.deny:
-        return Outcome.deny
-    # Policy allowed -> risk/trust may only move DOWN the spectrum.
-    if risk_score >= _DENY_THRESHOLD:
-        return Outcome.deny
-    if risk_score >= _SANDBOX_THRESHOLD:
-        return Outcome.sandbox  # vocabulary present; Phase 1 realizes allow+deny (D-13)
-    # Trust modulates WITHIN the band (TRST-01) but a policy allow with low risk stays allow.
-    return Outcome.allow
+        return Outcome.deny  # terminal floor (POL-05)
+    risk_outcome = _apply_trust_band(_risk_to_outcome(risk_score, thresholds), trust, thresholds)
+    return _more_restrictive(policy_outcome, risk_outcome)

@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     DateTime,
     Float,
     String,
@@ -54,8 +55,8 @@ class AuditRecord(Base):
 
     `seq` is strictly monotonic and is COVERED by `record_hash` (Pitfall 8) —
     ordering derives from `seq`, never from `created_at`. `prev_hash` is NULL
-    only for the genesis record. `policy_version` is deferred to Phase 4
-    (AUD-03): it lives nullable inside `body`, NOT as a column.
+    only for the genesis record. `policy_version` lives nullable inside `body`,
+    NOT as a column (populated from Phase 3 Slice 3).
     """
 
     __tablename__ = "audit_record"
@@ -69,4 +70,86 @@ class AuditRecord(Base):
     body: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ApprovalRequest(Base):
+    """A parked `require_approval` action awaiting human resolution (POL-07).
+
+    `context` is the action payload REDACTED through the audit redactor BEFORE
+    the row is created (fail-closed: unclassifiable payload -> no row). `status`
+    transitions (pending -> approved | denied | timed_out) are constrained at
+    the ApprovalStore layer — the single writer — not by a DB CHECK, so the
+    column stays a plain string on every backend (D-14).
+
+    Datetimes are stored UTC-naive (SQLite drops tz offsets); the ApprovalStore
+    normalizes on write and re-attaches UTC on read.
+    """
+
+    __tablename__ = "approval_request"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    action_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    action_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    target: Mapped[str] = mapped_column(Text, nullable=False)
+    context: Mapped[dict] = mapped_column(JSON, nullable=False)   # REDACTED payload
+    reasons: Mapped[list] = mapped_column(JSON, nullable=False)   # Decision.reasons dump
+    risk_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    trust_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    resolver: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class TemporaryException(Base):
+    """A human-ratified, time-boxed allow scoped to (agent_id, principle_ref) — POL-13.
+
+    Granted ONLY via human approval resolution (never authorable, never
+    interpreter-grantable). Auto-revoke is a READ-TIME expiry check
+    (`expires_at > now()` in the lookup query) — no background job; `revoked`
+    is the explicit kill switch.
+    """
+
+    __tablename__ = "temporary_exception"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    principle_ref: Mapped[str] = mapped_column(String(64), nullable=False)
+    granted_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    approval_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class GovernanceReview(Base):
+    """An async, NON-blocking review of an executed action (POL-14).
+
+    Opened when the outcome is `governance_review` (or any fired principle's
+    effect was — the obligation survives risk escalation); the action proceeds
+    without waiting. `status` is open|closed, constrained at the store layer.
+    """
+
+    __tablename__ = "governance_review"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    action_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
+    opened_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )

@@ -2,11 +2,12 @@
 
 The probe: an `http_get` whose target host is NOT allowlisted and whose fetched body
 carries an injected exfil directive to that same non-allowlisted host. The AUTHORITATIVE
-block is the deterministic egress-allowlist Rego floor — NOT the detector. This gate
-proves exactly that:
+block is the deterministic constitution floor (principle 1.1, egress allowlist) — NOT
+the detector. This gate proves exactly that:
 
-  - WITH the principle present, the probe is DENIED with `egress_allowlist_violation`.
-  - With the principle REMOVED (`pipeline_without_principle`), the SAME probe is ALLOWED.
+  - WITH the principle present, the probe is DENIED with principle 1.1 cited.
+  - With the principle REMOVED (`pipeline_without_principle` — since Slice 3 a
+    GENUINELY RECOMPILED constitution without 1.1), the SAME probe is ALLOWED.
 
 So the lock bites two ways: delete the principle and the WITH-principle deny test turns
 RED; re-add blocking somewhere other than the principle and the WITHOUT-principle allow
@@ -74,8 +75,12 @@ def test_exfil_injection_is_denied(pipeline_with_principle) -> None:
     """WITH the egress principle: the floor blocks the exfil probe (the lock)."""
     action = make_http_get(url=_EXFIL_URL, fetched_content=_INJECTED_BODY)
     decision = _run(pipeline_with_principle, action)
-    assert decision.outcome == Outcome.deny  # the egress floor blocks egress
-    assert any(r.code == "egress_allowlist_violation" for r in decision.reasons)
+    assert decision.outcome == Outcome.deny  # the constitution floor blocks egress
+    # The deny cites the fired egress principle (1.1) — deny WITH principle.
+    assert any(
+        r.code == "constitution_principle_fired" and r.principle_ref == "1.1"
+        for r in decision.reasons
+    )
 
 
 @pytest.mark.regression_lock

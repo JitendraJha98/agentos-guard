@@ -7,6 +7,8 @@ Covers the <behavior> cases in 01-01-PLAN Task 2:
 - RiskFinding rejects raw payload in `matched` and is frozen
 """
 
+from datetime import datetime, timezone
+
 import pytest
 from pydantic import ValidationError
 
@@ -17,6 +19,7 @@ from agentos_contract import (
     Outcome,
     Reason,
     RiskFinding,
+    SideEffect,
 )
 
 
@@ -47,16 +50,17 @@ def test_decision_json_roundtrip_preserves_reasons():
         action_id="11111111-1111-1111-1111-111111111111",
         outcome=Outcome.deny,
         reasons=[
-            Reason(stage="policy", code="egress_allowlist_violation",
-                   policy_id="egress.allow", detail="host not in allowlist"),
+            Reason(stage="policy", code="constitution_principle_fired",
+                   policy_id="constitution.1.1", principle_ref="1.1",
+                   detail="host not in allowlist"),
             Reason(stage="graduated", code="deny"),
         ],
     )
     restored = Decision.model_validate_json(decision.model_dump_json())
     assert restored == decision
     assert restored.reasons[0].stage == "policy"
-    assert restored.reasons[0].code == "egress_allowlist_violation"
-    assert restored.reasons[0].policy_id == "egress.allow"
+    assert restored.reasons[0].code == "constitution_principle_fired"
+    assert restored.reasons[0].policy_id == "constitution.1.1"
 
 
 def test_decision_rejects_out_of_range_risk_score():
@@ -107,3 +111,178 @@ def test_risk_finding_is_frozen():
     )
     with pytest.raises(ValidationError):
         finding.risk_score = 0.9
+
+
+def test_outcome_has_full_phase3_spectrum():
+    names = {o.value for o in Outcome}
+    assert names == {
+        "allow", "warn", "sandbox", "require_consensus",
+        "require_approval", "temporary_exception", "governance_review", "deny",
+    }
+
+
+def test_side_effect_members():
+    assert {s.value for s in SideEffect} == {
+        "notify", "additional_monitoring", "risk_flag", "create_incident",
+    }
+
+
+def test_reason_carries_explainable_denial_fields():
+    r = Reason(
+        stage="policy", code="pii_egress_violation", detail="PII to non-allowlisted host",
+        policy_id="constitution.3_2", principle_ref="3.2",
+        rationale="Principle 3.2 forbids sending user PII to unapproved hosts.",
+        evidence={"matched": "email_address", "host": "attacker.example"},
+    )
+    restored = Reason.model_validate_json(r.model_dump_json())
+    assert restored == r
+    assert restored.principle_ref == "3.2"
+    assert restored.evidence == {"matched": "email_address", "host": "attacker.example"}
+
+
+def test_reason_rejects_oversized_principle_ref():
+    # principle_ref is audit-bound and live-model-controlled (interpreter advisory):
+    # bound it like the other Reason string fields. Real refs are short ("3.2").
+    with pytest.raises(ValidationError):
+        Reason(stage="interpreter", code="interpreter_advisory", principle_ref="x" * 65)
+
+
+def test_decision_full_phase3_shape_roundtrip():
+    d = Decision(
+        action_id="11111111-1111-1111-1111-111111111111",
+        outcome=Outcome.temporary_exception,
+        side_effects=[SideEffect.notify, SideEffect.additional_monitoring],
+        inferred_intent="DATA_DESTRUCTION",
+        remediation=["Request approval via the dashboard", "Narrow the tool scope"],
+        constitution_version="sha256:abc",
+        policy_version="sha256:def",
+        expires_at=datetime(2026, 6, 11, 12, 0, tzinfo=timezone.utc),
+    )
+    restored = Decision.model_validate_json(d.model_dump_json())
+    assert restored == d
+    assert restored.side_effects == [SideEffect.notify, SideEffect.additional_monitoring]
+    assert restored.inferred_intent == "DATA_DESTRUCTION"
+
+
+def test_decision_defaults_are_empty_and_still_forbid_unknown():
+    d = Decision(action_id="11111111-1111-1111-1111-111111111111", outcome=Outcome.allow)
+    assert d.side_effects == [] and d.remediation == []
+    assert d.inferred_intent is None and d.policy_version is None and d.expires_at is None
+    with pytest.raises(ValidationError):
+        Decision(action_id="11111111-1111-1111-1111-111111111111", outcome=Outcome.allow, mystery=1)
+
+
+def test_reason_small_evidence_roundtrips():
+    r = Reason(stage="risk", code="pii_egress", evidence={"matched": "email_address", "host": "api.example.com"})
+    assert Reason.model_validate_json(r.model_dump_json()) == r
+
+
+def test_reason_rejects_oversized_evidence():
+    # evidence flows into the un-redactable, hash-covered audit log (T-01-02).
+    with pytest.raises(ValidationError):
+        Reason(stage="risk", code="pii_egress", evidence={"payload": "a" * 2000})
+
+
+def test_reason_rejects_long_rationale():
+    with pytest.raises(ValidationError):
+        Reason(stage="policy", code="x", rationale="a" * 600)
+
+
+def test_reason_rejects_unknown_field():
+    with pytest.raises(ValidationError):
+        Reason(stage="x", code="y", bogus=1)
+
+
+# --- H2: evidence must be JSON-native and URL-free (audit hash safety) ---------
+
+
+def test_reason_rejects_non_json_native_evidence():
+    # A UUID validates under a lenient default=str measure but CRASHES the audit
+    # writer's strict canonical_json at hash time — reject at the contract.
+    from uuid import uuid4
+
+    with pytest.raises(ValidationError):
+        Reason(stage="risk", code="x", evidence={"id": uuid4()})
+
+
+def test_reason_rejects_url_in_evidence_value():
+    # Full URLs carry query-string secrets; host-only is the audit convention.
+    with pytest.raises(ValidationError):
+        Reason(stage="risk", code="x", evidence={"u": "https://x.example/p?k=s"})
+
+
+def test_reason_rejects_url_in_nested_evidence():
+    with pytest.raises(ValidationError):
+        Reason(stage="risk", code="x", evidence={"a": {"b": "http://x"}})
+
+
+def test_reason_plain_small_evidence_still_ok():
+    r = Reason(stage="risk", code="x", evidence={"host": "api.example.com", "n": 3})
+    assert r.evidence == {"host": "api.example.com", "n": 3}
+
+
+# --- H6: bounds on audit-bound Decision/Reason fields --------------------------
+
+
+def test_reason_rejects_long_detail():
+    with pytest.raises(ValidationError):
+        Reason(stage="policy", code="x", detail="a" * 513)
+
+
+def test_decision_rejects_long_inferred_intent():
+    with pytest.raises(ValidationError):
+        Decision(
+            action_id="11111111-1111-1111-1111-111111111111",
+            outcome=Outcome.allow,
+            inferred_intent="a" * 65,
+        )
+
+
+def test_decision_rejects_too_many_remediation_items():
+    with pytest.raises(ValidationError):
+        Decision(
+            action_id="11111111-1111-1111-1111-111111111111",
+            outcome=Outcome.allow,
+            remediation=[f"step {i}" for i in range(11)],
+        )
+
+
+def test_decision_rejects_oversized_remediation_item():
+    with pytest.raises(ValidationError):
+        Decision(
+            action_id="11111111-1111-1111-1111-111111111111",
+            outcome=Outcome.allow,
+            remediation=["a" * 257],
+        )
+
+
+# --- Slice 4: guardrail finding categories (SEC-02) ----------------------------
+
+
+def test_risk_finding_accepts_guardrail_categories():
+    for category in ("pii", "unsafe_content", "format_violation"):
+        finding = RiskFinding(scorer="g.v1", category=category, risk_score=0.2)
+        assert finding.category == category
+
+
+def test_risk_finding_rejects_unknown_category():
+    with pytest.raises(ValidationError):
+        RiskFinding(scorer="g.v1", category="bogus", risk_score=0.2)
+
+
+def test_decision_rejects_tz_naive_expires_at():
+    with pytest.raises(ValidationError):
+        Decision(
+            action_id="11111111-1111-1111-1111-111111111111",
+            outcome=Outcome.allow,
+            expires_at=datetime(2026, 6, 11, 12, 0),  # naive — no tzinfo
+        )
+
+
+def test_decision_accepts_tz_aware_expires_at():
+    d = Decision(
+        action_id="11111111-1111-1111-1111-111111111111",
+        outcome=Outcome.allow,
+        expires_at=datetime(2026, 6, 11, 12, 0, tzinfo=timezone.utc),
+    )
+    assert d.expires_at.tzinfo is not None

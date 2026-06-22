@@ -33,7 +33,7 @@ self-hostable control plane.
 Most agent-governance tools — including Microsoft's Agent Governance Toolkit — run one reflex:
 
 ```
-Distrust  →  Block  →  Log          (static rules · binary verdict · append-only log)
+Distrust  →  Block  →  Log          (deterministic rules · no semantic layer · per-action only)
 ```
 
 That's a firewall bolted in front of a reasoning system. agentos-guard runs a different reflex:
@@ -73,32 +73,36 @@ flowchart LR
 
 ## 🚀 Why agentos-guard — the seven pillars
 
-Each pillar names a weakness in the static/binary model and the answer. **None requires blockchain
-or tokens** ([ADR-0007](docs/architecture/adr/0007-no-crypto-economics-in-core.md)).
+Each pillar names a weakness in the deterministic-only model and the answer. **None requires
+blockchain or tokens** ([ADR-0007](docs/architecture/adr/0007-no-crypto-economics-in-core.md)).
 
 | # | Instead of… | agentos-guard gives you | |
 |---|-------------|--------------------------|---|
-| 1 | static YAML rules | a **living semantic constitution** agents can query | [04](docs/architecture/04-constitution-and-policy.md) |
-| 2 | binary allow/deny | **graduated response** — allow · warn · sandbox · consensus · approval · time-boxed exception · async review · deny + composable side-effects | [04](docs/architecture/04-constitution-and-policy.md) |
-| 3 | action-string matching | **intent-based policy** — catches `rename_then_drop` & novel sequences | [05](docs/architecture/05-security-and-runtime.md) |
+| 1 | deterministic rules with no semantic layer ("actions, not reasoning") | a **living semantic constitution** agents can query | [04](docs/architecture/04-constitution-and-policy.md) |
+| 2 | a three-outcome ceiling (allow / deny / require-approval) | **graduated response** — allow · warn · sandbox · consensus · approval · time-boxed exception · async review · deny + composable side-effects | [04](docs/architecture/04-constitution-and-policy.md) |
+| 3 | per-action, stateless evaluation | **intent-based policy** — correlates across actions to catch `rename_then_drop` & novel sequences | [05](docs/architecture/05-security-and-runtime.md) |
 | 4 | per-agent isolation | **cross-agent permission calculus** — catches the confused-deputy in delegation | [06](docs/architecture/06-identity-trust-discovery.md) |
 | 5 | `GovernanceDenied: rule X` | **explainable denials with remediation paths** | [02](docs/architecture/02-domain-model.md) |
-| 6 | offline pre-deploy red-team | a **CI-gating** red-team that breaks the build + self-play | [08](docs/architecture/08-testing-and-redteam.md) |
-| 7 | append-only "tamper-evident" logs | **provable** evidence: provenance → Merkle → zero-knowledge proofs | [07](docs/architecture/07-audit-and-compliance.md) |
+| 6 | a one-shot red-team CLI scan | a **CI-gating** red-team that breaks the build + self-play | [08](docs/architecture/08-testing-and-redteam.md) |
+| 7 | raw, unredacted audit of attempts | **provable** evidence: fail-closed redaction + provenance → Merkle → zero-knowledge proofs | [07](docs/architecture/07-audit-and-compliance.md) |
 
-## 🆚 vs. Microsoft AGT (honest)
+## 🆚 vs. Microsoft AGT (honest — verified 2026-06-10, AGT v4.1.0)
 
 | Dimension | AGT / RAMPART | agentos-guard |
 |-----------|---------------|---------------|
-| Policy | Static YAML, string match | Semantic constitution + intent reasoning |
-| Enforcement | Allow / deny | Six graduated outcomes |
+| Policy | Deterministic only — no semantic layer ("actions, not reasoning") | Semantic constitution + intent reasoning over a deterministic OPA floor |
+| Cross-action intent | None — per-action, stateless | Sequence/lineage correlation catches `rename_then_drop` |
+| Enforcement | allow / deny / require-approval | Eight graduated outcomes + composable side-effects |
+| Memory governance | Admitted gap (their `LIMITATIONS.md`) | Memory access intercepted & governed |
 | Denials | Rule id | Cited principle + evidence + remediation |
-| Red-team | Offline, pre-deploy | Continuous, **gates CI**, self-play |
-| Audit | Append-only log | Provenance now → Merkle → ZK proofs |
+| Red-team | CLI scan | Continuous, **gates CI**, self-play |
+| Audit | Merkle-chained, but raw unredacted parameters | Fail-closed redaction + provenance → Merkle → ZK proofs |
 
-We're inspired by AGT and aim to surpass it — and we say where we are: Phase 1 already
-*out-features* AGT on graduated/semantic/CI-gating; breadth of detectors and adapters is where we
-reach parity as the roadmap lands. Full scorecard →
+We're inspired by AGT and positioned as **the semantic-judgment and memory-governance layer that
+deterministic enforcers — by their own docs — don't provide**. And we say where we are: AGT leads
+today on framework breadth (19+ integrations), language SDKs (5), SPIFFE/mTLS identity, sandboxing,
+and its MCP gateway — those land across our roadmap. AGT ships monthly, so this comparison is
+re-verified each phase. Full scorecard →
 [`30-comparison-agt.md`](docs/architecture/30-comparison-agt.md).
 
 ## 📦 Project status

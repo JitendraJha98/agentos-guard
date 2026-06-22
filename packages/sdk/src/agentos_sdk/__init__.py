@@ -13,7 +13,13 @@ from agentos_sdk.coverage import (
     covers,
     verify_coverage,
 )
-from agentos_sdk.enforce import GovernanceDenied, format_reasons, governed_call
+from agentos_sdk.enforce import (
+    ApprovalCoordinator,
+    GovernanceDenied,
+    SideEffectDispatcher,
+    format_reasons,
+    governed_call,
+)
 from agentos_sdk.middleware import GovernanceMiddleware
 from agentos_sdk.normalize import (
     normalize_action,
@@ -41,10 +47,12 @@ __all__ = [
     "governed_memory_access",
     "governed_mcp_call",
     "governed_delegation",
-    # shared enforcement core
+    # shared enforcement core (the one outcome map + its injected seams)
     "governed_call",
     "GovernanceDenied",
     "format_reasons",
+    "ApprovalCoordinator",
+    "SideEffectDispatcher",
     # interception coverage (INT-06)
     "covers",
     "covered_types",

@@ -113,3 +113,46 @@ def test_delegation_deny_does_not_dispatch_subagent() -> None:
             )
         )
     assert op.ran == 0  # the sub-agent was never dispatched
+
+
+# --- Outcome map without a coordinator: blocking outcomes fail CLOSED (6b-2) ------
+# (The full coordinator-wired map lives in tests/unit/test_outcome_enforcement.py.)
+
+
+def test_sandbox_blocks_fail_closed_and_does_not_execute() -> None:
+    # sandbox escalates to the approval path; with NO coordinator it must NOT
+    # silently run — GovernanceDenied, fail-closed.
+    op = _Op()
+    with pytest.raises(GovernanceDenied) as exc:
+        asyncio.run(
+            governed_memory_access(
+                _FakePipeline(Outcome.sandbox), TOKEN,
+                operation="write", key="k", value="v", run=op,
+            )
+        )
+    assert op.ran == 0  # no side effect under the interim fail-closed posture
+    assert exc.value.decision.outcome == Outcome.sandbox
+
+
+def test_warn_executes_with_advisory_reasons() -> None:
+    # warn runs the operation; the advisory reasons ride on the Decision.
+    op = _Op()
+    result = asyncio.run(
+        governed_mcp_call(
+            _FakePipeline(Outcome.warn), TOKEN,
+            server="github", tool="create_issue", args="x", run=op,
+        )
+    )
+    assert op.ran == 1 and result == "did-the-thing"
+
+
+def test_governance_review_executes_nonblocking() -> None:
+    # governance_review proceeds; the async review is non-blocking by definition.
+    op = _Op()
+    result = asyncio.run(
+        governed_memory_access(
+            _FakePipeline(Outcome.governance_review), TOKEN,
+            operation="read", key="k", value="", run=op,
+        )
+    )
+    assert op.ran == 1 and result == "did-the-thing"

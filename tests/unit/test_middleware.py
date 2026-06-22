@@ -74,7 +74,7 @@ def _allow_decision() -> Decision:
     return Decision(
         action_id=uuid4(),
         outcome=Outcome.allow,
-        reasons=[Reason(stage="policy", code="egress_allowlisted", policy_id="egress.allow")],
+        reasons=[Reason(stage="policy", code="no_principle_matched")],
     )
 
 
@@ -87,9 +87,10 @@ def _deny_decision() -> Decision:
         reasons=[
             Reason(
                 stage="policy",
-                code="egress_allowlist_violation",
-                policy_id="egress.allow",
-                detail="host not in allowlist",
+                code="constitution_principle_fired",
+                policy_id="constitution.1.1",
+                principle_ref="1.1",
+                rationale="Egress allowlist",
             )
         ],
     )
@@ -125,7 +126,50 @@ def test_deny_blocks_handler_and_returns_tool_message() -> None:
     # The blocking message is correlated back to the originating tool call.
     assert result.tool_call_id == "call_deny_42"
     # The fired reason is surfaced (machine-readable code present in the message).
-    assert "egress_allowlist_violation" in result.content
+    assert "constitution_principle_fired" in result.content
+
+
+# --- Outcome map without a coordinator: blocking outcomes fail CLOSED (6b-2) ------
+# (The full coordinator-wired map lives in tests/unit/test_outcome_enforcement.py.)
+
+
+def _outcome_decision(outcome: Outcome) -> Decision:
+    from uuid import uuid4
+
+    return Decision(
+        action_id=uuid4(),
+        outcome=outcome,
+        reasons=[Reason(stage="graduated", code=outcome.value)],
+    )
+
+
+def test_sandbox_blocks_tool_fail_closed() -> None:
+    # sandbox escalates to the approval path; with NO coordinator the tool must NOT run.
+    mw = GovernanceMiddleware(_FakePipeline(_outcome_decision(Outcome.sandbox)), TOKEN)
+    handler = _SpyHandler()
+    result = asyncio.run(mw.awrap_tool_call(_request(call_id="call_sbx_7"), handler))
+    assert handler.calls == 0  # no egress under the interim fail-closed posture
+    assert isinstance(result, ToolMessage)
+    assert result.tool_call_id == "call_sbx_7"
+    assert "Blocked by agentos-guard" in result.content
+
+
+def test_warn_executes_tool() -> None:
+    mw = GovernanceMiddleware(_FakePipeline(_outcome_decision(Outcome.warn)), TOKEN)
+    handler = _SpyHandler()
+    result = asyncio.run(mw.awrap_tool_call(_request(), handler))
+    assert handler.calls == 1
+    assert result.content == "tool ran"
+
+
+def test_governance_review_executes_tool() -> None:
+    mw = GovernanceMiddleware(
+        _FakePipeline(_outcome_decision(Outcome.governance_review)), TOKEN
+    )
+    handler = _SpyHandler()
+    result = asyncio.run(mw.awrap_tool_call(_request(), handler))
+    assert handler.calls == 1
+    assert result.content == "tool ran"
 
 
 def test_middleware_does_not_spin_a_nested_event_loop() -> None:
