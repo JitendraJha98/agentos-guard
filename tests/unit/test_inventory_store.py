@@ -125,3 +125,33 @@ def test_enrich_from_audit_observes_class_level_and_skips_events(store) -> None:
 
     rows = {(r.kind, r.name, r.source) for r in inv.get_inventory("a")}
     assert rows == {("tool", "tool", "observed"), ("delegation", "delegation", "observed")}
+
+
+def test_register_with_manifest_writes_declared_inventory(store) -> None:
+    """A registration manifest declares authoritative inventory rows (DISC-01)."""
+    from agentos_controlplane.inventory import InventoryStore
+    from agentos_controlplane.registry import Registry
+
+    inv = InventoryStore(store)
+    token = Registry(store, inventory=inv).register(
+        "a", manifest={"tools": ["http_get"], "memories": ["m1"]}
+    )
+    assert token  # a valid issued identity token
+
+    rows = {(r.kind, r.name, r.source) for r in inv.get_inventory("a")}
+    assert rows == {("tool", "http_get", "declared"), ("memory", "m1", "declared")}
+
+
+def test_register_backward_compatible_no_inventory_no_manifest(store) -> None:
+    """register(agent_id) with no inventory/manifest still issues a token and writes no components."""
+    from agentos_controlplane.inventory import InventoryStore
+    from agentos_controlplane.registry import Registry
+
+    token = Registry(store).register("b")
+    assert token
+
+    # Even register(agent_id, trust_score) stays unchanged (no manifest arg required).
+    token2 = Registry(store).register("c", 0.9)
+    assert token2
+
+    assert InventoryStore(store).list_inventory() == []
