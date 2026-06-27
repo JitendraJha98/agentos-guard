@@ -29,6 +29,15 @@ from agentos_controlplane.checkpoint import (
 )
 from agentos_controlplane.store.models import AuditRecord, ChainCheckpoint
 
+# AUD-02 (action->decision->fired-principles->outcome linkage) + AUD-03 (policy/constitution
+# version provenance): every DECISION record body must carry these keys. Event records carry a
+# "kind" instead and are exempt. Keys must be PRESENT (a value may legitimately be null — e.g. an
+# identity short-circuit or fail-safe decision never ran the policy engine, so its version is null);
+# the check enforces the schema, catching a future writer regression that drops a field.
+_REQUIRED_DECISION_KEYS = frozenset(
+    {"action_id", "agent_id", "action_type", "outcome", "reasons", "constitution_version", "policy_version"}
+)
+
 
 @dataclass(frozen=True)
 class Violation:
@@ -92,6 +101,24 @@ def verify_chain(
                 ),
                 sigs,
             )
+        # (3b) decision-record completeness (AUD-02 linkage + AUD-03 version provenance).
+        # Event records carry a 'kind' and are exempt; a decision record must link
+        # action -> decision -> fired-principles -> outcome AND carry the version keys (a value
+        # may be null — e.g. an identity short-circuit never ran the engine — but the key must
+        # be present). Catches a future writer regression that drops a required field.
+        if "kind" not in body:
+            missing = _REQUIRED_DECISION_KEYS - body.keys()
+            if missing:
+                return VerifyResult(
+                    False,
+                    n,
+                    Violation(
+                        row.seq,
+                        "decision_completeness",
+                        f"decision record missing required key(s): {sorted(missing)}",
+                    ),
+                    sigs,
+                )
         # (4) record_hash recompute — THE retroactive-edit detector
         canonical = canonical_json(body)
         recomputed = hashlib.sha256(canonical).hexdigest()

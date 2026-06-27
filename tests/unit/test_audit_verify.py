@@ -16,7 +16,7 @@ import hashlib
 
 from sqlalchemy import create_engine, select, update
 
-from agentos_contract import ActionType, AgentAction, Decision, Outcome
+from agentos_contract import ActionType, AgentAction, Decision, Outcome, Reason
 from agentos_controlplane.audit import AuditWriter, canonical_json
 from agentos_controlplane.audit_verify import verify_chain
 from agentos_controlplane.identity_engine import IdentityEngine
@@ -227,3 +227,65 @@ def test_signatures_checked_zero_when_all_rows_unsigned():
     ).public_key_pem
     r = verify_chain(sf, public_key_pem=fake_pub)
     assert r.ok and r.records_checked == 1 and r.signatures_checked == 0
+
+
+def test_decision_record_missing_required_key_caught():
+    # AUD-02/03: drop a required decision key (no rehash needed — completeness is step 3b,
+    # before record_hash); the verifier flags decision_completeness at that seq.
+    sf, pub = _signed_chain()
+    with sf() as s:
+        row = s.scalars(select(AuditRecord).where(AuditRecord.seq == 1)).one()
+        body = dict(row.body)
+        del body["policy_version"]
+        s.execute(update(AuditRecord).where(AuditRecord.seq == 1).values(body=body))
+        s.commit()
+    r = verify_chain(sf, public_key_pem=pub)
+    assert not r.ok and r.violation.seq == 1 and r.violation.check == "decision_completeness"
+
+
+def test_event_record_is_exempt_from_decision_completeness():
+    # The append_event record (seq 3, carries 'kind') lacks action_id/outcome but must NOT be
+    # flagged — the clean signed chain (which includes that event) verifies cleanly.
+    sf, pub = _signed_chain()
+    with sf() as s:
+        ev = s.scalars(select(AuditRecord).where(AuditRecord.seq == 3)).one()
+        assert "kind" in ev.body and "outcome" not in ev.body  # it IS an event record
+    assert verify_chain(sf, public_key_pem=pub).ok
+
+
+def test_decision_body_carries_aud02_aud03_linkage():
+    # AUD-02 (action -> decision -> fired principle -> outcome) + AUD-03 (exact versions) are
+    # persisted in the hash-covered body of a real decision record.
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_all(engine)
+    sf = create_session_factory(engine)
+    eng = IdentityEngine(is_registered=lambda s: True, load_trust=lambda s: 0.5)
+    w = AuditWriter(sf, signer=eng)
+    a = AgentAction(
+        agent_id="agent-7",
+        type=ActionType.tool_call,
+        target="drop_table",
+        payload={"url": "https://attacker.example"},
+    )
+    d = Decision(
+        action_id=a.id,
+        outcome=Outcome.deny,
+        reasons=[
+            Reason(
+                stage="policy",
+                code="constitution_principle_fired",
+                principle_ref="1.1",
+                rationale="egress not allowlisted",
+            )
+        ],
+        constitution_version="sha256:abc",
+        policy_version="sha256:def",
+    )
+    asyncio.run(w.append(a, d))
+    body = _row(sf, 0).body
+    assert body["action_id"] == str(a.id) and body["agent_id"] == "agent-7"   # AUD-02 link
+    assert body["outcome"] == "deny"                                          # AUD-02 outcome
+    assert any(r.get("principle_ref") == "1.1" for r in body["reasons"])       # AUD-02 fired principle
+    assert body["constitution_version"] == "sha256:abc"                       # AUD-03 version
+    assert body["policy_version"] == "sha256:def"
+    assert verify_chain(sf, public_key_pem=eng.public_key_pem).ok
