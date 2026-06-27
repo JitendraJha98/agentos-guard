@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from agentos_controlplane.approvals import AlreadyResolvedError, ApprovalStore
 from agentos_controlplane.auth import make_require_token, resolve_api_token
 from agentos_controlplane.killswitch import KillSwitchStore
-from agentos_controlplane.resources import ResourceStore, VersionConflict
+from agentos_controlplane.resources import ConstitutionError, ResourceStore, VersionConflict
 from agentos_controlplane.store.models import ApprovalRequest, GovernanceReview
 
 
@@ -155,6 +155,13 @@ class AbomIn(BaseModel):
     version: int | None = None
 
 
+class ConstitutionIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    name: str = Field(max_length=255)
+    source: dict  # the authored Constitution document (validated + compiled on write)
+
+
 def build_resource_router(resources: ResourceStore) -> APIRouter:
     """API-01 — declarative TrustProfile / Abom resources: validate (422), version (409), store."""
     router = APIRouter()
@@ -200,6 +207,40 @@ def build_resource_router(resources: ResourceStore) -> APIRouter:
             d = resources.put_abom(agent_id, components=body.components, expected_version=body.version)
         except VersionConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
+        return vars(d)
+
+    # ---- Constitution / Policy (compile-on-write, API-02) ----
+    @router.post("/constitutions")
+    def apply_constitution(body: ConstitutionIn) -> dict:
+        try:
+            con, pol = resources.apply_constitution(body.name, body.source)
+        except ConstitutionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        return {"constitution": vars(con), "policy_version": pol.constitution_version}
+
+    @router.get("/constitutions")
+    def list_constitutions() -> list[dict]:
+        return [vars(d) for d in resources.list_constitutions()]
+
+    @router.get("/constitutions/{version}")
+    def get_constitution(version: str) -> dict:
+        d = resources.get_constitution(version)
+        if d is None:
+            raise HTTPException(status_code=404, detail="unknown constitution")
+        return vars(d)
+
+    @router.get("/policies/latest")
+    def latest_policy() -> dict:
+        d = resources.get_latest_policy()
+        if d is None:
+            raise HTTPException(status_code=404, detail="no policy compiled yet")
+        return vars(d)
+
+    @router.get("/policies/{version}")
+    def get_policy(version: str) -> dict:
+        d = resources.get_policy(version)
+        if d is None:
+            raise HTTPException(status_code=404, detail="unknown policy")
         return vars(d)
 
     return router
