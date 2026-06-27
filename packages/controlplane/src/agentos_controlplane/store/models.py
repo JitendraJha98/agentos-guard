@@ -227,6 +227,45 @@ class TrustProfile(Base):
     __mapper_args__ = {"version_id_col": version}
 
 
+class ConstitutionResource(Base):
+    """Declarative Constitution resource (API-01/02). One row per applied version; `version` is the
+    content-hash constitution_version (idempotent apply). `source` is the authored document (JSON).
+
+    Class name is ConstitutionResource (NOT Constitution) so it never collides with the Pydantic
+    `agentos_constitution.Constitution` the compiler validates; the table is `constitution`."""
+
+    __tablename__ = "constitution"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    version: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)  # constitution_version
+    source: Mapped[dict] = mapped_column(JSON, nullable=False)  # the authored document, verbatim
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class PolicyResource(Base):
+    """The compile-on-write output for a Constitution version (API-02). Stores the Rego + the
+    reviewable YAML middle layer + graduated/lists/sequences metadata the engine consumes.
+
+    Persisted in the SAME transaction as its ConstitutionResource; keyed (unique) by
+    constitution_version so apply stays idempotent on the content-hash version."""
+
+    __tablename__ = "policy"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    constitution_version: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    yaml_policy: Mapped[str] = mapped_column(Text, nullable=False)
+    rego: Mapped[str] = mapped_column(Text, nullable=False)
+    graduated_config: Mapped[dict] = mapped_column(JSON, nullable=False)
+    lists: Mapped[dict] = mapped_column(JSON, nullable=False)
+    sequences: Mapped[list] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class Abom(Base):
     """Declarative Agent Bill of Materials resource (API-01 / ABOM-01 seed). Phase 5 only
     validates/versions/stores it; provenance + vuln-impact analysis are Phase 8/14. Keyed by
