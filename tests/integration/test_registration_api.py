@@ -17,7 +17,7 @@ from agentos_controlplane.api import create_app
 from agentos_controlplane.approvals import ApprovalStore
 from agentos_controlplane.audit import AuditWriter
 from agentos_controlplane.inventory import InventoryStore
-from agentos_controlplane.registry import Registry
+from agentos_controlplane.registry import DEFAULT_TRUST_SCORE, Registry
 from agentos_controlplane.store.engine import create_all, create_session_factory
 
 TOKEN = "test-token"
@@ -69,14 +69,16 @@ def test_register_declares_manifest_into_inventory(client) -> None:
     }
 
 
-def test_register_accepts_trust_score(client, store) -> None:
-    r = client.post("/agents/a/register", json={"trust_score": 0.9})
+def test_register_seeds_default_trust(client, store) -> None:
+    """Registration is not a self-grading channel: the server seeds DEFAULT_TRUST_SCORE."""
+    r = client.post("/agents/a/register", json={})
     assert r.status_code == 200, r.text
-    assert Registry(store).load_trust("a") == 0.9
+    assert Registry(store).load_trust("a") == DEFAULT_TRUST_SCORE
 
 
-def test_register_trust_score_out_of_bounds_is_422(client) -> None:
-    assert client.post("/agents/a/register", json={"trust_score": 2.0}).status_code == 422
+def test_register_rejects_self_asserted_trust_score(client) -> None:
+    """A caller cannot self-assert trust at enrollment — trust_score is not an accepted field (422)."""
+    assert client.post("/agents/a/register", json={"trust_score": 0.99}).status_code == 422
 
 
 def test_register_without_manifest_ok(client, store) -> None:

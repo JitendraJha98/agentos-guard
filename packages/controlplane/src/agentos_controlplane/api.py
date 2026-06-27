@@ -266,7 +266,10 @@ def build_inventory_router(inventory: InventoryStore) -> APIRouter:
 class RegisterIn(BaseModel):
     model_config = {"extra": "forbid"}
 
-    trust_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    # No trust_score: registration is not a self-grading channel. The shared enrollment token
+    # authenticates a legitimate enrollee, it does not authorize that enrollee to set its own
+    # reputation. New agents are seeded with the server-side DEFAULT_TRUST_SCORE; trust is graded only
+    # via the gated, operator-facing PUT /trust-profiles route.
     manifest: dict | None = None  # {tools: [...], prompts: [...], memories: [...]}
 
 
@@ -277,10 +280,7 @@ def build_registration_router(registry: Registry) -> APIRouter:
 
     @router.post("/agents/{agent_id}/register")
     def register_agent(agent_id: str, body: RegisterIn) -> dict:
-        kwargs = {}
-        if body.trust_score is not None:
-            kwargs["trust_score"] = body.trust_score
-        token = registry.register(agent_id, manifest=body.manifest, **kwargs)
+        token = registry.register(agent_id, manifest=body.manifest)
         return {"agent_id": agent_id, "token": token}
 
     return router

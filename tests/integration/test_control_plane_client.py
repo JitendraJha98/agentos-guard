@@ -97,6 +97,11 @@ def test_register_with_wrong_token_raises_401(app, store) -> None:
         bad.register("a")
 
 
+def test_register_does_not_expose_trust_score(client) -> None:
+    """Privilege fix: registration is not a self-grading channel — no trust_score kwarg."""
+    assert "trust_score" not in inspect.signature(client.register).parameters
+
+
 # ---- approvals (SDK-04) ----
 def _park_approval(store) -> str:
     """Park a pending ApprovalRequest directly in the store; return its id."""

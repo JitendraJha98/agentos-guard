@@ -43,12 +43,10 @@ class ControlPlaneClient:
         return resp.json() if resp.content else None
 
     # ---- SDK-02 self-registration ----
-    def register(
-        self, agent_id: str, *, trust_score: float | None = None, manifest: dict | None = None
-    ) -> str:
+    def register(self, agent_id: str, *, manifest: dict | None = None) -> str:
+        # No trust_score: registration is not a self-grading channel (the server seeds the default
+        # trust). Trust is graded only via the gated put_trust_profile() operator path.
         body: dict = {}
-        if trust_score is not None:
-            body["trust_score"] = trust_score
         if manifest is not None:
             body["manifest"] = manifest
         return self._request("POST", f"/agents/{agent_id}/register", json=body)["token"]
