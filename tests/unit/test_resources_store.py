@@ -9,13 +9,21 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy import create_engine
+from sqlalchemy.orm.exc import StaleDataError
+from sqlalchemy.pool import StaticPool
 
 from agentos_controlplane.store.engine import create_all, create_session_factory
 
 
 @pytest.fixture
 def store():
-    engine = create_engine("sqlite+pysqlite:///:memory:")
+    # StaticPool + check_same_thread=False: one shared in-memory DB across every
+    # session() so the concurrency tests can interleave two real sessions over it.
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
     create_all(engine)
     return create_session_factory(engine)
 
@@ -85,3 +93,87 @@ def test_abom_create_update_conflict_list(store) -> None:
     assert [d.agent_id for d in listed] == ["a", "b"]  # sorted
 
     assert rs.get_abom("missing") is None
+
+
+def test_trust_profile_concurrent_update_is_atomic(store) -> None:
+    """Two writers that read the SAME version and both commit: the SECOND must lose.
+
+    The optimistic guard must be enforced at the SQL layer (UPDATE ... WHERE version =
+    :expected), not by a Python read-then-compare — otherwise the documented Postgres
+    target (distinct connections, READ COMMITTED) silently drops the second write. We
+    interleave two real sessions to expose the lost update the in-Python check misses;
+    `version_id_col` makes the stale second commit raise StaleDataError.
+    """
+    from agentos_controlplane.resources import ResourceStore
+    from agentos_controlplane.store.models import TrustProfile
+
+    rs = ResourceStore(store)
+    rs.put_trust_profile("a", trust_score=0.5, band=None, expected_version=None)  # version 1
+
+    # Writer 1 and writer 2 both read version 1 before either commits.
+    s1, s2 = store(), store()
+    r1 = s1.get(TrustProfile, "a")
+    r2 = s2.get(TrustProfile, "a")
+    assert r1.version == r2.version == 1
+
+    r1.trust_score = 0.6
+    s1.commit()  # first write wins -> version 2
+
+    # Second writer still holds the stale version-1 image; its commit must conflict,
+    # not silently clobber writer 1's change.
+    r2.trust_score = 0.9
+    with pytest.raises(StaleDataError):
+        s2.commit()
+    s1.close()
+    s2.close()
+
+    assert rs.get_trust_profile("a").trust_score == 0.6  # writer 1 preserved
+
+
+def test_abom_concurrent_update_is_atomic(store) -> None:
+    """Same atomic-guard contract for the Abom resource (see trust_profile twin)."""
+    from agentos_controlplane.resources import ResourceStore
+    from agentos_controlplane.store.models import Abom
+
+    rs = ResourceStore(store)
+    rs.put_abom("a", components={"tools": ["t1"]}, expected_version=None)  # version 1
+
+    s1, s2 = store(), store()
+    r1 = s1.get(Abom, "a")
+    r2 = s2.get(Abom, "a")
+    assert r1.version == r2.version == 1
+
+    r1.components = {"tools": ["t2"]}
+    s1.commit()
+
+    r2.components = {"tools": ["evil"]}
+    with pytest.raises(StaleDataError):
+        s2.commit()
+    s1.close()
+    s2.close()
+
+    assert rs.get_abom("a").components == {"tools": ["t2"]}
+
+
+def test_put_maps_concurrent_conflict_to_version_conflict(store, monkeypatch) -> None:
+    """The store maps the atomic StaleDataError to its public VersionConflict.
+
+    A genuine concurrent stale write surfaces as StaleDataError on commit (not the
+    fast-fail equality check). put_* must translate that to VersionConflict so the API
+    still returns 409 for the concurrent case, not a 500.
+    """
+    from sqlalchemy.orm import Session
+
+    from agentos_controlplane.resources import ResourceStore, VersionConflict
+
+    rs = ResourceStore(store)
+    rs.put_trust_profile("a", trust_score=0.5, band=None, expected_version=None)  # version 1
+
+    # Simulate the race: the row passes the in-Python equality check (it still reads
+    # version 1) but a concurrent writer has advanced it, so the atomic commit fails.
+    def stale_commit(self):
+        raise StaleDataError("UPDATE matched 0 rows")
+
+    monkeypatch.setattr(Session, "commit", stale_commit)
+    with pytest.raises(VersionConflict):
+        rs.put_trust_profile("a", trust_score=0.6, band=None, expected_version=1)

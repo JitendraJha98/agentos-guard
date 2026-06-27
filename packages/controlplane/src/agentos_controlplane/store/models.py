@@ -206,7 +206,13 @@ class ChainCheckpoint(Base):
 class TrustProfile(Base):
     """Declarative TrustProfile resource (API-01). The current trust posture for an agent,
     versioned for optimistic concurrency. `band` is an optional graduated-response band config.
-    Keyed by agent_id (one current profile per agent); the Agent row keeps the seed trust_score."""
+    Keyed by agent_id (one current profile per agent); the Agent row keeps the seed trust_score.
+
+    `version` is SQLAlchemy's `version_id_col`: every UPDATE is emitted as
+    `... WHERE agent_id = :id AND version = :current`, the new version is computed by the ORM,
+    and a row already advanced by a concurrent writer makes the UPDATE match zero rows ->
+    StaleDataError. This is an atomic SQL-level guard that survives the Postgres target
+    (distinct connections, READ COMMITTED), not a non-atomic Python read-then-compare."""
 
     __tablename__ = "trust_profile"
 
@@ -218,11 +224,16 @@ class TrustProfile(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
+    __mapper_args__ = {"version_id_col": version}
+
 
 class Abom(Base):
     """Declarative Agent Bill of Materials resource (API-01 / ABOM-01 seed). Phase 5 only
     validates/versions/stores it; provenance + vuln-impact analysis are Phase 8/14. Keyed by
-    agent_id (current ABOM per agent), version-incremented for optimistic concurrency."""
+    agent_id (current ABOM per agent), version-incremented for optimistic concurrency.
+
+    `version` is the `version_id_col` (see TrustProfile): the atomic SQL-level optimistic guard
+    SQLAlchemy enforces on every UPDATE, raising StaleDataError on a concurrent stale write."""
 
     __tablename__ = "abom"
 
@@ -232,3 +243,5 @@ class Abom(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+    __mapper_args__ = {"version_id_col": version}

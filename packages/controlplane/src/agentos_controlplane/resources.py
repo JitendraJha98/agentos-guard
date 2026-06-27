@@ -4,6 +4,12 @@ Sync store over the shared session_factory (D-14 SQLite now, Postgres target). E
 resource is keyed by agent_id and carries a monotonic `version`; an update supplying a stale
 (or missing) version raises VersionConflict -> the API maps it to 409. A create supplies no
 version (or 0/1) and starts at version 1.
+
+The conflict guard is atomic at the SQL layer: `version` is the models' `version_id_col`, so
+SQLAlchemy emits every UPDATE as `... WHERE agent_id = :id AND version = :current`. A writer
+holding a stale image matches zero rows and the commit raises StaleDataError, mapped here to
+VersionConflict. This holds under the Postgres target (distinct connections, READ COMMITTED)
+where a non-atomic Python read-then-compare would silently drop the second write.
 """
 
 from __future__ import annotations
@@ -12,6 +18,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm.exc import StaleDataError
 
 from agentos_controlplane.store.models import Abom, TrustProfile
 
@@ -51,12 +58,17 @@ class ResourceStore:
                 row = TrustProfile(agent_id=agent_id, trust_score=trust_score, band=band, version=1)
                 s.add(row)
             else:
+                # Fast-fail an obviously stale/missing version without a DB round-trip; the
+                # version_id_col WHERE-guard is the authoritative atomic check on commit.
                 if expected_version != row.version:
                     raise VersionConflict(
                         f"trust_profile {agent_id}: expected version {row.version}, got {expected_version}"
                     )
-                row.trust_score, row.band, row.version = trust_score, band, row.version + 1
-            s.commit()
+                row.trust_score, row.band = trust_score, band  # version bumped by version_id_col
+            try:
+                s.commit()
+            except StaleDataError as exc:
+                raise VersionConflict(f"trust_profile {agent_id}: concurrent update") from exc
             return self._tp(row)
 
     def get_trust_profile(self, agent_id: str) -> TrustProfileData | None:
@@ -79,12 +91,17 @@ class ResourceStore:
                 row = Abom(agent_id=agent_id, components=components, version=1)
                 s.add(row)
             else:
+                # Fast-fail an obviously stale/missing version without a DB round-trip; the
+                # version_id_col WHERE-guard is the authoritative atomic check on commit.
                 if expected_version != row.version:
                     raise VersionConflict(
                         f"abom {agent_id}: expected version {row.version}, got {expected_version}"
                     )
-                row.components, row.version = components, row.version + 1
-            s.commit()
+                row.components = components  # version bumped by version_id_col
+            try:
+                s.commit()
+            except StaleDataError as exc:
+                raise VersionConflict(f"abom {agent_id}: concurrent update") from exc
             return self._abom(row)
 
     def get_abom(self, agent_id: str) -> AbomData | None:
