@@ -108,6 +108,27 @@ def build_dashboard_router(
             {"components": [vars(c) for c in components], "decisions": decisions},
         )
 
+    # --- DASH-02: list + resolve approvals ----------------------------------
+    @router.get("/dashboard/approvals", response_class=HTMLResponse)
+    def approvals_page(request: Request, _: bool = Depends(require_session)):
+        pending = approvals.list_requests("pending") if approvals is not None else []
+        return _TEMPLATES.TemplateResponse(
+            request, "approvals.html", {"approvals": [_approval_row(a) for a in pending]}
+        )
+
+    @router.post("/dashboard/approvals/{approval_id}/resolve")
+    async def resolve_approval(
+        approval_id: str,
+        _: bool = Depends(require_session),
+        decision: str = Form(...),
+        resolver: str = Form("operator"),
+    ):
+        # SAME ApprovalStore.resolve the JSON API calls (no behavior drift).
+        await approvals.resolve(
+            UUID(approval_id), approved=(decision == "approve"), resolver=resolver
+        )
+        return RedirectResponse("/dashboard/approvals", status_code=303)
+
     return router
 
 

@@ -152,3 +152,80 @@ def test_dashboard_renders_inventory_and_recent_decisions():
     assert "http_get" in resp.text
     assert "agent-a" in resp.text
     assert "allow" in resp.text
+
+
+# --- Task 3: approvals view + resolve action (DASH-02) --------------------------
+
+
+def _park_approval(approvals):
+    import asyncio
+
+    from agentos_contract import ActionType, AgentAction, Decision, Outcome, Reason
+
+    action = AgentAction(
+        agent_id="agent-a",
+        type=ActionType.tool_call,
+        target="http_get",
+        payload={"url": "https://api.example.com/data", "content": ""},
+    )
+    decision = Decision(
+        action_id=action.id,
+        outcome=Outcome.require_approval,
+        risk_score=0.2,
+        trust_score=0.5,
+        reasons=[Reason(stage="policy", code="constitution_principle_fired", principle_ref="1.1")],
+    )
+    # ApprovalStore.create is sync; deadline far out so it stays pending.
+    return approvals.create(action, decision, deadline_s=3600)
+
+
+def test_dashboard_lists_pending_approval():
+    from fastapi.testclient import TestClient
+
+    sf = _sf()
+    approvals = ApprovalStore(sf, AuditWriter(sf))
+    approval_id = _park_approval(approvals)
+    app = create_app(approvals, session_factory=sf, api_token="test-token", dashboard=True)
+    client = TestClient(app)
+    _login(client)
+    resp = client.get("/dashboard/approvals")
+    assert resp.status_code == 200
+    assert str(approval_id) in resp.text
+    assert "agent-a" in resp.text
+
+
+def test_dashboard_resolve_approval_flips_the_row():
+    from fastapi.testclient import TestClient
+
+    sf = _sf()
+    approvals = ApprovalStore(sf, AuditWriter(sf))
+    approval_id = _park_approval(approvals)
+    app = create_app(approvals, session_factory=sf, api_token="test-token", dashboard=True)
+    client = TestClient(app, follow_redirects=False)
+    _login(client)
+    resp = client.post(
+        f"/dashboard/approvals/{approval_id}/resolve", data={"decision": "approve"}
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/dashboard/approvals"
+    # The SAME ApprovalStore the JSON API uses now reports the row as approved.
+    approved = [r.id for r in approvals.list_requests("approved")]
+    assert approval_id in approved
+
+
+def test_unauthenticated_resolve_redirects_and_does_not_resolve():
+    from fastapi.testclient import TestClient
+
+    sf = _sf()
+    approvals = ApprovalStore(sf, AuditWriter(sf))
+    approval_id = _park_approval(approvals)
+    app = create_app(approvals, session_factory=sf, api_token="test-token", dashboard=True)
+    client = TestClient(app, follow_redirects=False)  # NO login
+    resp = client.post(
+        f"/dashboard/approvals/{approval_id}/resolve", data={"decision": "approve"}
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/dashboard/login"
+    # The action did NOT execute: the row is still pending.
+    pending = [r.id for r in approvals.list_requests("pending")]
+    assert approval_id in pending
