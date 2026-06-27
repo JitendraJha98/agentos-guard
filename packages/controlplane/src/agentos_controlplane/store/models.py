@@ -24,6 +24,7 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
     func,
 )
@@ -284,3 +285,25 @@ class Abom(Base):
     )
 
     __mapper_args__ = {"version_id_col": version}
+
+
+class InventoryComponent(Base):
+    """DISC-01/02 — an authoritative inventory row: one component (a tool/prompt/memory/etc.) tied to
+    an agent. `source` is 'declared' (registration manifest, authoritative) or 'observed' (reconciled
+    from activity). Unique on (agent_id, kind, name) so declare+observe of the same component
+    reconcile into ONE row."""
+
+    __tablename__ = "inventory_component"
+    __table_args__ = (UniqueConstraint("agent_id", "kind", "name", name="uq_inventory_component"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)   # tool|prompt|memory|model|mcp|delegation
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)  # declared|observed
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
