@@ -34,6 +34,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from agentos_contract import AgentAction, Decision
+from agentos_controlplane.secret_scan import SecretLeakError, scan
 from agentos_controlplane.store.models import AuditRecord
 
 # AUD-08 domain prefix. The control-plane Ed25519 key ALSO signs agent JWTs;
@@ -243,6 +244,12 @@ class AuditWriter:
             # Compute the canonical bytes ONCE — the SAME bytes feed the hash AND
             # the signature (AUD-08), so a verifier reproduces both from `body`.
             canonical = canonical_json(body)
+            # AUD-04 last gate: content-based secret scan over the fully-assembled,
+            # already-redacted body bytes (defense-in-depth beneath the classifier).
+            # A hit fails CLOSED before any write — the head is not advanced.
+            leaks = scan(canonical.decode("utf-8"))
+            if leaks:
+                raise SecretLeakError(f"secret-like content in audit body: {sorted(set(leaks))}")
             record_hash = hashlib.sha256(canonical).hexdigest()
             signature, signing_key_id = self._sign(canonical)
             return self._insert(seq, prev_hash, record_hash, body, signature, signing_key_id)
@@ -268,6 +275,10 @@ class AuditWriter:
             prev_hash, seq = self._chain_head()
             full_body = {"seq": seq, "prev_hash": prev_hash, "kind": kind, **body}
             canonical = canonical_json(full_body)
+            # AUD-04 last gate — same fail-closed scan as `append` (gate BOTH paths).
+            leaks = scan(canonical.decode("utf-8"))
+            if leaks:
+                raise SecretLeakError(f"secret-like content in audit body: {sorted(set(leaks))}")
             record_hash = hashlib.sha256(canonical).hexdigest()
             signature, signing_key_id = self._sign(canonical)
             return self._insert(seq, prev_hash, record_hash, full_body, signature, signing_key_id)
