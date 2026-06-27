@@ -77,7 +77,10 @@ class KillSwitchStore:
         )
 
     async def _clear(self, target, scope, set_by):
-        self._killed.pop(target, None)
+        # Table-FIRST (mirror _set): flip the durable row + audit BEFORE dropping the
+        # in-memory kill. A failed clear then leaves the agent killed in BOTH memory and
+        # table — the same fail-toward-contained direction as kill — instead of un-killing
+        # live while durability still says active.
         with self._sf() as s:
             row = s.get(KillSwitch, target)
             if row is not None:
@@ -86,3 +89,4 @@ class KillSwitchStore:
         await self._audit.append_event(
             "kill_switch_cleared", {"target": target, "scope": scope, "set_by": set_by}
         )
+        self._killed.pop(target, None)  # un-kill the hot path only after durable steps succeed

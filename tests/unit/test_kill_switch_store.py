@@ -130,6 +130,59 @@ def test_event_body_excludes_free_text_reason(ks: KillSwitchStore, store) -> Non
     assert secret_reason not in canonical_json(event).decode("utf-8")
 
 
+def test_clear_db_failure_leaves_agent_killed_in_memory_and_table(
+    ks: KillSwitchStore, store
+) -> None:
+    """A failed clear must fail TOWARD containment (mirror kill): if the DB write/commit
+    raises, the agent stays killed in BOTH the in-memory hot-path cache AND the table —
+    never un-killed live while the table still says active."""
+    asyncio.run(ks.kill("agent-1", set_by="op", reason="rogue"))
+
+    # Force the clear's table write to blow up by swapping in a session factory whose
+    # commit raises. The original factory is restored for the assertions.
+    real_sf = ks._sf
+
+    class _BoomSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def get(self, *a, **k):
+            return real_sf().__enter__().get(*a, **k)
+
+        def commit(self):
+            raise RuntimeError("db down")
+
+    ks._sf = lambda: _BoomSession()
+    with pytest.raises(RuntimeError):
+        asyncio.run(ks.clear("agent-1", set_by="op"))
+    ks._sf = real_sf
+
+    # in-memory hot path still sees it killed (fail-toward-contained)
+    assert ks.status("agent-1") is not None and ks.status("agent-1").scope == "agent"
+    # table never flipped to inactive
+    with store() as s:
+        row = s.get(KillSwitch, "agent-1")
+    assert row.active is True
+
+
+def test_clear_audit_failure_leaves_agent_killed_in_memory(ks: KillSwitchStore) -> None:
+    """If the audit append_event raises during clear, the agent must remain killed in the
+    in-memory cache — the pop only happens after the durable steps succeed."""
+    asyncio.run(ks.kill("agent-1", set_by="op", reason="rogue"))
+
+    async def _boom(*a, **k):
+        raise RuntimeError("audit down")
+
+    ks._audit.append_event = _boom
+    with pytest.raises(RuntimeError):
+        asyncio.run(ks.clear("agent-1", set_by="op"))
+
+    assert ks.status("agent-1") is not None and ks.status("agent-1").scope == "agent"
+
+
 def test_chain_stays_continuous(ks: KillSwitchStore, store) -> None:
     asyncio.run(ks.kill("agent-1", set_by="op"))
     asyncio.run(ks.kill_fleet(set_by="op"))
