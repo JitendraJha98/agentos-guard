@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from agentos_controlplane.approvals import AlreadyResolvedError, ApprovalStore
 from agentos_controlplane.auth import make_require_token, resolve_api_token
+from agentos_controlplane.inventory import InventoryStore
 from agentos_controlplane.killswitch import KillSwitchStore
 from agentos_controlplane.resources import ConstitutionError, ResourceStore, VersionConflict
 from agentos_controlplane.store.models import ApprovalRequest, GovernanceReview
@@ -246,10 +247,26 @@ def build_resource_router(resources: ResourceStore) -> APIRouter:
     return router
 
 
+def build_inventory_router(inventory: InventoryStore) -> APIRouter:
+    """DISC-01/02 — read API over the authoritative agent inventory."""
+    router = APIRouter()
+
+    @router.get("/inventory")
+    def list_inventory() -> list[dict]:
+        return [vars(d) for d in inventory.list_inventory()]
+
+    @router.get("/inventory/{agent_id}")
+    def get_inventory(agent_id: str) -> list[dict]:
+        return [vars(d) for d in inventory.get_inventory(agent_id)]
+
+    return router
+
+
 def create_app(
     store: ApprovalStore,
     kill_store: KillSwitchStore | None = None,
     resource_store: ResourceStore | None = None,
+    inventory_store: InventoryStore | None = None,
     api_token: str | None = None,
 ) -> FastAPI:
     # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
@@ -265,4 +282,8 @@ def create_app(
         app.include_router(build_kill_router(kill_store), dependencies=guard)
     if resource_store is not None:
         app.include_router(build_resource_router(resource_store), dependencies=guard)
+    # DISC-01/02: the inventory read router rides the same gate; absent an inventory_store the
+    # routes are not wired (GET /inventory -> 404), keeping existing create_app callers working.
+    if inventory_store is not None:
+        app.include_router(build_inventory_router(inventory_store), dependencies=guard)
     return app
