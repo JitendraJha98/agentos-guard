@@ -161,6 +161,26 @@ class GovernanceReview(Base):
     )
 
 
+class KillSwitch(Base):
+    """RUN-01/02 — CURRENT kill-switch state (immutable history lives in the audit chain).
+
+    `target` is an `agent_id`, or "*" for the whole fleet. This row is the durable
+    backing for the in-memory `KillSwitchStore` (the hot-path lookup); the operator
+    free-text `reason` lives HERE only, never in the audit-event body (so the 4d
+    secret-gate on `append_event` can never block an emergency kill).
+    """
+
+    __tablename__ = "kill_switch"
+
+    target: Mapped[str] = mapped_column(String(255), primary_key=True)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    set_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class ChainCheckpoint(Base):
     """AUD-05 — an external anchor binding the chain head {seq, record_hash} to an unforgeable proof.
 

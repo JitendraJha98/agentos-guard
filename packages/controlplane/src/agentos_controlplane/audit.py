@@ -104,6 +104,11 @@ EVENT_KINDS = frozenset(
         "review_opened",
         "enforcement_substitution",
         "side_effect",
+        # RUN-01/02 (Slice 4e): operator kill-switch toggles. The event body carries
+        # short identifiers only (target/scope/set_by) — the free-text reason lives in
+        # the kill_switch TABLE, so the 4d secret-gate here can never block a kill.
+        "kill_switch_set",
+        "kill_switch_cleared",
     }
 )
 
