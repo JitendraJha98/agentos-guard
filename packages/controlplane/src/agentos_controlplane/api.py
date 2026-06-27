@@ -19,6 +19,7 @@ from agentos_controlplane.approvals import AlreadyResolvedError, ApprovalStore
 from agentos_controlplane.auth import make_require_token, resolve_api_token
 from agentos_controlplane.inventory import InventoryStore
 from agentos_controlplane.killswitch import KillSwitchStore
+from agentos_controlplane.registry import Registry
 from agentos_controlplane.resources import ConstitutionError, ResourceStore, VersionConflict
 from agentos_controlplane.store.models import ApprovalRequest, GovernanceReview
 
@@ -262,12 +263,36 @@ def build_inventory_router(inventory: InventoryStore) -> APIRouter:
     return router
 
 
+class RegisterIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    trust_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    manifest: dict | None = None  # {tools: [...], prompts: [...], memories: [...]}
+
+
+def build_registration_router(registry: Registry) -> APIRouter:
+    """SDK-02 — gated self-registration: persist the Agent + return its identity token; an optional
+    manifest declares the agent's components into the inventory (DISC-01)."""
+    router = APIRouter()
+
+    @router.post("/agents/{agent_id}/register")
+    def register_agent(agent_id: str, body: RegisterIn) -> dict:
+        kwargs = {}
+        if body.trust_score is not None:
+            kwargs["trust_score"] = body.trust_score
+        token = registry.register(agent_id, manifest=body.manifest, **kwargs)
+        return {"agent_id": agent_id, "token": token}
+
+    return router
+
+
 def create_app(
     store: ApprovalStore,
     kill_store: KillSwitchStore | None = None,
     resource_store: ResourceStore | None = None,
     inventory_store: InventoryStore | None = None,
     api_token: str | None = None,
+    registry: Registry | None = None,
 ) -> FastAPI:
     # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
     # explicit arg -> AGENTOS_API_TOKEN env -> ephemeral random (logged) — never silently open.
@@ -286,4 +311,8 @@ def create_app(
     # routes are not wired (GET /inventory -> 404), keeping existing create_app callers working.
     if inventory_store is not None:
         app.include_router(build_inventory_router(inventory_store), dependencies=guard)
+    # SDK-02: self-registration rides the same gate; absent a registry the /agents routes are not
+    # wired (POST /agents/{id}/register -> 404), keeping existing create_app callers working.
+    if registry is not None:
+        app.include_router(build_registration_router(registry), dependencies=guard)
     return app
