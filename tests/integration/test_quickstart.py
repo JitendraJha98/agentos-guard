@@ -12,7 +12,10 @@ from __future__ import annotations
 
 from importlib.resources import files
 
+import pytest
+
 from agentos_constitution import load_constitution
+from agentos_contract import Outcome
 
 
 def test_quickstart_package_data_ships() -> None:
@@ -23,3 +26,27 @@ def test_quickstart_package_data_ships() -> None:
     assert len(wasm.read_bytes()) > 0
     constitution = load_constitution(str(pkg / "demo_constitution.yaml"))
     assert constitution.principles  # the demo constitution parses + has principles
+
+
+def test_quickstart_run_governs_allow_and_deny_with_no_opa_cli(monkeypatch, tmp_path) -> None:
+    """run() drives the full governed loop on the COMMITTED wasm — proven CLI-free.
+
+    The committed-wasm decision means run() must never shell out to OPA. We monkeypatch
+    `agentos_constitution.wasm.build_wasm` to raise: if run() touched the CLI build path it would
+    blow up here. It does not — it loads the committed wasm and derives the rest in-process.
+    """
+    import agentos_constitution.wasm as wasm_mod
+
+    def _no_cli(*args, **kwargs):  # pragma: no cover - must never be called
+        raise AssertionError("quickstart must NOT invoke the OPA CLI build path at run time")
+
+    monkeypatch.setattr(wasm_mod, "build_wasm", _no_cli)
+
+    from agentos_sdk.quickstart import run
+
+    result = run(db_path=str(tmp_path / "quickstart.db"))
+
+    assert result.allow_outcome is Outcome.allow
+    assert result.deny_outcome is Outcome.deny
+    assert result.audit_records == 2  # one allow + one deny, hash-chained + signed
+    assert result.api_token  # a dev API token is surfaced
