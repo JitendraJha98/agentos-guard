@@ -308,3 +308,77 @@ def test_unauthenticated_kill_redirects_and_does_not_kill():
     assert resp.headers["location"] == "/dashboard/login"
     # The action did NOT execute: the agent is not killed.
     assert kill_store.status("a") is None
+
+
+# --- Task 5: e2e — a dashboard kill really halts the agent in the pipeline ------
+
+
+def test_dashboard_kill_denies_agent_in_pipeline_then_clear_reallows(constitution_wasm):
+    """Closes the loop (DASH-03): a logged-in dashboard kill POST shares the SAME
+    KillSwitchStore instance with a real Pipeline -> pipeline.evaluate denies the agent
+    (agent_killed); a dashboard clear POST re-allows it."""
+    import asyncio
+
+    from agentos_contract import ActionType, AgentAction, Outcome
+    from agentos_controlplane.killswitch import KillSwitchStore
+    from agentos_controlplane.registry import Registry
+    from agentos_pipeline.identity import IdentityStage
+    from agentos_pipeline.policy import ConstitutionPolicyEngine
+    from agentos_pipeline.posture import PostureMap
+    from agentos_pipeline.risk import PromptInjectionScorer
+    from agentos_pipeline.runner import Pipeline
+    from fastapi.testclient import TestClient
+
+    sf = _sf()
+    registry = Registry(sf)
+    token = registry.register("agent-a")
+    audit = AuditWriter(sf)
+    kill_store = KillSwitchStore(sf, audit)  # SAME instance shared API <-> pipeline
+    app = create_app(
+        ApprovalStore(sf, audit),
+        kill_store=kill_store,
+        session_factory=sf,
+        api_token="test-token",
+        dashboard=True,
+    )
+    client = TestClient(app, follow_redirects=False)
+    _login(client)
+
+    pipeline = Pipeline(
+        identity=IdentityStage(registry.identity),
+        policy=ConstitutionPolicyEngine(
+            wasm_path=str(constitution_wasm.wasm_path),
+            lists=constitution_wasm.bundle.lists,
+            constitution_version=constitution_wasm.bundle.constitution_version,
+            principles_meta=constitution_wasm.principles_meta,
+        ),
+        scorers=[PromptInjectionScorer()],
+        audit=audit,
+        posture=PostureMap(),
+        kill_switch=kill_store,  # the instance the dashboard flips
+    )
+
+    def action():
+        return AgentAction(
+            agent_id="agent-a",
+            type=ActionType.tool_call,
+            target="http_get",
+            payload={"url": "https://api.example.com/data", "content": ""},
+            identity_token=token,
+        )
+
+    # Baseline: the benign action is allowed (so a later deny is the switch).
+    assert asyncio.run(pipeline.evaluate(action())).outcome is Outcome.allow
+
+    # Dashboard kill -> the pipeline denies the agent (agent_killed).
+    resp = client.post("/dashboard/kill/agent", data={"agent_id": "agent-a", "reason": "rogue"})
+    assert resp.status_code == 303
+    denied = asyncio.run(pipeline.evaluate(action()))
+    assert denied.outcome is Outcome.deny
+    assert denied.reasons[0].stage == "killswitch"
+    assert denied.reasons[0].code == "agent_killed"
+
+    # Dashboard clear -> the agent is allowed again.
+    cleared = client.post("/dashboard/kill/agent/clear", data={"agent_id": "agent-a"})
+    assert cleared.status_code == 303
+    assert asyncio.run(pipeline.evaluate(action())).outcome is Outcome.allow
