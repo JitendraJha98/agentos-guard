@@ -20,6 +20,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Float,
+    Integer,
     LargeBinary,
     String,
     Text,
@@ -197,6 +198,37 @@ class ChainCheckpoint(Base):
     anchor_kind: Mapped[str] = mapped_column(String(32), nullable=False)  # local_ed25519_v1 | rfc3161_v1
     proof: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)     # opaque per kind (sig | DER TimeStampResp)
     tsa_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class TrustProfile(Base):
+    """Declarative TrustProfile resource (API-01). The current trust posture for an agent,
+    versioned for optimistic concurrency. `band` is an optional graduated-response band config.
+    Keyed by agent_id (one current profile per agent); the Agent row keeps the seed trust_score."""
+
+    __tablename__ = "trust_profile"
+
+    agent_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    trust_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    band: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class Abom(Base):
+    """Declarative Agent Bill of Materials resource (API-01 / ABOM-01 seed). Phase 5 only
+    validates/versions/stores it; provenance + vuln-impact analysis are Phase 8/14. Keyed by
+    agent_id (current ABOM per agent), version-incremented for optimistic concurrency."""
+
+    __tablename__ = "abom"
+
+    agent_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    components: Mapped[dict] = mapped_column(JSON, nullable=False)  # {models,prompts,tools,mcp:[...]}
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
