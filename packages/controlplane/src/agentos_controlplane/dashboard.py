@@ -35,7 +35,16 @@ class _NotLoggedIn(Exception):
 def make_require_session(api_token: str):
     def require_session(request: Request) -> bool:
         cookie = request.cookies.get(_COOKIE)
-        if cookie is None or not secrets.compare_digest(cookie, api_token):
+        ok = False
+        if cookie is not None:
+            try:
+                ok = secrets.compare_digest(cookie, api_token)
+            except TypeError:
+                # A raw high-byte Cookie header decodes into a non-ASCII str, which
+                # compare_digest refuses; treat it as an invalid cookie (fail closed),
+                # not a 500. Honors the "absent/invalid -> redirect" contract.
+                ok = False
+        if not ok:
             raise _NotLoggedIn()
         return True
 

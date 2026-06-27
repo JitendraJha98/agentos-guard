@@ -95,6 +95,20 @@ def test_logged_in_client_reaches_dashboard():
     assert resp.status_code == 200
 
 
+def test_non_ascii_cookie_redirects_to_login_not_500():
+    """A raw high-byte Cookie header decodes into a non-ASCII str; secrets.compare_digest
+    raises TypeError on non-ASCII. The gate must fail closed to a 303 redirect (the documented
+    contract), NOT surface an unhandled TypeError as a 500."""
+    from fastapi.testclient import TestClient
+
+    client = TestClient(_dashboard_app(_sf()), follow_redirects=False)
+    # Pass the Cookie header as raw bytes so httpx will not reject non-ASCII; Starlette
+    # decodes it into a non-ASCII str (chars 0x80-0xFF), the attack the finding describes.
+    resp = client.get("/dashboard", headers={"Cookie": b"agentos_session=\xe9\xe9\xe9"})
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/dashboard/login"
+
+
 def test_dashboard_off_by_default_no_login_route():
     from fastapi.testclient import TestClient
 
