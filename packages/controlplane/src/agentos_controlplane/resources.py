@@ -16,15 +16,27 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
 
-from agentos_controlplane.store.models import Abom, TrustProfile
+from agentos_constitution import Constitution, compile_constitution
+from agentos_controlplane.store.models import (
+    Abom,
+    ConstitutionResource,
+    PolicyResource,
+    TrustProfile,
+)
 
 
 class VersionConflict(Exception):
     """Optimistic-concurrency failure: the supplied version != the current row version."""
+
+
+class ConstitutionError(Exception):
+    """The authored Constitution failed validation or compilation — the API maps it to 422
+    and NOTHING is persisted (fail-closed compile-on-write)."""
 
 
 @dataclass(frozen=True)
@@ -41,6 +53,26 @@ class AbomData:
     agent_id: str
     components: dict
     version: int
+    created_at: str | None
+
+
+@dataclass(frozen=True)
+class ConstitutionData:
+    id: str
+    name: str
+    version: str
+    source: dict
+    created_at: str | None
+
+
+@dataclass(frozen=True)
+class PolicyData:
+    constitution_version: str
+    yaml_policy: str
+    rego: str
+    graduated_config: dict
+    lists: dict
+    sequences: list
     created_at: str | None
 
 
@@ -112,6 +144,84 @@ class ResourceStore:
     def list_aboms(self) -> list[AbomData]:
         with self._sf() as s:
             return [self._abom(r) for r in s.scalars(select(Abom).order_by(Abom.agent_id)).all()]
+
+    # ---- Constitution / Policy (compile-on-write, API-02) ----
+    def apply_constitution(self, name: str, source: dict) -> tuple[ConstitutionData, PolicyData]:
+        """API-02 — validate + compile + persist Constitution and its Policy in ONE transaction.
+        Idempotent on the content-hash version: re-applying the same source returns the existing
+        rows. Validation/compile failure -> ConstitutionError (no write)."""
+        # 1) validate + compile FIRST — no DB work happens if either fails (fail-closed).
+        try:
+            constitution = Constitution.model_validate(source)
+            bundle = compile_constitution(constitution)
+        except (ValidationError, ValueError) as exc:
+            raise ConstitutionError(str(exc)) from exc
+        version = bundle.constitution_version
+        # 2) persist atomically; idempotent on version.
+        with self._sf() as s:
+            existing = s.scalar(
+                select(ConstitutionResource).where(ConstitutionResource.version == version)
+            )
+            if existing is not None:
+                pol = s.scalar(
+                    select(PolicyResource).where(PolicyResource.constitution_version == version)
+                )
+                return self._con(existing), self._pol(pol)
+            con = ConstitutionResource(name=name, version=version, source=source)
+            pol = PolicyResource(
+                constitution_version=version,
+                yaml_policy=bundle.yaml_policy,
+                rego=bundle.rego,
+                graduated_config=bundle.graduated_config,
+                lists=bundle.lists,
+                sequences=bundle.sequences,
+            )
+            s.add(con)
+            s.add(pol)
+            s.commit()
+            return self._con(con), self._pol(pol)
+
+    def get_constitution(self, version: str) -> ConstitutionData | None:
+        with self._sf() as s:
+            row = s.scalar(
+                select(ConstitutionResource).where(ConstitutionResource.version == version)
+            )
+            return self._con(row) if row else None
+
+    def list_constitutions(self) -> list[ConstitutionData]:
+        with self._sf() as s:
+            rows = s.scalars(
+                select(ConstitutionResource).order_by(ConstitutionResource.created_at)
+            ).all()
+            return [self._con(r) for r in rows]
+
+    def get_latest_policy(self) -> PolicyData | None:
+        with self._sf() as s:
+            row = s.scalar(
+                select(PolicyResource).order_by(PolicyResource.created_at.desc()).limit(1)
+            )
+            return self._pol(row) if row else None
+
+    def get_policy(self, version: str) -> PolicyData | None:
+        with self._sf() as s:
+            row = s.scalar(
+                select(PolicyResource).where(PolicyResource.constitution_version == version)
+            )
+            return self._pol(row) if row else None
+
+    @staticmethod
+    def _con(r: ConstitutionResource) -> ConstitutionData:
+        return ConstitutionData(
+            str(r.id), r.name, r.version, r.source,
+            r.created_at.isoformat() if r.created_at else None,
+        )
+
+    @staticmethod
+    def _pol(r: PolicyResource) -> PolicyData:
+        return PolicyData(
+            r.constitution_version, r.yaml_policy, r.rego, r.graduated_config,
+            r.lists, r.sequences, r.created_at.isoformat() if r.created_at else None,
+        )
 
     @staticmethod
     def _tp(r: TrustProfile) -> TrustProfileData:
