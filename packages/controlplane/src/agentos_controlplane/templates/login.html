@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+<head><title>agentos-guard · login</title></head>
+<body>
+  <h1>agentos-guard</h1>
+  <h2>operator login</h2>
+  {% if request.query_params.get("error") %}
+  <p style="color:red">invalid token</p>
+  {% endif %}
+  <form method="post" action="/dashboard/login">
+    <label>API token: <input type="password" name="token"></label>
+    <button type="submit">log in</button>
+  </form>
+</body>
+</html>

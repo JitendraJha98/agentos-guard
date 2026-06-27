@@ -293,6 +293,8 @@ def create_app(
     inventory_store: InventoryStore | None = None,
     api_token: str | None = None,
     registry: Registry | None = None,
+    session_factory=None,
+    dashboard: bool = False,
 ) -> FastAPI:
     # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
     # explicit arg -> AGENTOS_API_TOKEN env -> ephemeral random (logged) — never silently open.
@@ -315,4 +317,18 @@ def create_app(
     # wired (POST /agents/{id}/register -> 404), keeping existing create_app callers working.
     if registry is not None:
         app.include_router(build_registration_router(registry), dependencies=guard)
+    # DASH-01/02/03: the operator dashboard mounts ONLY when dashboard=True; it is NOT behind the
+    # Bearer guard (browsers cannot send it on page navs) — it has its OWN cookie-login gate over the
+    # same shared token. Default off keeps every existing create_app caller working.
+    if dashboard:
+        from agentos_controlplane.dashboard import mount_dashboard
+
+        mount_dashboard(
+            app,
+            token,
+            approvals=store,
+            kill_store=kill_store,
+            inventory=inventory_store,
+            session_factory=session_factory,
+        )
     return app
