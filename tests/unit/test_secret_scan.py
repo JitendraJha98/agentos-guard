@@ -48,6 +48,12 @@ CLEAN = {
     "redactor_digest_fragment": '{"len": 5, "sha256": "' + _HEX64 + '"}',
     "prev_hash_field": '{"prev_hash": "' + _HEX64 + '", "seq": 3}',
     "empty": "",
+    # FP-floor (4d review): a short contiguous opaque-looking run (24-31 chars) — the
+    # realistic correlation/trace/request id echoed into free-text reasons — must NOT
+    # fail-close a legitimate audit write. Below the 32-char entropy floor, it is clean.
+    "request_id_in_intent": "user op for RequestId-A1B2C3D4E5F6G7H8I9J0",  # 30-char token
+    "trace_id_field": "trace_id=Ab12Cd34Ef56Gh78Ij90Kl",                   # 31-char token
+    "correlation_id": "X-Correlation-Id: Ab12Cd34Ef56Gh78Ij90Kl",         # 28-char token
 }
 
 
@@ -59,6 +65,25 @@ def test_does_not_flag_legitimate_body_string(name: str, text: str) -> None:
 
 def test_empty_string_is_clean() -> None:
     assert scan("") == []
+
+
+# --- entropy-floor recall lock (4d review): the floor must NOT drop real opaque secrets ----
+
+# Bare opaque secrets caught ONLY by the entropy gate (no high-precision regex covers them):
+# an AWS *secret* access key (40-char base64) and a Google API key (~39 char). Both are well
+# above the 32-char floor, so raising the floor to cut short correlation-id FPs must NOT cost
+# their recall — this locks that trade-off (the review's explicit "do NOT drop AWS-secret/
+# Google-API-key recall").
+ENTROPY_ONLY_SECRETS = {
+    "aws_secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",  # 40-char base64
+    "google_api_key": "AIzaSyA1234567890abcdefGHIJKLMNOPqrstuvw",        # 40-char mixed
+    "base64_of_32_random_bytes": "f3Kp9QvX2mNz7LwR0bYtUaHcEdGsJkMn",      # exactly 32 chars
+}
+
+
+@pytest.mark.parametrize("name,text", sorted(ENTROPY_ONLY_SECRETS.items()))
+def test_entropy_floor_still_catches_real_opaque_secrets(name: str, text: str) -> None:
+    assert scan(text) == ["high_entropy_token"], f"{name} must still be caught: {text!r}"
 
 
 def test_secretleakerror_is_an_exception() -> None:

@@ -101,6 +101,14 @@ def _is_redaction_error(exc: BaseException) -> bool:
     return any(c.__name__ == "RedactionError" for c in type(exc).__mro__)
 
 
+def _is_secret_leak_error(exc: BaseException) -> bool:
+    """Structurally detect the audit writer's SecretLeakError (AUD-04 last gate)
+    — same control-plane-free discipline as `_is_redaction_error`. Used only to
+    LABEL the fail-safe with a distinct, operator-visible reason; the outcome is
+    still the fail-closed per-class posture (the leak is fatal to the record)."""
+    return any(c.__name__ == "SecretLeakError" for c in type(exc).__mro__)
+
+
 class Pipeline:
     """The 5-stage PDP (async evaluate; CPU stages inline). Satisfies PipelineProtocol."""
 
@@ -489,6 +497,19 @@ class Pipeline:
                 detail=type(exc).__name__,  # exception CLASS only, never payload
             )
         ]
+        # AUD-04 (4d review): a secret-detector last-gate hit reaches the fail-safe like
+        # any other audit failure, but it is NOT a generic backend outage — surface a
+        # DISTINCT, operator-visible reason so an operator can tell a true leak (or a
+        # noisy opaque token that tripped the entropy gate) from an unrelated failure.
+        # Label only (the outcome stays the fail-closed posture); CLASS only, never payload.
+        if _is_secret_leak_error(exc):
+            reasons.append(
+                Reason(
+                    stage="pipeline",
+                    code="secret_leak_in_audit_body",
+                    detail=type(exc).__name__,
+                )
+            )
         # PIPE-09: a fail-OPEN proceeds only with a human escalation riding on it.
         side_effects = [SideEffect.notify] if posture is FailPosture.open else []
         decision = Decision(
