@@ -11,6 +11,8 @@ policy metadata in-process via the pure-Python compiler — NO OPA CLI at run ti
 from __future__ import annotations
 
 from importlib.resources import files
+from pathlib import Path
+from tempfile import mkdtemp
 
 import pytest
 
@@ -50,3 +52,57 @@ def test_quickstart_run_governs_allow_and_deny_with_no_opa_cli(monkeypatch, tmp_
     assert result.deny_outcome is Outcome.deny
     assert result.audit_records == 2  # one allow + one deny, hash-chained + signed
     assert result.api_token  # a dev API token is surfaced
+
+
+def _policy_input(host: str) -> dict:
+    """A minimal valid tool_call policy-input doc (the egress principle keys on egress.host)."""
+    return {
+        "type": "tool_call",
+        "target": "http_get",
+        "intent": {"class": ""},
+        "guardrails": {},
+        "sequence": {"matched_refs": []},
+        "egress": {"host": host},
+    }
+
+
+def test_quickstart_wasm_drift_guard_behavioral_parity() -> None:
+    """Committed wasm vs. wasm REBUILT from the shipped source must behave identically (SDK-05).
+
+    The committed binary is a drift risk: it could lag the source it claims to compile. When an OPA
+    CLI is available we rebuild from `demo_constitution.yaml` and assert BEHAVIORAL equivalence —
+    same matched-effect / no_match on the demo allow + deny inputs AND the same constitution_version.
+    We do NOT byte-compare the wasm (bytes legitimately differ across OPA versions/platforms; behavior
+    must not). Skips cleanly when no OPA CLI is present.
+    """
+    from _opa import build_constitution_wasm, find_opa
+
+    if find_opa() is None:
+        pytest.skip("no OPA CLI (vendored tools/opa/opa.exe or PATH) — cannot rebuild for the drift guard")
+
+    from agentos_sdk.quickstart import _PKG, _build_engine
+
+    committed_engine, allow_host = _build_engine()
+
+    rebuilt = build_constitution_wasm(
+        Path(str(_PKG / "demo_constitution.yaml")),
+        Path(mkdtemp(prefix="agentos_drift_")),
+    )
+    from agentos_pipeline.policy import ConstitutionPolicyEngine
+
+    rebuilt_engine = ConstitutionPolicyEngine(
+        wasm_path=str(rebuilt.wasm_path),
+        lists=rebuilt.bundle.lists,
+        constitution_version=rebuilt.bundle.constitution_version,
+        principles_meta=rebuilt.principles_meta,
+    )
+
+    for host in (allow_host, "attacker.example"):
+        committed = committed_engine.evaluate(_policy_input(host))
+        rebuilt_res = rebuilt_engine.evaluate(_policy_input(host))
+        assert committed.no_match == rebuilt_res.no_match
+        assert sorted((m.principle_ref, m.effect) for m in committed.matched) == sorted(
+            (m.principle_ref, m.effect) for m in rebuilt_res.matched
+        )
+
+    assert committed_engine.constitution_version == rebuilt_engine.constitution_version
