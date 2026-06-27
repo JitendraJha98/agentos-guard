@@ -64,3 +64,41 @@ class ControlPlaneClient:
         if note is not None:
             body["note"] = note
         return self._request("POST", f"/approvals/{approval_id}/resolve", json=body)
+
+    # ---- resources (SDK-04) ----
+    def put_trust_profile(
+        self,
+        agent_id: str,
+        *,
+        trust_score: float,
+        band: dict | None = None,
+        version: int | None = None,
+    ) -> dict:
+        return self._request(
+            "PUT",
+            f"/trust-profiles/{agent_id}",
+            json={"trust_score": trust_score, "band": band, "version": version},
+        )
+
+    def get_trust_profile(self, agent_id: str) -> dict:
+        return self._request("GET", f"/trust-profiles/{agent_id}")
+
+    def list_trust_profiles(self) -> list[dict]:
+        return self._request("GET", "/trust-profiles")
+
+    def put_abom(self, agent_id: str, *, components: dict, version: int | None = None) -> dict:
+        return self._request(
+            "PUT", f"/aboms/{agent_id}", json={"components": components, "version": version}
+        )
+
+    def apply_constitution(self, name: str, source: dict) -> dict:
+        return self._request("POST", "/constitutions", json={"name": name, "source": source})
+
+    def get_latest_policy(self) -> dict:
+        return self._request("GET", "/policies/latest")
+
+    def list_inventory(self) -> list[dict]:
+        return self._request("GET", "/inventory")
+
+    def get_inventory(self, agent_id: str) -> list[dict]:
+        return self._request("GET", f"/inventory/{agent_id}")

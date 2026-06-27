@@ -130,3 +130,46 @@ def test_list_and_resolve_approval(client, store) -> None:
 def test_resolve_unknown_approval_raises(client) -> None:
     with pytest.raises(ControlPlaneError):
         client.resolve_approval(str(uuid4()), approved=True, resolver="op")
+
+
+# ---- resources (SDK-04) ----
+def test_trust_profile_crud_and_version_conflict(client) -> None:
+    d = client.put_trust_profile("a", trust_score=0.7)
+    assert d["version"] == 1 and d["trust_score"] == 0.7
+
+    d = client.put_trust_profile("a", trust_score=0.8, version=1)
+    assert d["version"] == 2
+
+    # stale version -> 409 surfaced as ControlPlaneError
+    with pytest.raises(ControlPlaneError):
+        client.put_trust_profile("a", trust_score=0.9, version=1)
+
+    assert client.get_trust_profile("a")["version"] == 2
+    assert any(p["agent_id"] == "a" for p in client.list_trust_profiles())
+
+
+def test_abom_put(client) -> None:
+    d = client.put_abom("a", components={"tools": ["http_get"]})
+    assert d["version"] == 1
+    d = client.put_abom("a", components={"tools": ["drop_table"]}, version=1)
+    assert d["version"] == 2
+
+
+def test_apply_constitution_then_get_latest_policy(client, src) -> None:
+    applied = client.apply_constitution("t", src)
+    version = applied["policy_version"]
+    assert version
+    policy = client.get_latest_policy()
+    assert "package agentos.constitution" in policy["rego"]
+    assert policy["constitution_version"] == version
+
+
+def test_inventory_reads_after_register(client) -> None:
+    client.register("a", manifest={"tools": ["http_get"], "memories": ["m1"]})
+    all_rows = client.list_inventory()
+    assert {(d["kind"], d["name"]) for d in all_rows if d["agent_id"] == "a"} == {
+        ("tool", "http_get"),
+        ("memory", "m1"),
+    }
+    agent_rows = client.get_inventory("a")
+    assert {d["name"] for d in agent_rows} == {"http_get", "m1"}
