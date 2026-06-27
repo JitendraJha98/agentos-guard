@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 from pydantic import ValidationError
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -159,14 +160,9 @@ class ResourceStore:
         version = bundle.constitution_version
         # 2) persist atomically; idempotent on version.
         with self._sf() as s:
-            existing = s.scalar(
-                select(ConstitutionResource).where(ConstitutionResource.version == version)
-            )
+            existing = self._fetch_version(s, version)
             if existing is not None:
-                pol = s.scalar(
-                    select(PolicyResource).where(PolicyResource.constitution_version == version)
-                )
-                return self._con(existing), self._pol(pol)
+                return existing
             con = ConstitutionResource(name=name, version=version, source=source)
             pol = PolicyResource(
                 constitution_version=version,
@@ -178,8 +174,26 @@ class ResourceStore:
             )
             s.add(con)
             s.add(pol)
-            s.commit()
+            try:
+                s.commit()
+            except IntegrityError:
+                # IDEMPOTENCY race: a concurrent apply of the SAME version committed between our
+                # existing-check and this commit, tripping UNIQUE(version). Collapse the loser into
+                # the idempotent path — re-fetch the winner's committed rows and return 200, never 500.
+                s.rollback()
+                return self._fetch_version(s, version)
             return self._con(con), self._pol(pol)
+
+    def _fetch_version(
+        self, s: Session, version: str
+    ) -> tuple[ConstitutionData, PolicyData] | None:
+        con = s.scalar(select(ConstitutionResource).where(ConstitutionResource.version == version))
+        if con is None:
+            return None
+        pol = s.scalar(
+            select(PolicyResource).where(PolicyResource.constitution_version == version)
+        )
+        return self._con(con), self._pol(pol)
 
     def get_constitution(self, version: str) -> ConstitutionData | None:
         with self._sf() as s:

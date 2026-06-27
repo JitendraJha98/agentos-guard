@@ -127,3 +127,62 @@ def test_apply_constitution_is_idempotent(store) -> None:
     assert con1.version == con2.version
     assert pol1.constitution_version == pol2.constitution_version
     assert len(rs.list_constitutions()) == 1  # no duplicate row
+
+
+def test_apply_constitution_concurrent_same_version_collapses_to_idempotent(store) -> None:
+    """IDEMPOTENCY race: two concurrent applies of the SAME NEW version both see
+    existing=None and both INSERT. The unique constraint on constitution.version fires
+    IntegrityError on the second commit. The loser must rollback, re-SELECT the winner's
+    committed rows, and return them (200 / one row) — NOT propagate the IntegrityError (500).
+
+    Interleaving is forced deterministically: the second apply's commit is wrapped so that
+    a *separate* session commits the conflicting rows first, then the real commit runs and
+    trips the UNIQUE constraint — exactly the lost-update window on multi-worker Postgres."""
+    from agentos_controlplane.resources import ResourceStore
+    from agentos_controlplane.store.models import ConstitutionResource, PolicyResource
+
+    rs = ResourceStore(store)
+    src = yaml.safe_load(_FIXTURE.read_text(encoding="utf-8"))
+
+    # Pre-compute the content-hash version + bundle so the concurrent "winner" inserts the
+    # SAME version rows the loser is about to insert.
+    from agentos_constitution import Constitution, compile_constitution
+
+    bundle = compile_constitution(Constitution.model_validate(src))
+    version = bundle.constitution_version
+
+    real_commit = type(store()).commit
+    injected = {"done": False}
+
+    def winning_commit(self):
+        # First time the loser's apply tries to commit its INSERT, the concurrent winner
+        # commits identical-version rows through a distinct session -> the real commit below
+        # then matches the UNIQUE(version) constraint and raises IntegrityError.
+        if not injected["done"]:
+            injected["done"] = True
+            with store() as w:
+                w.add(ConstitutionResource(name="winner", version=version, source=src))
+                w.add(
+                    PolicyResource(
+                        constitution_version=version,
+                        yaml_policy=bundle.yaml_policy,
+                        rego=bundle.rego,
+                        graduated_config=bundle.graduated_config,
+                        lists=bundle.lists,
+                        sequences=bundle.sequences,
+                    )
+                )
+                w.commit()
+        return real_commit(self)
+
+    import unittest.mock as mock
+
+    with mock.patch.object(type(store()), "commit", winning_commit):
+        con, pol = rs.apply_constitution("test", src)  # the loser
+
+    # Collapsed into the idempotent path: returns the winner's committed rows, no exception.
+    assert con.version == version
+    assert pol.constitution_version == version
+    assert con.name == "winner"  # proves we returned the re-fetched committed row
+    # exactly one row each — the loser's INSERT was rolled back.
+    assert len(rs.list_constitutions()) == 1
