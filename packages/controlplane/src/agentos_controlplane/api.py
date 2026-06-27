@@ -12,11 +12,13 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from agentos_controlplane.approvals import AlreadyResolvedError, ApprovalStore
+from agentos_controlplane.auth import make_require_token, resolve_api_token
 from agentos_controlplane.killswitch import KillSwitchStore
+from agentos_controlplane.resources import ResourceStore, VersionConflict
 from agentos_controlplane.store.models import ApprovalRequest, GovernanceReview
 
 
@@ -138,11 +140,88 @@ def build_kill_router(kill_store: KillSwitchStore) -> APIRouter:
     return router
 
 
-def create_app(store: ApprovalStore, kill_store: KillSwitchStore | None = None) -> FastAPI:
+class TrustProfileIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    trust_score: float = Field(ge=0.0, le=1.0)
+    band: dict | None = None
+    version: int | None = None  # required (== current) to update; omit/None to create
+
+
+class AbomIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    components: dict
+    version: int | None = None
+
+
+def build_resource_router(resources: ResourceStore) -> APIRouter:
+    """API-01 — declarative TrustProfile / Abom resources: validate (422), version (409), store."""
+    router = APIRouter()
+
+    @router.get("/trust-profiles")
+    def list_tp() -> list[dict]:
+        return [vars(d) for d in resources.list_trust_profiles()]
+
+    @router.get("/trust-profiles/{agent_id}")
+    def get_tp(agent_id: str) -> dict:
+        d = resources.get_trust_profile(agent_id)
+        if d is None:
+            raise HTTPException(status_code=404, detail="unknown trust_profile")
+        return vars(d)
+
+    @router.put("/trust-profiles/{agent_id}")
+    def put_tp(agent_id: str, body: TrustProfileIn) -> dict:
+        try:
+            d = resources.put_trust_profile(
+                agent_id,
+                trust_score=body.trust_score,
+                band=body.band,
+                expected_version=body.version,
+            )
+        except VersionConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return vars(d)
+
+    @router.get("/aboms")
+    def list_abom() -> list[dict]:
+        return [vars(d) for d in resources.list_aboms()]
+
+    @router.get("/aboms/{agent_id}")
+    def get_abom(agent_id: str) -> dict:
+        d = resources.get_abom(agent_id)
+        if d is None:
+            raise HTTPException(status_code=404, detail="unknown abom")
+        return vars(d)
+
+    @router.put("/aboms/{agent_id}")
+    def put_abom(agent_id: str, body: AbomIn) -> dict:
+        try:
+            d = resources.put_abom(agent_id, components=body.components, expected_version=body.version)
+        except VersionConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return vars(d)
+
+    return router
+
+
+def create_app(
+    store: ApprovalStore,
+    kill_store: KillSwitchStore | None = None,
+    resource_store: ResourceStore | None = None,
+    api_token: str | None = None,
+) -> FastAPI:
+    # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
+    # explicit arg -> AGENTOS_API_TOKEN env -> ephemeral random (logged) — never silently open.
+    token = resolve_api_token(api_token)
+    guard = [Depends(make_require_token(token))]
     app = FastAPI(title="agentos-guard control plane", version="0.1.0")
-    app.include_router(build_router(store))
+    app.state.api_token = token
+    app.include_router(build_router(store), dependencies=guard)
     # RUN-01/02: the kill-switch router is wired only when a kill_store is supplied —
     # existing create_app(store) callers keep working with no /kill routes.
     if kill_store is not None:
-        app.include_router(build_kill_router(kill_store))
+        app.include_router(build_kill_router(kill_store), dependencies=guard)
+    if resource_store is not None:
+        app.include_router(build_resource_router(resource_store), dependencies=guard)
     return app
