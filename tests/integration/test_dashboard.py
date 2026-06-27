@@ -229,3 +229,82 @@ def test_unauthenticated_resolve_redirects_and_does_not_resolve():
     # The action did NOT execute: the row is still pending.
     pending = [r.id for r in approvals.list_requests("pending")]
     assert approval_id in pending
+
+
+# --- Task 4: kill-switch view + actions (DASH-03) ------------------------------
+
+
+def _kill_app(sf, *, token="test-token"):
+    from agentos_controlplane.killswitch import KillSwitchStore
+
+    audit = AuditWriter(sf)
+    kill_store = KillSwitchStore(sf, audit)
+    app = create_app(
+        ApprovalStore(sf, audit),
+        kill_store=kill_store,
+        session_factory=sf,
+        api_token=token,
+        dashboard=True,
+    )
+    return app, kill_store
+
+
+def test_dashboard_kill_agent_flips_killswitch_and_lists_it():
+    from fastapi.testclient import TestClient
+
+    sf = _sf()
+    app, kill_store = _kill_app(sf)
+    client = TestClient(app, follow_redirects=False)
+    _login(client)
+    resp = client.post("/dashboard/kill/agent", data={"agent_id": "a", "reason": "rogue"})
+    assert resp.status_code == 303
+    status = kill_store.status("a")
+    assert status is not None and status.scope == "agent"
+    # The active kill renders on the page.
+    page = client.get("/dashboard/kill")
+    assert page.status_code == 200
+    assert "a" in page.text
+
+
+def test_dashboard_clear_agent_unkills():
+    import asyncio
+
+    from fastapi.testclient import TestClient
+
+    sf = _sf()
+    app, kill_store = _kill_app(sf)
+    asyncio.run(kill_store.kill("a", set_by="op", reason="rogue"))
+    client = TestClient(app, follow_redirects=False)
+    _login(client)
+    resp = client.post("/dashboard/kill/agent/clear", data={"agent_id": "a"})
+    assert resp.status_code == 303
+    assert kill_store.status("a") is None
+
+
+def test_dashboard_fleet_kill_kills_a_different_agent():
+    from fastapi.testclient import TestClient
+
+    sf = _sf()
+    app, kill_store = _kill_app(sf)
+    client = TestClient(app, follow_redirects=False)
+    _login(client)
+    resp = client.post("/dashboard/kill/fleet", data={"reason": "incident"})
+    assert resp.status_code == 303
+    status = kill_store.status("any-agent")
+    assert status is not None and status.scope == "fleet"
+    cleared = client.post("/dashboard/kill/fleet/clear", data={})
+    assert cleared.status_code == 303
+    assert kill_store.status("any-agent") is None
+
+
+def test_unauthenticated_kill_redirects_and_does_not_kill():
+    from fastapi.testclient import TestClient
+
+    sf = _sf()
+    app, kill_store = _kill_app(sf)
+    client = TestClient(app, follow_redirects=False)  # NO login
+    resp = client.post("/dashboard/kill/agent", data={"agent_id": "a", "reason": "rogue"})
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/dashboard/login"
+    # The action did NOT execute: the agent is not killed.
+    assert kill_store.status("a") is None

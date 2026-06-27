@@ -129,6 +129,48 @@ def build_dashboard_router(
         )
         return RedirectResponse("/dashboard/approvals", status_code=303)
 
+    # --- DASH-03: agent + fleet kill / clear --------------------------------
+    @router.get("/dashboard/kill", response_class=HTMLResponse)
+    def kill_page(request: Request, _: bool = Depends(require_session)):
+        active = kill_store.list_active() if kill_store is not None else []
+        return _TEMPLATES.TemplateResponse(request, "kill.html", {"active": active})
+
+    @router.post("/dashboard/kill/agent")
+    async def kill_agent(
+        _: bool = Depends(require_session),
+        agent_id: str = Form(...),
+        reason: str = Form(""),
+        set_by: str = Form("operator"),
+    ):
+        await kill_store.kill(agent_id, set_by=set_by, reason=reason)
+        return RedirectResponse("/dashboard/kill", status_code=303)
+
+    @router.post("/dashboard/kill/agent/clear")
+    async def clear_agent(
+        _: bool = Depends(require_session),
+        agent_id: str = Form(...),
+        set_by: str = Form("operator"),
+    ):
+        await kill_store.clear(agent_id, set_by=set_by)
+        return RedirectResponse("/dashboard/kill", status_code=303)
+
+    @router.post("/dashboard/kill/fleet")
+    async def kill_fleet(
+        _: bool = Depends(require_session),
+        reason: str = Form(""),
+        set_by: str = Form("operator"),
+    ):
+        await kill_store.kill_fleet(set_by=set_by, reason=reason)
+        return RedirectResponse("/dashboard/kill", status_code=303)
+
+    @router.post("/dashboard/kill/fleet/clear")
+    async def clear_fleet(
+        _: bool = Depends(require_session),
+        set_by: str = Form("operator"),
+    ):
+        await kill_store.clear_fleet(set_by=set_by)
+        return RedirectResponse("/dashboard/kill", status_code=303)
+
     return router
 
 
