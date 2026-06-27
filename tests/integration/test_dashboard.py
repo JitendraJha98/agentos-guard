@@ -103,3 +103,52 @@ def test_dashboard_off_by_default_no_login_route():
     client = TestClient(app)
     # Backward compat: the dashboard router is not mounted -> 404 (not 401/303).
     assert client.get("/dashboard/login").status_code == 404
+
+
+# --- Task 2: inventory + recent-decisions view (DASH-01) ------------------------
+
+
+def _login(client):
+    client.post("/dashboard/login", data={"token": "test-token"})
+
+
+def test_dashboard_renders_inventory_and_recent_decisions():
+    import asyncio
+
+    from agentos_contract import ActionType, AgentAction, Decision, Outcome, Reason
+    from fastapi.testclient import TestClient
+
+    sf = _sf()
+    # Seed a declared inventory component and a real decision audit record.
+    InventoryStore(sf).declare("agent-a", tools=["http_get"])
+    audit = AuditWriter(sf)
+    action = AgentAction(
+        agent_id="agent-a",
+        type=ActionType.tool_call,
+        target="http_get",
+        payload={"url": "https://api.example.com/data", "content": ""},
+    )
+    decision = Decision(
+        action_id=action.id,
+        outcome=Outcome.allow,
+        risk_score=0.1,
+        trust_score=0.5,
+        reasons=[Reason(stage="policy", code="no_match_allow")],
+    )
+    asyncio.run(audit.append(action, decision))
+
+    app = create_app(
+        ApprovalStore(sf, audit),
+        inventory_store=InventoryStore(sf),
+        session_factory=sf,
+        api_token="test-token",
+        dashboard=True,
+    )
+    client = TestClient(app)
+    _login(client)
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    # DASH-01: the declared component and the recent decision's outcome both render.
+    assert "http_get" in resp.text
+    assert "agent-a" in resp.text
+    assert "allow" in resp.text
