@@ -20,6 +20,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Float,
+    LargeBinary,
     String,
     Text,
     Uuid,
@@ -65,6 +66,11 @@ class AuditRecord(Base):
     seq: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True)
     prev_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     record_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # AUD-08: detached per-record EdDSA signature over SIG_DOMAIN + canonical_json(body),
+    # and a short fingerprint of the signing public key. Nullable: a writer without a signer
+    # produces unsigned records (backward compat); the production path always signs.
+    signature: Mapped[str | None] = mapped_column(Text, nullable=True)        # 64-byte sig, hex
+    signing_key_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Generic JSON (NOT JSONB) so the column maps to SQLite TEXT-JSON now and to
     # Postgres JSONB at the production target.
     body: Mapped[dict] = mapped_column(JSON, nullable=False)
@@ -152,4 +158,45 @@ class GovernanceReview(Base):
     )
     closed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class KillSwitch(Base):
+    """RUN-01/02 — CURRENT kill-switch state (immutable history lives in the audit chain).
+
+    `target` is an `agent_id`, or "*" for the whole fleet. This row is the durable
+    backing for the in-memory `KillSwitchStore` (the hot-path lookup); the operator
+    free-text `reason` lives HERE only, never in the audit-event body (so the 4d
+    secret-gate on `append_event` can never block an emergency kill).
+    """
+
+    __tablename__ = "kill_switch"
+
+    target: Mapped[str] = mapped_column(String(255), primary_key=True)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    set_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ChainCheckpoint(Base):
+    """AUD-05 — an external anchor binding the chain head {seq, record_hash} to an unforgeable proof.
+
+    Checkpointing is operator-/schedule-driven (NOT on the per-action hot path). The CI verifier
+    re-derives the head hash at `seq` and proves it still matches `record_hash` (no rewrite of
+    checkpointed history) and that the chain is no shorter than a checkpointed seq (no truncation).
+    """
+
+    __tablename__ = "chain_checkpoint"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    seq: Mapped[int] = mapped_column(BigInteger, nullable=False)          # the head seq anchored
+    record_hash: Mapped[str] = mapped_column(Text, nullable=False)       # the head record_hash anchored
+    anchor_kind: Mapped[str] = mapped_column(String(32), nullable=False)  # local_ed25519_v1 | rfc3161_v1
+    proof: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)     # opaque per kind (sig | DER TimeStampResp)
+    tsa_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )

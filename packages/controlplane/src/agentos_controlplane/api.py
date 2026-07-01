@@ -16,6 +16,7 @@ from fastapi import APIRouter, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from agentos_controlplane.approvals import AlreadyResolvedError, ApprovalStore
+from agentos_controlplane.killswitch import KillSwitchStore
 from agentos_controlplane.store.models import ApprovalRequest, GovernanceReview
 
 
@@ -27,6 +28,19 @@ class ResolveRequest(BaseModel):
     note: str | None = Field(default=None, max_length=512)
     # POL-13: the ONLY door a temporary exception comes through (human-ratified).
     exception_expires_at: datetime | None = None
+
+
+class KillRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    set_by: str = Field(max_length=128)  # bounded operator input -> 422
+    reason: str | None = Field(default=None, max_length=512)
+
+
+class ClearRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    set_by: str = Field(max_length=128)
 
 
 def _approval_json(row: ApprovalRequest) -> dict:
@@ -91,7 +105,44 @@ def build_router(store: ApprovalStore) -> APIRouter:
     return router
 
 
-def create_app(store: ApprovalStore) -> FastAPI:
+def build_kill_router(kill_store: KillSwitchStore) -> APIRouter:
+    """RUN-01/02 — operator kill-switch endpoints. POST is used for clear too (avoids a
+    DELETE-with-body). The free-text reason rides only into the kill_switch table; the
+    audited toggle body carries short identifiers only (handled in KillSwitchStore)."""
+    router = APIRouter()
+
+    @router.get("/kill")
+    def list_kills() -> list[dict]:
+        return kill_store.list_active()
+
+    @router.post("/kill/agents/{agent_id}")
+    async def kill_agent(agent_id: str, body: KillRequest) -> dict:
+        await kill_store.kill(agent_id, set_by=body.set_by, reason=body.reason or "")
+        return {"target": agent_id, "scope": "agent", "active": True}
+
+    @router.post("/kill/agents/{agent_id}/clear")
+    async def clear_agent(agent_id: str, body: ClearRequest) -> dict:
+        await kill_store.clear(agent_id, set_by=body.set_by)
+        return {"target": agent_id, "scope": "agent", "active": False}
+
+    @router.post("/kill/fleet")
+    async def kill_fleet(body: KillRequest) -> dict:
+        await kill_store.kill_fleet(set_by=body.set_by, reason=body.reason or "")
+        return {"target": "*", "scope": "fleet", "active": True}
+
+    @router.post("/kill/fleet/clear")
+    async def clear_fleet(body: ClearRequest) -> dict:
+        await kill_store.clear_fleet(set_by=body.set_by)
+        return {"target": "*", "scope": "fleet", "active": False}
+
+    return router
+
+
+def create_app(store: ApprovalStore, kill_store: KillSwitchStore | None = None) -> FastAPI:
     app = FastAPI(title="agentos-guard control plane", version="0.1.0")
     app.include_router(build_router(store))
+    # RUN-01/02: the kill-switch router is wired only when a kill_store is supplied —
+    # existing create_app(store) callers keep working with no /kill routes.
+    if kill_store is not None:
+        app.include_router(build_kill_router(kill_store))
     return app
