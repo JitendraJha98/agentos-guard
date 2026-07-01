@@ -56,7 +56,8 @@ class Wired:
         self.coordinator = StoreApprovalCoordinator(
             self.approvals, audit, PostureMap(), deadline_s=5.0, poll_s=0.05
         )
-        self.client = TestClient(create_app(self.approvals))
+        self.client = TestClient(create_app(self.approvals, api_token="test-token"))
+        self.client.headers["Authorization"] = "Bearer test-token"
         self.pipeline = Pipeline(
             identity=IdentityStage(registry.identity),
             policy=ConstitutionPolicyEngine(

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block body %}
+<h2>agent inventory</h2>
+<table border="1">
+  <thead><tr><th>agent_id</th><th>kind</th><th>name</th><th>source</th><th>last_seen_at</th></tr></thead>
+  <tbody>
+    {% for c in components %}
+    <tr>
+      <td>{{ c.agent_id }}</td>
+      <td>{{ c.kind }}</td>
+      <td>{{ c.name }}</td>
+      <td>{{ c.source }}</td>
+      <td>{{ c.last_seen_at }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5">no components</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>recent decisions</h2>
+<table border="1">
+  <thead><tr><th>seq</th><th>agent_id</th><th>action_type</th><th>outcome</th><th>kind</th></tr></thead>
+  <tbody>
+    {% for d in decisions %}
+    <tr>
+      <td>{{ d.seq }}</td>
+      <td>{{ d.agent_id }}</td>
+      <td>{{ d.action_type }}</td>
+      <td>{{ d.outcome }}</td>
+      <td>{{ d.kind }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5">no decisions</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
