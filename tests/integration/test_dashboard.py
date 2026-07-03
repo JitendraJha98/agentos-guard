@@ -109,6 +109,19 @@ def test_non_ascii_cookie_redirects_to_login_not_500():
     assert resp.headers["location"] == "/dashboard/login"
 
 
+def test_non_ascii_login_token_redirects_with_error_not_500():
+    """A user pasting a non-ASCII string into the login form reaches
+    secrets.compare_digest with a non-ASCII str -> TypeError. The login must
+    treat it as a wrong token (303 back to the error page), NOT a 500 — the
+    same fail-closed contract as the session-cookie gate above."""
+    from fastapi.testclient import TestClient
+
+    client = TestClient(_dashboard_app(_sf()), follow_redirects=False)
+    resp = client.post("/dashboard/login", data={"token": "café"})
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/dashboard/login?error=1"
+
+
 def test_dashboard_off_by_default_no_login_route():
     from fastapi.testclient import TestClient
 

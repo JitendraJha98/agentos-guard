@@ -81,7 +81,14 @@ def build_dashboard_router(
 
     @router.post("/dashboard/login")
     def login(token: str = Form(...)):
-        if not secrets.compare_digest(token, api_token):
+        try:
+            ok = secrets.compare_digest(token, api_token)
+        except TypeError:
+            # A non-ASCII form value (any pasted string) makes compare_digest
+            # refuse; treat it as a wrong token (fail closed to the error
+            # redirect), not a 500 — same contract as the session-cookie gate.
+            ok = False
+        if not ok:
             return RedirectResponse("/dashboard/login?error=1", status_code=303)
         resp = RedirectResponse("/dashboard", status_code=303)
         resp.set_cookie(_COOKIE, api_token, httponly=True, samesite="strict")

@@ -31,7 +31,16 @@ def make_require_token(token: str):
 
     def require_token(authorization: str | None = Header(default=None)) -> None:
         # constant-time compare; reject missing/short/incorrect uniformly as 401.
-        if authorization is None or not secrets.compare_digest(authorization, expected):
+        ok = False
+        if authorization is not None:
+            try:
+                ok = secrets.compare_digest(authorization, expected)
+            except TypeError:
+                # A raw high-byte Authorization header decodes into a non-ASCII str,
+                # which compare_digest refuses; treat it as an invalid token (fail
+                # closed to the uniform 401), not a 500.
+                ok = False
+        if not ok:
             raise HTTPException(status_code=401, detail="invalid or missing API token")
 
     return require_token
