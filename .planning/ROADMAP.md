@@ -24,9 +24,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Walking Skeleton** - One agent, one tool, one principle proven end-to-end: contract → pipeline → OPA → risk → graduated → hash-chained audit, with a red-team test that breaks CI if the policy is removed (completed 2026-06-01)
 - [x] **Phase 2: Full Interception Coverage** - All five action types (tool/model/memory/MCP/delegation) intercepted, normalized, and verified with a no-silent-gaps coverage check (completed 2026-06-07)
-- [x] **Phase 3: Constitution, Graduated Response, Approvals & Sequence Intent** - Human-readable Constitution compiles to OPA/Rego with cited-principle interpreter; full graduated outcome spectrum with policy-driven thresholds, trust-modulates-only, a working approval workflow, and sequence/lineage intent correlation (SEC-13, pulled forward — the durable AGT gap) proven by a 5-minute `rename_then_drop` wedge demo
-- [ ] **Phase 4: Tamper-Evident Audit & Operator Containment** - Provenance-rich hash-chained audit with fail-closed redaction and a CI verifier; agent and fleet kill switches
-- [ ] **Phase 5: Control Plane, SDK & Minimal Dashboard** - Declarative resource API on Postgres with compile-on-write, the full Python SDK surface, a zero-infra quickstart (SQLite + in-process opa-wasm, single `pip install` — SDK-05), and a read-only dashboard with approvals and kill switch
+- [x] **Phase 3: Constitution, Graduated Response, Approvals & Sequence Intent** - Human-readable Constitution compiles to OPA/Rego with cited-principle interpreter; full graduated outcome spectrum with policy-driven thresholds, trust-modulates-only, a working approval workflow, and sequence/lineage intent correlation (SEC-13, pulled forward — the durable AGT gap) proven by a 5-minute `rename_then_drop` wedge demo (completed 2026-06-12)
+- [x] **Phase 4: Tamper-Evident Audit & Operator Containment** - Provenance-rich hash-chained audit with per-record Ed25519 signatures, fail-closed redaction + secret-scan last gate, a CI chain verifier, RFC-3161 external anchoring, and agent + fleet kill switches (completed 2026-07-03)
+- [x] **Phase 5: Control Plane, SDK & Minimal Dashboard** - Declarative resource API with compile-on-write and optimistic versioning, gated self-registration + agent inventory, the `ControlPlaneClient` SDK, a zero-infra quickstart (SQLite + in-process opa-wasm — SDK-05), and a cookie-gated dashboard with approvals and kill switch (completed 2026-07-03)
 - [ ] **Phase 6: Observability, Compliance & Red-Team Gate** - OTel spans/metrics, OWASP/NIST/EU-minimal compliance mapping, and the pytest-native red-team layer that statistically gates CI (closes Phase 0)
 - [ ] **Phase 7: Trust, Reputation & Identity Hardening** - Longitudinal reputation, bounded delegation trust chains, agent certificates, and reconciliation loops
 - [ ] **Phase 8: Full Security Engine & MCP Gateway** - Data-exfil, secret-leakage, tool-poisoning, supply-chain, plus the ASI05/06/07 gap detectors and an MCP security gateway
@@ -224,9 +224,9 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 |-------|----------------|--------|-----------|
 | 1. Walking Skeleton | 6/6 | Complete    | 2026-06-01 |
 | 2. Full Interception Coverage | 1/1 | Complete    | 2026-06-07 |
-| 3. Constitution, Graduated Response, Approvals & Sequence Intent | 0/TBD | Not started | - |
-| 4. Tamper-Evident Audit & Operator Containment | 0/TBD | Not started | - |
-| 5. Control Plane, SDK & Minimal Dashboard | 0/TBD | Not started | - |
+| 3. Constitution, Graduated Response, Approvals & Sequence Intent | 7/7 | Complete    | 2026-06-12 |
+| 4. Tamper-Evident Audit & Operator Containment | 6/6 | Complete    | 2026-07-03 |
+| 5. Control Plane, SDK & Minimal Dashboard | 6/6 | Complete    | 2026-07-03 |
 | 6. Observability, Compliance & Red-Team Gate | 0/TBD | Not started | - |
 | 7. Trust, Reputation & Identity Hardening | 0/TBD | Not started | - |
 | 8. Full Security Engine & MCP Gateway | 0/TBD | Not started | - |

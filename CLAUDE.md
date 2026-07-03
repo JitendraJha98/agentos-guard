@@ -47,5 +47,5 @@ Use these entry points:
 - `/gsd-quick` for small fixes, doc updates, and ad-hoc tasks
 - `/gsd-debug` for investigation and bug fixing
 
-Next step: `/gsd:plan-phase 1` (Walking Skeleton). Use judgment on trivial tasks per "Working in this repo" above.
+Next step: `/gsd:plan-phase 6` (Observability, Compliance & Red-Team Gate) — Phases 1–5 are complete and merged. Use judgment on trivial tasks per "Working in this repo" above.
 <!-- GSD:workflow-end -->

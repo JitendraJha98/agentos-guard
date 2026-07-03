@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: phase_complete
-stopped_at: Phase 3 complete (7 slices); branch pushed for PR review. Live-interpreter checkpoint (tests/integration/test_interpreter_live.py with ANTHROPIC_API_KEY) delegated to reviewing developers
-last_updated: 2026-06-12
-last_activity: 2026-06-12
+stopped_at: Phases 4 & 5 complete and merged to development (PRs #12/#14, 2026-07-03); post-merge review fixed the non-ASCII compare_digest 500s (API auth gate + dashboard login) and relocated the phase 3-5 execution plans into .planning/phases/
+last_updated: 2026-07-03
+last_activity: 2026-07-03
 progress:
   total_phases: 14
-  completed_phases: 3
-  total_plans: 14
-  completed_plans: 14
-  percent: 21
+  completed_phases: 5
+  total_plans: 26
+  completed_plans: 26
+  percent: 36
 ---
 
 # Project State
@@ -21,22 +21,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-01)
 
 **Core value:** Every agent action is intercepted at runtime and returned an explainable, graduated decision grounded in policy + a human-readable constitution, with tamper-evident audit evidence — making unsafe agent behavior structurally impossible rather than merely unlikely.
-**Current focus:** Phase 3 — Constitution, graduated response, approvals & sequence intent (SEC-13 pulled forward 2026-06-10; see ROADMAP.md)
+**Current focus:** Phase 6 — Observability, Compliance & Red-Team Gate (next up; Phases 1–5 complete)
 
 ## Current Position
 
-Phase: 3
-Plan: 7/7 slices complete (superpowers workflow)
-Status: Complete — pending close-out
-Last activity: 2026-06-12
+Phase: 5
+Plan: 6/6 slices complete (superpowers workflow; phase history in .planning/phases/05-control-plane-sdk-dashboard/)
+Status: Complete — merged to development 2026-07-03 (PR #12/#14); next is Phase 6
+Last activity: 2026-07-03
 
-Progress: [██████████] 100% (Phase 3 complete)
+Progress: [██████████] 100% (Phases 1–5 complete; 5/14 phases done)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 14
+- Total plans completed: 26
 - Average duration: —
 - Total execution time: 0 hours
 
@@ -47,6 +47,8 @@ Progress: [██████████] 100% (Phase 3 complete)
 | 1 | 6 | - | - |
 | 2 | 1 | - | - |
 | 3 | 7 | - | - |
+| 4 | 6 | - | - |
+| 5 | 6 | - | - |
 
 **Recent Trend:**
 
