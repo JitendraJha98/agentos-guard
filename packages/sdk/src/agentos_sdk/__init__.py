@@ -6,6 +6,7 @@ delegation via the `governed_*` wrappers — all sharing one enforcement core
 (`enforce`) and one coverage registry (`coverage`, INT-06: no silent gaps).
 """
 
+from agentos_sdk.client import ControlPlaneClient, ControlPlaneError
 from agentos_sdk.coverage import (
     InterceptionGapError,
     coverage_matrix,
@@ -35,6 +36,9 @@ from agentos_sdk.wrappers import (
 )
 
 __all__ = [
+    # control-plane client (SDK-02/04: self-register + resource CRUD + approvals)
+    "ControlPlaneClient",
+    "ControlPlaneError",
     # PEP middleware (tool + model native hooks)
     "GovernanceMiddleware",
     # normalizers (one per action type)

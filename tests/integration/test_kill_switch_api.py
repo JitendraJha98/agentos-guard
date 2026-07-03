@@ -59,7 +59,10 @@ class Wired:
         from agentos_controlplane.approvals import ApprovalStore
 
         approvals = ApprovalStore(self.store, audit)
-        self.client = TestClient(create_app(approvals, kill_store=self.kill_store))
+        self.client = TestClient(
+            create_app(approvals, kill_store=self.kill_store, api_token="test-token")
+        )
+        self.client.headers["Authorization"] = "Bearer test-token"
         self.pipeline = Pipeline(
             identity=IdentityStage(registry.identity),
             policy=ConstitutionPolicyEngine(
@@ -173,6 +176,8 @@ def test_create_app_without_kill_store_has_no_kill_routes() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     create_all(engine)
     sf = create_session_factory(engine)
-    app = create_app(ApprovalStore(sf, AuditWriter(sf)))
+    app = create_app(ApprovalStore(sf, AuditWriter(sf)), api_token="test-token")
     client = TestClient(app)
+    client.headers["Authorization"] = "Bearer test-token"
+    # 404 (route absent) not 401 — the token is valid; the /kill route simply isn't wired.
     assert client.get("/kill").status_code == 404

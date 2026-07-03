@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block body %}
+<h2>active kill switches</h2>
+<table border="1">
+  <thead><tr><th>target</th><th>scope</th><th>reason</th><th>clear</th></tr></thead>
+  <tbody>
+    {% for k in active %}
+    <tr>
+      <td>{{ k.target }}</td>
+      <td>{{ k.scope }}</td>
+      <td>{{ k.reason }}</td>
+      <td>
+        {% if k.scope == "fleet" %}
+        <form method="post" action="/dashboard/kill/fleet/clear" style="display:inline">
+          <button type="submit">clear fleet</button>
+        </form>
+        {% else %}
+        <form method="post" action="/dashboard/kill/agent/clear" style="display:inline">
+          <input type="hidden" name="agent_id" value="{{ k.target }}">
+          <button type="submit">clear</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">no active kills</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>kill an agent</h2>
+<form method="post" action="/dashboard/kill/agent">
+  <label>agent_id: <input type="text" name="agent_id"></label>
+  <label>reason: <input type="text" name="reason"></label>
+  <button type="submit">kill agent</button>
+</form>
+
+<h2>fleet kill</h2>
+<form method="post" action="/dashboard/kill/fleet">
+  <label>reason: <input type="text" name="reason"></label>
+  <button type="submit">kill fleet</button>
+</form>
+{% endblock %}

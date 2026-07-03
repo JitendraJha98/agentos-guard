@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head>
+  <title>agentos-guard</title>
+  <script src="https://unpkg.com/htmx.org@2"></script>
+</head>
+<body>
+  <h1>agentos-guard</h1>
+  <nav>
+    <a href="/dashboard">inventory</a> |
+    <a href="/dashboard/approvals">approvals</a> |
+    <a href="/dashboard/kill">kill switch</a>
+  </nav>
+  <hr>
+  {% block body %}{% endblock %}
+</body>
+</html>
