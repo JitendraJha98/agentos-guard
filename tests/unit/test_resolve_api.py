@@ -44,7 +44,9 @@ def approvals(store) -> ApprovalStore:
 
 @pytest.fixture
 def client(approvals) -> TestClient:
-    return TestClient(create_app(approvals))
+    c = TestClient(create_app(approvals, api_token="test-token"))
+    c.headers["Authorization"] = "Bearer test-token"
+    return c
 
 
 def _park(approvals: ApprovalStore) -> UUID:

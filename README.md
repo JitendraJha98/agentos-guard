@@ -9,7 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![CI](https://github.com/JitendraJha98/agentos-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/JitendraJha98/agentos-guard/actions/workflows/ci.yml)
-[![Status: alpha](https://img.shields.io/badge/status-alpha%20·%20phase%202%2F14-orange.svg)](.planning/ROADMAP.md)
+[![Status: alpha](https://img.shields.io/badge/status-alpha%20·%20phase%205%2F14-orange.svg)](.planning/ROADMAP.md)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#-contributing)
 
 [**Manifesto**](docs/architecture/00-manifesto.md) · [**Architecture**](docs/architecture/) · [**Roadmap**](.planning/ROADMAP.md) · [**vs Microsoft AGT**](docs/architecture/30-comparison-agt.md)
@@ -121,8 +121,30 @@ sharing one enforcement core, delegation capturing `parent_action_id` lineage. A
 check proves **no silent gaps**, and a bypass attempt (un-instrumented / no-identity action) is
 fail-closed denied, not silently allowed.
 
-**🛠️ Next (Phase 3):** authoring a human-readable constitution + approvals → verifiable audit + kill
-switches → control-plane API + SDK + dashboard → compliance + the CI red-team gate.
+**✅ Shipped (Phase 3 — constitution, graduated response, approvals & sequence intent):** a
+human-readable YAML constitution **compiles to OPA/Rego** (WASM, in-process), decisions span the
+full graduated spectrum with policy-driven thresholds (trust modulates but **never relaxes the
+policy floor**), a working human-approval workflow with time-boxed ratified exceptions, an
+advisory semantic interpreter (Anthropic/NVIDIA adapters, restrict-only clamp), and **cross-action
+sequence-intent correlation** (SEC-13) — proven by the 5-minute
+[`rename_then_drop` wedge demo](examples/wedge_demo.py).
+
+**✅ Shipped (Phase 4 — tamper-evident audit & operator containment):** every audit record is
+**signed (Ed25519)** over a pinned canonical body, a CI-runnable chain verifier
+(`python -m agentos_controlplane.audit_verify`) recomputes hashes/links/signatures and detects
+truncation, chain heads anchor externally via **RFC-3161 timestamps**, a fail-closed
+**secret-scan last gate** keeps leaked credentials out of audit bodies, and operators get **agent
++ fleet kill switches** that halt a rogue agent at stage 0 of the pipeline.
+
+**✅ Shipped (Phase 5 — control plane, SDK & minimal dashboard):** a shared-token **control-plane
+API** (TrustProfile/ABOM resources with optimistic versioning, constitution **compile-on-write**,
+agent inventory & discovery), gated agent **self-registration**, a Python
+**`ControlPlaneClient`** SDK, a **zero-infra quickstart** (`agentos-quickstart` — SQLite +
+in-process opa-wasm, no Docker), and a cookie-gated **operator dashboard** (inventory · approvals
+· kill switch).
+
+**🛠️ Next (Phase 6):** OTel spans/metrics, OWASP/NIST/EU-minimal compliance mapping, and the
+pytest-native red-team layer that statistically gates CI — closing out Phase 0.
 See the 14-phase [roadmap](.planning/ROADMAP.md).
 
 ## ⚡ Explore from source
@@ -135,6 +157,9 @@ cd agentos-guard
 
 uv sync            # install the workspace + dev tooling from the lockfile
 uv run pytest      # run the suite, including the red-team CI gate
+
+uv run agentos-quickstart   # zero-infra governed loop: allow + deny + signed audit, on SQLite
+uv run python examples/wedge_demo.py   # the rename_then_drop sequence-intent wedge (SEC-13)
 ```
 
 > The policy layer compiles Rego to WASM, so a recent [`opa`](https://www.openpolicyagent.org/docs/cli)

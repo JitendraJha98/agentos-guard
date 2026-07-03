@@ -20,8 +20,11 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Float,
+    Integer,
+    LargeBinary,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
     func,
 )
@@ -65,6 +68,11 @@ class AuditRecord(Base):
     seq: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True)
     prev_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     record_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # AUD-08: detached per-record EdDSA signature over SIG_DOMAIN + canonical_json(body),
+    # and a short fingerprint of the signing public key. Nullable: a writer without a signer
+    # produces unsigned records (backward compat); the production path always signs.
+    signature: Mapped[str | None] = mapped_column(Text, nullable=True)        # 64-byte sig, hex
+    signing_key_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Generic JSON (NOT JSONB) so the column maps to SQLite TEXT-JSON now and to
     # Postgres JSONB at the production target.
     body: Mapped[dict] = mapped_column(JSON, nullable=False)
@@ -152,4 +160,150 @@ class GovernanceReview(Base):
     )
     closed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class KillSwitch(Base):
+    """RUN-01/02 — CURRENT kill-switch state (immutable history lives in the audit chain).
+
+    `target` is an `agent_id`, or "*" for the whole fleet. This row is the durable
+    backing for the in-memory `KillSwitchStore` (the hot-path lookup); the operator
+    free-text `reason` lives HERE only, never in the audit-event body (so the 4d
+    secret-gate on `append_event` can never block an emergency kill).
+    """
+
+    __tablename__ = "kill_switch"
+
+    target: Mapped[str] = mapped_column(String(255), primary_key=True)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    set_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ChainCheckpoint(Base):
+    """AUD-05 — an external anchor binding the chain head {seq, record_hash} to an unforgeable proof.
+
+    Checkpointing is operator-/schedule-driven (NOT on the per-action hot path). The CI verifier
+    re-derives the head hash at `seq` and proves it still matches `record_hash` (no rewrite of
+    checkpointed history) and that the chain is no shorter than a checkpointed seq (no truncation).
+    """
+
+    __tablename__ = "chain_checkpoint"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    seq: Mapped[int] = mapped_column(BigInteger, nullable=False)          # the head seq anchored
+    record_hash: Mapped[str] = mapped_column(Text, nullable=False)       # the head record_hash anchored
+    anchor_kind: Mapped[str] = mapped_column(String(32), nullable=False)  # local_ed25519_v1 | rfc3161_v1
+    proof: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)     # opaque per kind (sig | DER TimeStampResp)
+    tsa_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class TrustProfile(Base):
+    """Declarative TrustProfile resource (API-01). The current trust posture for an agent,
+    versioned for optimistic concurrency. `band` is an optional graduated-response band config.
+    Keyed by agent_id (one current profile per agent); the Agent row keeps the seed trust_score.
+
+    `version` is SQLAlchemy's `version_id_col`: every UPDATE is emitted as
+    `... WHERE agent_id = :id AND version = :current`, the new version is computed by the ORM,
+    and a row already advanced by a concurrent writer makes the UPDATE match zero rows ->
+    StaleDataError. This is an atomic SQL-level guard that survives the Postgres target
+    (distinct connections, READ COMMITTED), not a non-atomic Python read-then-compare."""
+
+    __tablename__ = "trust_profile"
+
+    agent_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    trust_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    band: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __mapper_args__ = {"version_id_col": version}
+
+
+class ConstitutionResource(Base):
+    """Declarative Constitution resource (API-01/02). One row per applied version; `version` is the
+    content-hash constitution_version (idempotent apply). `source` is the authored document (JSON).
+
+    Class name is ConstitutionResource (NOT Constitution) so it never collides with the Pydantic
+    `agentos_constitution.Constitution` the compiler validates; the table is `constitution`."""
+
+    __tablename__ = "constitution"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    version: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)  # constitution_version
+    source: Mapped[dict] = mapped_column(JSON, nullable=False)  # the authored document, verbatim
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class PolicyResource(Base):
+    """The compile-on-write output for a Constitution version (API-02). Stores the Rego + the
+    reviewable YAML middle layer + graduated/lists/sequences metadata the engine consumes.
+
+    Persisted in the SAME transaction as its ConstitutionResource; keyed (unique) by
+    constitution_version so apply stays idempotent on the content-hash version."""
+
+    __tablename__ = "policy"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    constitution_version: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    yaml_policy: Mapped[str] = mapped_column(Text, nullable=False)
+    rego: Mapped[str] = mapped_column(Text, nullable=False)
+    graduated_config: Mapped[dict] = mapped_column(JSON, nullable=False)
+    lists: Mapped[dict] = mapped_column(JSON, nullable=False)
+    sequences: Mapped[list] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class Abom(Base):
+    """Declarative Agent Bill of Materials resource (API-01 / ABOM-01 seed). Phase 5 only
+    validates/versions/stores it; provenance + vuln-impact analysis are Phase 8/14. Keyed by
+    agent_id (current ABOM per agent), version-incremented for optimistic concurrency.
+
+    `version` is the `version_id_col` (see TrustProfile): the atomic SQL-level optimistic guard
+    SQLAlchemy enforces on every UPDATE, raising StaleDataError on a concurrent stale write."""
+
+    __tablename__ = "abom"
+
+    agent_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    components: Mapped[dict] = mapped_column(JSON, nullable=False)  # {models,prompts,tools,mcp:[...]}
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __mapper_args__ = {"version_id_col": version}
+
+
+class InventoryComponent(Base):
+    """DISC-01/02 — an authoritative inventory row: one component (a tool/prompt/memory/etc.) tied to
+    an agent. `source` is 'declared' (registration manifest, authoritative) or 'observed' (reconciled
+    from activity). Unique on (agent_id, kind, name) so declare+observe of the same component
+    reconcile into ONE row."""
+
+    __tablename__ = "inventory_component"
+    __table_args__ = (UniqueConstraint("agent_id", "kind", "name", name="uq_inventory_component"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)   # tool|prompt|memory|model|mcp|delegation
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)  # declared|observed
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )

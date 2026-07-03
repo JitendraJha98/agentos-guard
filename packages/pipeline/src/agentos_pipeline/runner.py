@@ -94,11 +94,37 @@ class ExceptionLookup(Protocol):
     ) -> Mapping[str, datetime]: ...
 
 
+class KillVerdict(Protocol):
+    """Structural shape of a RUN-01/02 kill (KillSwitchStore.KillStatus satisfies it)."""
+
+    scope: str   # "agent" | "fleet"
+    reason: str
+
+
+class KillSwitchLookup(Protocol):
+    """The injected RUN-01/02 seam (KillSwitchStore.status satisfies it).
+
+    Sync and IN-MEMORY: the hot-path stage-0 check is one lookup, NEVER a per-action
+    DB read (mirrors the PIPE-06 own-cache discipline). Returns the active kill for
+    `agent_id` (fleet kills shadow everyone), or None when the agent is not killed.
+    """
+
+    def status(self, agent_id: str) -> "KillVerdict | None": ...
+
+
 def _is_redaction_error(exc: BaseException) -> bool:
     """Structurally detect the audit writer's RedactionError (D-15) without
     importing the control plane (this package's one internal dependency is the
     contract — the same structural-typing discipline as the injected seams)."""
     return any(c.__name__ == "RedactionError" for c in type(exc).__mro__)
+
+
+def _is_secret_leak_error(exc: BaseException) -> bool:
+    """Structurally detect the audit writer's SecretLeakError (AUD-04 last gate)
+    — same control-plane-free discipline as `_is_redaction_error`. Used only to
+    LABEL the fail-safe with a distinct, operator-visible reason; the outcome is
+    still the fail-closed per-class posture (the leak is fatal to the record)."""
+    return any(c.__name__ == "SecretLeakError" for c in type(exc).__mro__)
 
 
 class Pipeline:
@@ -118,6 +144,7 @@ class Pipeline:
         exceptions: ExceptionLookup | None = None,
         sequences: list[dict] | None = None,
         correlator: "SequenceCorrelator | None" = None,
+        kill_switch: KillSwitchLookup | None = None,
     ) -> None:
         self._identity = identity
         self._policy = policy
@@ -141,6 +168,9 @@ class Pipeline:
         # POL-13: the temporary-exception lookup. None default: the transform
         # never runs and deny floors stand exactly as before.
         self._exceptions = exceptions
+        # RUN-01/02: the operator kill-switch lookup (in-memory, hot-path). None
+        # default: the stage-0 check never runs and behavior is unchanged (backward compat).
+        self._kill_switch = kill_switch
 
     async def evaluate(self, action: AgentAction) -> Decision:
         # Mutable holder: _evaluate records the computed floor as soon as it is
@@ -153,6 +183,30 @@ class Pipeline:
 
     async def _evaluate(self, action: AgentAction, floor_box: list[Outcome | None]) -> Decision:
         reasons: list[Reason] = []
+
+        # Stage 0 — Kill switch (RUN-01/02): an operator halt denies this agent's actions
+        # immediately, BEFORE any other stage. Fleet kill denies everyone. The lookup is
+        # in-memory (no per-action DB read on the hot path). Placing kill ahead of identity
+        # is the strongest halt — a killed agent is denied even with a valid token; a forged
+        # token claiming a NON-killed id is still caught by identity afterward. Audited like
+        # the identity short-circuit (evidence the action was blocked); no engine ran, so the
+        # decision carries no constitution/policy versions.
+        if self._kill_switch is not None:
+            kv = self._kill_switch.status(action.agent_id)
+            if kv is not None:
+                floor_box[0] = Outcome.deny  # an operator kill may NEVER relax
+                reasons.append(
+                    Reason(
+                        stage="killswitch",
+                        code=f"{kv.scope}_killed",
+                        detail=kv.reason[:512],
+                    )
+                )
+                decision = Decision(
+                    action_id=action.id, outcome=Outcome.deny, reasons=reasons
+                )
+                await self._append_with_redaction_fallback(action, decision)
+                return decision  # TERMINAL — identity/policy/risk never run
 
         # Stage 1 — Identity & Trust (IDN-02, TRST-01); short-circuit on forged/unknown.
         ident: IdentityVerdict = self._identity.verify(action)
@@ -489,6 +543,19 @@ class Pipeline:
                 detail=type(exc).__name__,  # exception CLASS only, never payload
             )
         ]
+        # AUD-04 (4d review): a secret-detector last-gate hit reaches the fail-safe like
+        # any other audit failure, but it is NOT a generic backend outage — surface a
+        # DISTINCT, operator-visible reason so an operator can tell a true leak (or a
+        # noisy opaque token that tripped the entropy gate) from an unrelated failure.
+        # Label only (the outcome stays the fail-closed posture); CLASS only, never payload.
+        if _is_secret_leak_error(exc):
+            reasons.append(
+                Reason(
+                    stage="pipeline",
+                    code="secret_leak_in_audit_body",
+                    detail=type(exc).__name__,
+                )
+            )
         # PIPE-09: a fail-OPEN proceeds only with a human escalation riding on it.
         side_effects = [SideEffect.notify] if posture is FailPosture.open else []
         decision = Decision(

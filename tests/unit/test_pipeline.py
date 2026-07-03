@@ -818,6 +818,35 @@ def test_fail_open_without_audit_record_becomes_deny() -> None:
     assert any(r.code == "fail_open_unaudited_demoted_to_deny" for r in decision.reasons)
 
 
+def test_secret_leak_in_audit_body_surfaces_distinct_operator_reason() -> None:
+    """4d review (required): a SecretLeakError from the audit gate must NOT be reported as a
+    generic control_plane_failure — the fail-safe adds a DISTINCT, operator-visible
+    `secret_leak_in_audit_body` reason so an operator can tell a true leak (or a noisy opaque
+    token that tripped the entropy gate) from an unrelated backend failure. Detected
+    structurally (the runner never imports the control plane), peer of `redaction_failed`."""
+    from agentos_controlplane.secret_scan import SecretLeakError
+
+    class SecretLeakingAudit:
+        """Append always trips the last gate (the secret-bearing reason was about to be
+        written) — the real AuditWriter raises exactly this before any row is written."""
+
+        async def append(self, action: AgentAction, decision) -> UUID:
+            raise SecretLeakError("secret-like content in audit body: ['high_entropy_token']")
+
+    pipeline = Pipeline(
+        identity=FakeIdentityStage(ok=True),
+        policy=SpyPolicyEngine(Outcome.allow),
+        scorers=[],
+        audit=SecretLeakingAudit(),
+    )
+    decision = asyncio.run(pipeline.evaluate(_action()))
+    assert decision.outcome is Outcome.deny  # tool_call default posture: fail CLOSED
+    assert any(r.code == "secret_leak_in_audit_body" for r in decision.reasons)
+    # The leak detail is the exception CLASS only — never the secret-bearing payload/message.
+    leak_reason = next(r for r in decision.reasons if r.code == "secret_leak_in_audit_body")
+    assert leak_reason.detail == "SecretLeakError"
+
+
 def test_forged_identity_redaction_failure_never_relaxes_to_fail_open_allow() -> None:
     """C1 repro 1: a RedactionError in the short-circuit's audit append must not
     escape to _fail_safe and turn a forged-identity DENY into a fail-open ALLOW."""

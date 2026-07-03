@@ -27,6 +27,8 @@ architecture, `.planning/research/ARCHITECTURE.md`, has been trimmed to validati
 
 ## Status
 
-Phase 1 (the walking skeleton) is implemented and merged; everything beyond it is design ahead of
-code. Build sequence: [`architecture/20-roadmap.md`](architecture/20-roadmap.md); live execution
-status: [`../.planning/ROADMAP.md`](../.planning/ROADMAP.md).
+Phases 1–5 (walking skeleton → full interception → constitution/graduated/approvals →
+tamper-evident audit + containment → control plane/SDK/dashboard) are implemented and merged;
+everything beyond is design ahead of code. Build sequence:
+[`architecture/20-roadmap.md`](architecture/20-roadmap.md); live execution status:
+[`../.planning/ROADMAP.md`](../.planning/ROADMAP.md).

@@ -7,9 +7,16 @@ requires-python = ">=3.12"
 dependencies = [
     "agentos-contract",
     "agentos-pipeline",
+    # SDK-05 zero-infra quickstart wires the control plane + constitution compiler end to end.
+    "agentos-controlplane",
+    "agentos-constitution",
     "langchain>=1.3,<2",
     "langgraph>=1.2,<2",
+    "httpx>=0.27",
 ]
+
+[project.scripts]
+agentos-quickstart = "agentos_sdk.quickstart:main"
 
 [build-system]
 requires = ["hatchling"]
