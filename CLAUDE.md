@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture / design docs
 
-Design is documented (no code yet) under `docs/architecture/`. Start with `docs/architecture/README.md`, then `01-overview.md`. Key decisions are in `docs/architecture/adr/`. The build is phased — see `docs/architecture/20-roadmap.md` (Phase 0 MVP → Phase 2 moonshot).
+Design is documented under `docs/architecture/`. Start with `docs/architecture/README.md`, then `01-overview.md`. Key decisions are in `docs/architecture/adr/`. The build is phased — see `docs/architecture/20-roadmap.md` (Phase 0 MVP → Phase 2 moonshot). Implementation lives in `packages/` (uv workspace: contract, pipeline, constitution, controlplane, sdk); execution Phases 1–5 are built and merged.
 
 ## Branches
 

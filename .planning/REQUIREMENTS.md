@@ -26,35 +26,35 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **PIPE-01** [P0]: Each `AgentAction` passes synchronously through ordered stages identity/trust → policy → risk → graduated response, producing one `Decision`
 - [x] **PIPE-02** [P0]: Every stage contributes machine-readable `reasons` (fired policies/principles) to the `Decision` for explainability
 - [x] **PIPE-03** [P0]: A stage can short-circuit to a terminal outcome (e.g. forged identity → deny) without running later stages
-- [ ] **PIPE-04** [P0]: Pipeline overhead for cached policy/identity stays within a defined p95 latency budget (low single-digit ms), verified by a benchmark test
-- [ ] **PIPE-05** [P0]: Fail-closed vs fail-open on control-plane unavailability is a per-action-class policy decision; high-risk classes default fail-closed; no silent allow
-- [ ] **PIPE-06** [P0]: The control plane maintains its own decision/identity/compiled-policy cache (OPA does not cache), invalidated on policy-version change
+- [x] **PIPE-04** [P0]: Pipeline overhead for cached policy/identity stays within a defined p95 latency budget (low single-digit ms), verified by a benchmark test
+- [x] **PIPE-05** [P0]: Fail-closed vs fail-open on control-plane unavailability is a per-action-class policy decision; high-risk classes default fail-closed; no silent allow
+- [x] **PIPE-06** [P0]: The control plane maintains its own decision/identity/compiled-policy cache (OPA does not cache), invalidated on policy-version change
 - [x] **PIPE-07** [P0]: A stable, serializable `contract` package (`AgentAction` + `evaluate() -> Decision`) is the single dependency every PEP form uses
-- [ ] **PIPE-08** [P0]: Every `Decision` is an *explainable denial with remediation* (pillar 5) — `reasons` carry `{principle_ref, rationale, evidence}`, plus `inferred_intent` and concrete `remediation` paths, not just a rule id
-- [ ] **PIPE-09** [P0]: A `Decision` carries a set of composable `side_effects` (`notify`, `additional_monitoring`, `risk_flag`, `create_incident`) orthogonal to its gating `outcome`, so one decision can both permit and escalate (e.g. `allow + risk_flag`, `deny + create_incident`)
+- [x] **PIPE-08** [P0]: Every `Decision` is an *explainable denial with remediation* (pillar 5) — `reasons` carry `{principle_ref, rationale, evidence}`, plus `inferred_intent` and concrete `remediation` paths, not just a rule id
+- [x] **PIPE-09** [P0]: A `Decision` carries a set of composable `side_effects` (`notify`, `additional_monitoring`, `risk_flag`, `create_incident`) orthogonal to its gating `outcome`, so one decision can both permit and escalate (e.g. `allow + risk_flag`, `deny + create_incident`)
 
 ### Constitution, Policy & Graduated Response
 
-- [ ] **POL-01** [P0]: An operator authors a human-readable Constitution of numbered principles as a declarative resource
-- [ ] **POL-02** [P0]: A compiler lowers Constitution principles into structured YAML policies scoped to agents/tools/action types
+- [x] **POL-01** [P0]: An operator authors a human-readable Constitution of numbered principles as a declarative resource
+- [x] **POL-02** [P0]: A compiler lowers Constitution principles into structured YAML policies scoped to agents/tools/action types
 - [x] **POL-03** [P0]: YAML policies compile to OPA/Rego and are evaluated deterministically on the hot path behind a `PolicyEngine` interface (OPA-server in P0, opa-wasm togglable)
-- [ ] **POL-04** [P0]: On no-rule/ambiguous results, an LLM semantic interpreter returns `{outcome, cited principle, rationale}` via structured outputs — never an unexplained verdict
-- [ ] **POL-05** [P0]: The semantic interpreter is advisory-only, runs only on flagged ambiguity, and can never upgrade a high-risk action beyond the deterministic policy floor
+- [x] **POL-04** [P0]: On no-rule/ambiguous results, an LLM semantic interpreter returns `{outcome, cited principle, rationale}` via structured outputs — never an unexplained verdict
+- [x] **POL-05** [P0]: The semantic interpreter is advisory-only, runs only on flagged ambiguity, and can never upgrade a high-risk action beyond the deterministic policy floor
 - [x] **POL-06** [P0]: The graduated-response stage maps {policy, risk, trust} to one outcome in {allow, warn, sandbox, require_consensus, require_approval, deny} with policy-driven thresholds
-- [ ] **POL-07** [P0]: A `require_approval` outcome parks an `ApprovalRequest` with full action context, fired principles, and risk/trust scores; the action blocks until resolved or times out to a safe default
-- [ ] **POL-08** [P0]: Every `Decision` records the exact Constitution/Policy version that evaluated the action
+- [x] **POL-07** [P0]: A `require_approval` outcome parks an `ApprovalRequest` with full action context, fired principles, and risk/trust scores; the action blocks until resolved or times out to a safe default
+- [x] **POL-08** [P0]: Every `Decision` records the exact Constitution/Policy version that evaluated the action
 - [ ] **POL-09** [P1]: A `require_consensus` outcome requires 2-of-3 agent agreement before the action proceeds
 - [ ] **POL-10** [P2]: Agents or the self-play trainer can propose Constitution amendments; humans review and ratify; the Constitution is versioned like a legal document
 - [ ] **POL-11** [P2]: A conflict-resolution engine computes transitive permissions across delegation chains and flags emergent capability conflicts
 - [ ] **POL-12** [P2]: BFT consensus backs multi-agent agreement for `require_consensus` at scale
-- [ ] **POL-13** [P0]: A `temporary_exception` outcome grants a **human-ratified, time-boxed** `allow` (carries `expires_at`) that auto-revokes on expiry; the semantic interpreter may recommend but can never grant one (upholds POL-05's policy-floor invariant)
-- [ ] **POL-14** [P0]: A `governance_review` outcome lets the action proceed while opening an **asynchronous, non-blocking** governance review (distinct from `require_approval`, which blocks)
+- [x] **POL-13** [P0]: A `temporary_exception` outcome grants a **human-ratified, time-boxed** `allow` (carries `expires_at`) that auto-revokes on expiry; the semantic interpreter may recommend but can never grant one (upholds POL-05's policy-floor invariant)
+- [x] **POL-14** [P0]: A `governance_review` outcome lets the action proceed while opening an **asynchronous, non-blocking** governance review (distinct from `require_approval`, which blocks)
 
 ### Security Engine — Detection / Risk
 
 - [x] **SEC-01** [P0]: The risk stage scores prompt-injection patterns in tool inputs, retrieved content, and inter-agent messages, contributing to `risk_score` with typed findings
-- [ ] **SEC-02** [P0]: Baseline runtime guardrails score PII, unsafe content, and format violations on inputs/outputs
-- [ ] **SEC-03** [P0]: Detectors are pluggable scorers — cheap heuristics run inline, expensive models only when flagged
+- [x] **SEC-02** [P0]: Baseline runtime guardrails score PII, unsafe content, and format violations on inputs/outputs
+- [x] **SEC-03** [P0]: Detectors are pluggable scorers — cheap heuristics run inline, expensive models only when flagged
 - [ ] **SEC-04** [P1]: Data-exfiltration detection scores outbound payloads carrying secrets/PII to untrusted targets
 - [ ] **SEC-05** [P1]: Secret-leakage detection flags credentials/keys in prompts, tool args, or outputs
 - [ ] **SEC-06** [P1]: Tool-poisoning detection flags malicious/drifted tool definitions (P0 records tool-manifest hashes for after-the-fact detection)
@@ -63,14 +63,14 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [ ] **SEC-09** [P1]: A memory/context-poisoning detector flags malicious memory writes/reads (OWASP ASI06)
 - [ ] **SEC-10** [P1]: Inter-agent communication is authenticated and agent identity/card is verified on delegation (OWASP ASI07)
 - [ ] **SEC-11** [P1]: A code-execution detector flags unsafe dynamic code/command execution by agents (OWASP ASI05)
-- [ ] **SEC-12** [P0]: Intent-based policy (pillar 3) — deterministic intent-class tags map single actions to a coarse intent class (e.g. `DATA_DESTRUCTION`), contributing to `risk_score` and populating `Decision.inferred_intent`; advisory to the policy floor, never a substitute for it
-- [ ] **SEC-13** [P0]: Sequence/lineage intent analysis over delegation chains catches multi-step evasions (e.g. `rename_then_drop`, copy-then-delete) that no single action string matches — *pulled forward from P1 (2026-06-10): cross-action correlation is a durable AGT gap (their stateless kernel can't retrofit it) and the demoable wedge; see `docs/architecture/30-comparison-agt.md`*
+- [x] **SEC-12** [P0]: Intent-based policy (pillar 3) — deterministic intent-class tags map single actions to a coarse intent class (e.g. `DATA_DESTRUCTION`), contributing to `risk_score` and populating `Decision.inferred_intent`; advisory to the policy floor, never a substitute for it
+- [x] **SEC-13** [P0]: Sequence/lineage intent analysis over delegation chains catches multi-step evasions (e.g. `rename_then_drop`, copy-then-delete) that no single action string matches — *pulled forward from P1 (2026-06-10): cross-action correlation is a durable AGT gap (their stateless kernel can't retrofit it) and the demoable wedge; see `docs/architecture/30-comparison-agt.md`*
 - [ ] **SEC-14** [P1]: An embedding-similarity intent classifier flags novel actions semantically close to a forbidden-intent exemplar, running only when deterministic tags are ambiguous
 
 ### Runtime Security — Containment
 
-- [ ] **RUN-01** [P0]: An operator can kill-switch a single agent, immediately halting its actions
-- [ ] **RUN-02** [P0]: An operator can kill-switch the entire fleet immediately
+- [x] **RUN-01** [P0]: An operator can kill-switch a single agent, immediately halting its actions
+- [x] **RUN-02** [P0]: An operator can kill-switch the entire fleet immediately
 - [ ] **RUN-03** [P1]: A `sandbox` outcome runs the action in an isolated context with quarantined or reversible side effects
 - [ ] **RUN-04** [P1]: Privilege rings gate sensitive tools behind higher capability tiers per agent
 - [ ] **RUN-05** [P1]: Resource isolation enforces CPU/memory/network limits per agent execution
@@ -87,15 +87,15 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 ### Trust & Reputation
 
 - [x] **TRST-01** [P0]: Each `Agent` has a 0–1 trust score consumed by the graduated-response stage
-- [ ] **TRST-02** [P0]: Trust modulates outcome within a policy-defined band but never overrides a deterministic policy decision
+- [x] **TRST-02** [P0]: Trust modulates outcome within a policy-defined band but never overrides a deterministic policy decision
 - [ ] **TRST-03** [P1]: A longitudinal reputation score is derived from violation/approval history
 - [ ] **TRST-04** [P1]: Trust propagates (and decays) across delegation edges as a bounded budget; delegated scope is enforced as an intersection, not a union
 - [ ] **TRST-05** [P2]: Portable, longitudinal reputation is exportable across deployments via an **optional, deployment-pluggable** reputation backend; any stake/slashing economics live *only* in that optional backend and are **never required** to run the control plane (ADR-0007 — crypto-economics fenced out of core)
 
 ### Discovery & Agent Graph
 
-- [ ] **DISC-01** [P0]: Agents self-register via the SDK and appear in an authoritative agent inventory
-- [ ] **DISC-02** [P0]: The inventory tracks known agents, tools, prompts, and memories
+- [x] **DISC-01** [P0]: Agents self-register via the SDK and appear in an authoritative agent inventory
+- [x] **DISC-02** [P0]: The inventory tracks known agents, tools, prompts, and memories
 - [ ] **DISC-03** [P1]: Framework discovery detects LangChain/LangGraph, CrewAI, AutoGen, OpenAI Agents SDK, MCP, etc.
 - [ ] **DISC-04** [P1]: Shadow-agent detection flags agents acting without registration
 - [ ] **DISC-05** [P1]: Rogue-agent detection flags agents diverging from declared scope
@@ -104,13 +104,13 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 ### Audit
 
 - [x] **AUD-01** [P0]: Each `Decision` appends an `AuditRecord` to an append-only, hash-chained log (each record includes the prior record's hash)
-- [ ] **AUD-02** [P0]: Each `AuditRecord` links `AgentAction` → `Decision` → fired policies/principles → outcome
-- [ ] **AUD-03** [P0]: Each `AuditRecord` carries the exact policy/constitution version (policy evidence)
-- [ ] **AUD-04** [P0]: Sensitive payloads are redacted at write time per policy; redaction fails closed (no write if redaction fails)
-- [ ] **AUD-05** [P0]: A verifier (runnable in CI) detects any retroactive edit by re-validating the hash chain; chain checkpoints are externally anchored/signed
+- [x] **AUD-02** [P0]: Each `AuditRecord` links `AgentAction` → `Decision` → fired policies/principles → outcome
+- [x] **AUD-03** [P0]: Each `AuditRecord` carries the exact policy/constitution version (policy evidence)
+- [x] **AUD-04** [P0]: Sensitive payloads are redacted at write time per policy; redaction fails closed (no write if redaction fails)
+- [x] **AUD-05** [P0]: A verifier (runnable in CI) detects any retroactive edit by re-validating the hash chain; chain checkpoints are externally anchored/signed
 - [ ] **AUD-06** [P1]: The hash chain is upgraded to a Merkle DAG enabling inclusion proofs and partial disclosure
 - [ ] **AUD-07** [P2]: Zero-knowledge compliance proofs prove properties (e.g. "no PII exfiltrated") without revealing underlying data
-- [ ] **AUD-08** [P0]: Each `AuditRecord` carries a detached per-record EdDSA signature (reusing identity keys) so a single record verifies independently of the chain — proving the control plane authored that decision
+- [x] **AUD-08** [P0]: Each `AuditRecord` carries a detached per-record EdDSA signature (reusing identity keys) so a single record verifies independently of the chain — proving the control plane authored that decision
 - [ ] **AUD-09** [P1]: A forensic "evidence graph" reconstructs causal chains by joining the audit log with the materialized agent graph at query time (`parent_action_id`/`conversation_id`/`trace_id`, Postgres recursive CTEs) — no separate graph database
 
 ### Compliance
@@ -160,25 +160,30 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 ### Control-Plane API & Persistence
 
-- [ ] **API-01** [P0]: A declarative API validates, versions, and stores resources (Agent, Constitution, Policy, TrustProfile, ApprovalRequest, ABOM) in PostgreSQL
-- [ ] **API-02** [P0]: Applying a Constitution compiles it to Policy/Rego on write (compile-on-write)
-- [ ] **API-03** [P0]: Operators approve/deny `ApprovalRequest`s via the API
+- [x] **API-01** [P0]: A declarative API validates, versions, and stores resources (Agent, Constitution, Policy, TrustProfile, ApprovalRequest, ABOM) in PostgreSQL
+- [x] **API-02** [P0]: Applying a Constitution compiles it to Policy/Rego on write (compile-on-write)
+- [x] **API-03** [P0]: Operators approve/deny `ApprovalRequest`s via the API
 - [ ] **API-04** [P1]: Reconciliation loops continuously compile constitutions, refresh trust, materialize the graph, and warm hot-path caches
 
 ### Python SDK
 
 - [x] **SDK-01** [P0]: The SDK provides interception decorators/middleware for LangChain/LangGraph (the PEP)
-- [ ] **SDK-02** [P0]: The SDK provides agent self-registration returning an identity token
+- [x] **SDK-02** [P0]: The SDK provides agent self-registration returning an identity token
 - [ ] **SDK-03** [P0]: The SDK provides pytest adapters for the red-team layer
-- [ ] **SDK-04** [P0]: The SDK provides a control-plane client for resource CRUD and approvals
-- [ ] **SDK-05** [P0]: A zero-infra quickstart runs the full governed loop with SQLite + in-process opa-wasm from a single `pip install` — no Docker, Postgres, or OPA server required (first-run friction must match AGT's one-decorator pitch)
+- [x] **SDK-04** [P0]: The SDK provides a control-plane client for resource CRUD and approvals
+- [x] **SDK-05** [P0]: A zero-infra quickstart runs the full governed loop with SQLite + in-process opa-wasm from a single `pip install` — no Docker, Postgres, or OPA server required (first-run friction must match AGT's one-decorator pitch)
 
 ### Dashboard
 
-- [ ] **DASH-01** [P0]: A minimal dashboard shows read-only agent inventory and recent decisions/audit
-- [ ] **DASH-02** [P0]: Operators resolve pending `ApprovalRequest`s from the dashboard
-- [ ] **DASH-03** [P0]: Operators trigger agent/fleet kill switches from the dashboard
+- [x] **DASH-01** [P0]: A minimal dashboard shows read-only agent inventory and recent decisions/audit
+- [x] **DASH-02** [P0]: Operators resolve pending `ApprovalRequest`s from the dashboard
+- [x] **DASH-03** [P0]: Operators trigger agent/fleet kill switches from the dashboard
 - [ ] **DASH-04** [P1]: The dashboard adds the live agent graph, per-agent SLOs/violations, and attack visualization
+
+### OSS Distribution & Community
+
+- [ ] **OSS-01** [P0]: Versioned releases of the workspace packages (and the quickstart extra) are published to PyPI via a tagged release workflow, so the zero-infra quickstart's single `pip install` (SDK-05) is true for someone outside this repository — added 2026-07-05 audit: the "best in open source" goal had zero distribution requirements
+- [ ] **OSS-02** [P0]: Adoption and security table stakes ship with the P0 launch: `CONTRIBUTING.md`, `SECURITY.md` (vulnerability-disclosure policy — non-negotiable for a security product), and issue/PR templates
 
 ### Performance
 
@@ -227,29 +232,29 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | PIPE-01 | Phase 1 | Complete |
 | PIPE-02 | Phase 1 | Complete |
 | PIPE-03 | Phase 1 | Complete |
-| PIPE-04 | Phase 3 | Pending |
-| PIPE-05 | Phase 3 | Pending |
-| PIPE-06 | Phase 3 | Pending |
+| PIPE-04 | Phase 3 | Complete |
+| PIPE-05 | Phase 3 | Complete |
+| PIPE-06 | Phase 3 | Complete |
 | PIPE-07 | Phase 1 | Complete |
-| PIPE-08 | Phase 3 | Pending |
-| PIPE-09 | Phase 3 | Pending |
-| POL-01 | Phase 3 | Pending |
-| POL-02 | Phase 3 | Pending |
+| PIPE-08 | Phase 3 | Complete |
+| PIPE-09 | Phase 3 | Complete |
+| POL-01 | Phase 3 | Complete |
+| POL-02 | Phase 3 | Complete |
 | POL-03 | Phase 1 | Complete |
-| POL-04 | Phase 3 | Pending |
-| POL-05 | Phase 3 | Pending |
+| POL-04 | Phase 3 | Complete |
+| POL-05 | Phase 3 | Complete |
 | POL-06 | Phase 1 | Complete |
-| POL-07 | Phase 3 | Pending |
-| POL-08 | Phase 3 | Pending |
+| POL-07 | Phase 3 | Complete |
+| POL-08 | Phase 3 | Complete |
 | POL-09 | Phase 9 | Pending |
 | POL-10 | Phase 13 | Pending |
 | POL-11 | Phase 13 | Pending |
 | POL-12 | Phase 13 | Pending |
-| POL-13 | Phase 3 | Pending |
-| POL-14 | Phase 3 | Pending |
+| POL-13 | Phase 3 | Complete |
+| POL-14 | Phase 3 | Complete |
 | SEC-01 | Phase 1 | Complete |
-| SEC-02 | Phase 3 | Pending |
-| SEC-03 | Phase 3 | Pending |
+| SEC-02 | Phase 3 | Complete |
+| SEC-03 | Phase 3 | Complete |
 | SEC-04 | Phase 8 | Pending |
 | SEC-05 | Phase 8 | Pending |
 | SEC-06 | Phase 8 | Pending |
@@ -258,11 +263,11 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | SEC-09 | Phase 8 | Pending |
 | SEC-10 | Phase 8 | Pending |
 | SEC-11 | Phase 8 | Pending |
-| SEC-12 | Phase 3 | Pending |
-| SEC-13 | Phase 3 | Pending |
+| SEC-12 | Phase 3 | Complete |
+| SEC-13 | Phase 3 | Complete |
 | SEC-14 | Phase 8 | Pending |
-| RUN-01 | Phase 4 | Pending |
-| RUN-02 | Phase 4 | Pending |
+| RUN-01 | Phase 4 | Complete |
+| RUN-02 | Phase 4 | Complete |
 | RUN-03 | Phase 9 | Pending |
 | RUN-04 | Phase 9 | Pending |
 | RUN-05 | Phase 9 | Pending |
@@ -273,24 +278,24 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | IDN-03 | Phase 7 | Pending |
 | IDN-04 | Phase 14 | Pending |
 | TRST-01 | Phase 1 | Complete |
-| TRST-02 | Phase 3 | Pending |
+| TRST-02 | Phase 3 | Complete |
 | TRST-03 | Phase 7 | Pending |
 | TRST-04 | Phase 7 | Pending |
 | TRST-05 | Phase 14 | Pending |
-| DISC-01 | Phase 5 | Pending |
-| DISC-02 | Phase 5 | Pending |
+| DISC-01 | Phase 5 | Complete |
+| DISC-02 | Phase 5 | Complete |
 | DISC-03 | Phase 10 | Pending |
 | DISC-04 | Phase 10 | Pending |
 | DISC-05 | Phase 10 | Pending |
 | DISC-06 | Phase 10 | Pending |
 | AUD-01 | Phase 1 | Complete |
-| AUD-02 | Phase 4 | Pending |
-| AUD-03 | Phase 4 | Pending |
-| AUD-04 | Phase 4 | Pending |
-| AUD-05 | Phase 4 | Pending |
+| AUD-02 | Phase 4 | Complete |
+| AUD-03 | Phase 4 | Complete |
+| AUD-04 | Phase 4 | Complete |
+| AUD-05 | Phase 4 | Complete |
 | AUD-06 | Phase 11 | Pending |
 | AUD-07 | Phase 14 | Pending |
-| AUD-08 | Phase 4 | Pending |
+| AUD-08 | Phase 4 | Complete |
 | AUD-09 | Phase 12 | Pending |
 | CMP-01 | Phase 6 | Pending |
 | CMP-02 | Phase 6 | Pending |
@@ -322,27 +327,30 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | ABOM-01 | Phase 8 | Pending |
 | ABOM-02 | Phase 8 | Pending |
 | ABOM-03 | Phase 14 | Pending |
-| API-01 | Phase 5 | Pending |
-| API-02 | Phase 5 | Pending |
-| API-03 | Phase 3 | Pending |
+| API-01 | Phase 5 | Complete |
+| API-02 | Phase 5 | Complete |
+| API-03 | Phase 3 | Complete |
 | API-04 | Phase 7 | Pending |
 | SDK-01 | Phase 1 | Complete |
-| SDK-02 | Phase 5 | Pending |
+| SDK-02 | Phase 5 | Complete |
 | SDK-03 | Phase 6 | Pending |
-| SDK-04 | Phase 5 | Pending |
-| SDK-05 | Phase 5 | Pending |
-| DASH-01 | Phase 5 | Pending |
-| DASH-02 | Phase 5 | Pending |
-| DASH-03 | Phase 5 | Pending |
+| SDK-04 | Phase 5 | Complete |
+| SDK-05 | Phase 5 | Complete |
+| DASH-01 | Phase 5 | Complete |
+| DASH-02 | Phase 5 | Complete |
+| DASH-03 | Phase 5 | Complete |
 | DASH-04 | Phase 12 | Pending |
+| OSS-01 | Phase 6 | Pending |
+| OSS-02 | Phase 6 | Pending |
 | PERF-01 | Phase 14 | Pending |
 
 **Coverage:**
-- v1 requirements: 121 total
-- Mapped to phases: 121 ✓
+- v1 requirements: 123 total
+- Mapped to phases: 123 ✓
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-01*
-*Last updated: 2026-06-10 — AGT v4.1.0 re-verification: pulled SEC-13 (sequence/lineage intent correlation) forward P1→P0 / Phase 8→Phase 3 (durable AGT gap, demoable wedge); added SDK-05 (zero-infra SQLite + opa-wasm quickstart, Phase 5); 121/121 mapped*
+*Last updated: 2026-07-05 — post-Phase-5 planning audit: marked the 36 requirements delivered by Phases 3–5 Complete (checkboxes + traceability were stale at "Pending"); added OSS-01/OSS-02 (PyPI release engineering + CONTRIBUTING/SECURITY.md, Phase 6) — the open-source-market goal had no distribution/community requirements; 123/123 mapped*
+*Previous: 2026-06-10 — AGT v4.1.0 re-verification: pulled SEC-13 (sequence/lineage intent correlation) forward P1→P0 / Phase 8→Phase 3 (durable AGT gap, demoable wedge); added SDK-05 (zero-infra SQLite + opa-wasm quickstart, Phase 5); 121/121 mapped*
 *Previous: 2026-06-06 — added graduated-response extensions PIPE-09 (composable side-effects), POL-13 (temporary_exception), POL-14 (governance_review), AUD-08 (per-record signatures), AUD-09 (query-time evidence graph)*

@@ -83,7 +83,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. The graduated-response stage maps {policy, risk, trust} to allow/warn/sandbox/require_consensus/require_approval/temporary_exception/governance_review/deny with policy-driven thresholds, where trust modulates only within a policy-defined band and never overrides a deterministic policy decision; a `require_approval` outcome parks an `ApprovalRequest` that blocks the action until resolved or times out to a safe default; a `temporary_exception` is a human-ratified, time-boxed allow that auto-revokes at `expires_at` (the interpreter may recommend but never grant one); a `governance_review` proceeds while opening an async non-blocking review; and every `Decision` can carry composable `side_effects` (notify/additional_monitoring/risk_flag/create_incident) orthogonal to its outcome (PIPE-09).
   4. The pipeline holds its p95 cached-path latency budget (verified by a benchmark test), keeps its own compiled-policy/identity cache invalidated on policy-version change, and applies per-action-class fail-closed posture with no silent allow on control-plane unavailability.
   5. Sequence/lineage intent analysis over `parent_action_id` chains (SEC-13) catches multi-step evasions — e.g. `rename_then_drop`, copy-then-delete — where every individual action would be allowed, and a scripted 5-minute wedge demo shows the Constitution denying such a sequence with a cited principle and remediation (the demoable proof of the two durable differentiators over AGT).
-**Plans**: TBD
+**Plans**: 7/7 complete — see `.planning/phases/03-constitution-graduated/`
 
 ### Phase 4: Tamper-Evident Audit & Operator Containment
 **Goal**: Make audit evidence genuinely tamper-evident and verifiable, and give operators an immediate halt for a single agent or the whole fleet.
@@ -95,7 +95,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Sensitive payloads are redacted at write time per policy and redaction fails closed — no record is written if redaction fails.
   3. A CI-runnable verifier re-validates the hash chain and detects any retroactive edit; chain checkpoints are externally anchored/signed; each `AuditRecord` also carries a detached per-record EdDSA signature so a single record verifies independently of the chain (AUD-08).
   4. An operator can kill-switch a single agent or the entire fleet and the targeted agents' actions halt immediately.
-**Plans**: TBD
+**Plans**: 6/6 complete — see `.planning/phases/04-audit-containment/` (scope addition during execution: a free NVIDIA-hosted interpreter adapter, slice 4f, extending the Phase-3 POL-04 seam — user-requested, no REQ-ID)
 
 ### Phase 5: Control Plane, SDK & Minimal Dashboard
 **Goal**: Wrap the proven engines in a declarative resource API on Postgres, a complete Python SDK, and a minimal operator dashboard so the whole system is usable end-to-end by an outside team.
@@ -107,19 +107,25 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. The SDK lets an agent self-register and receive an identity token, and provides a control-plane client for resource CRUD and approvals; self-registered agents appear in an authoritative inventory tracking agents, tools, prompts, and memories.
   3. An operator views the agent inventory and recent decisions/audit, resolves pending approval requests, and triggers agent/fleet kill switches from the dashboard.
   4. A zero-infra quickstart runs the full governed loop with SQLite + in-process opa-wasm from a single `pip install` — no Docker, Postgres, or OPA server — so first-run friction matches AGT's one-decorator pitch (SDK-05).
-**Plans**: TBD
+**Plans**: 6/6 complete — see `.planning/phases/05-control-plane-sdk-dashboard/` (note: "single `pip install`" currently means an editable/workspace install — publishing to PyPI is OSS-01, Phase 6)
 **UI hint**: yes
 
 ### Phase 6: Observability, Compliance & Red-Team Gate
 **Goal**: Close Phase 0 — emit standard telemetry, map evidence to the compliance frameworks that matter at launch, and ship the pytest-native red-team layer that statistically gates CI.
 **Mode:** mvp
 **Depends on**: Phase 5
-**Requirements**: OBS-01, OBS-02, OBS-03, CMP-01, CMP-02, CMP-03, TEST-01, TEST-02, TEST-03, TEST-04, TEST-05, TEST-06, SDK-03
+**Requirements**: OBS-01, OBS-02, OBS-03, CMP-01, CMP-02, CMP-03, TEST-01, TEST-02, TEST-03, TEST-04, TEST-05, TEST-06, SDK-03, OSS-01, OSS-02
 **Success Criteria** (what must be TRUE):
   1. Every `AgentAction`/`Decision` is emitted as an OpenTelemetry span to the user's backend, a `trace_id` correlates an action across stages and agents, and per-agent metrics (volume, outcome mix, violations, p95 latency) are emitted.
   2. Each detector/policy maps to OWASP Agentic Top 10 and NIST AI RMF categories, and the audit + approval evidence supports minimal EU AI Act Art. 12 / Art. 26 claims at launch.
   3. Engineers write pytest safety tests using provided fixtures/adapters that run an injection/tool-misuse/exfiltration/jailbreak attack library against a live agent, asserting statistical thresholds (attack-success-rate < X%).
   4. Fixed vulnerabilities are locked by regression tests and a failing safety test breaks the CI build.
+  5. Versioned packages are published to PyPI via a tagged release workflow and CONTRIBUTING.md + SECURITY.md ship, so the P0 launch is installable and contributable by outsiders (OSS-01/OSS-02, added 2026-07-05 audit).
+**Sequencing note (2026-07-05 audit):** EU AI Act high-risk obligations bind **2026-08-02** — under
+four weeks away. Front-load CMP-03 (minimal Art. 12/26 evidence claim) in the slice order, and
+re-verify AGT's live feature set at phase start (last verification 2026-06-10, v4.1.0 — now stale
+per the project's own per-phase rule) plus the garak/PyRIT/OTel version pins from the 2026-06-01
+research snapshot.
 **Plans**: TBD
 
 ### Phase 7: Trust, Reputation & Identity Hardening

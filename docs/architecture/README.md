@@ -85,6 +85,8 @@ When they appear to overlap on a topic, `docs/` says what the thing *is*; `.plan
 
 ---
 
-*This document set is **design-authoritative**. Phase 1 (the walking skeleton) is implemented
-and merged; everything beyond it is design ahead of code. See [`20-roadmap.md`](20-roadmap.md)
-for the build sequence and `.planning/ROADMAP.md` for execution status.*
+*This document set is **design-authoritative**. Execution Phases 1–5 (interception, pipeline,
+constitution + graduated response, tamper-evident audit + containment, control plane + SDK +
+dashboard) are implemented and merged; Phase 6 closes design-Phase 0, and everything beyond it
+is design ahead of code. See [`20-roadmap.md`](20-roadmap.md) for the build sequence and
+`.planning/ROADMAP.md` for execution status.*

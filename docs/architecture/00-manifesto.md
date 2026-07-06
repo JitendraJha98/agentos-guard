@@ -60,15 +60,18 @@ on that journey, because a technical reader will check.
 
 - **What AGT does well, and we keep:** declarative policy, zero-trust identity, sandboxing,
   tamper-evident audit, a red-team layer. We extend these; we do not pretend they're worthless.
-- **Where we already out-feature AGT today (verified 2026-06-10):** memory-access
-  interception (AGT's own LIMITATIONS.md calls this its "knowledge governance gap"),
-  **fail-closed redacted audit** (AGT logs raw parameters), **deny-by-default** with coverage
-  verification (AGT defaults to allow), and a **CI-gating red-team** test — a safety
-  regression breaks the build, which AGT's CLI-scan model does not do.
+- **Where we already out-feature AGT today (AGT facts verified 2026-06-10; our shipped list
+  as of 2026-07-03, roadmap Phases 1–5 merged):** memory-access interception (AGT's own
+  LIMITATIONS.md calls this its "knowledge governance gap"), **fail-closed redacted audit
+  with per-record signatures + RFC-3161 anchoring** (AGT logs raw parameters),
+  **deny-by-default** with coverage verification (AGT defaults to allow), a **CI-gating
+  red-team** test — a safety regression breaks the build, which AGT's CLI-scan model does
+  not do — the **full graduated spectrum** (eight outcomes + composable side-effects vs
+  their three), the **semantic constitution with cited-principle rationale**, and
+  **sequence-intent correlation** (the `rename_then_drop` catch their stateless kernel
+  cannot retrofit).
 - **What is parity, honestly:** the breadth of detectors, framework adapters, and compliance
-  mappings is where AGT is mature and we are building — and until roadmap Phase 3 lands, AGT's
-  three shipped outcomes (allow/deny/require_approval) exceed our shipped three, because theirs
-  include approval. Phase 0 (roadmap Phases 1–6) reaches parity on AGT's own turf; the pillars
+  mappings is where AGT is mature and we are building. Phase 0 (roadmap Phases 1–6) reaches parity on AGT's own turf; the pillars
   are what pull ahead. The durable pillars — the ones AGT's deterministic-only philosophy and
   stateless kernel make structurally hard to copy — are the **semantic constitution** (pillar 1)
   and **cross-action intent correlation** (pillar 3); they are front-loaded in the roadmap for

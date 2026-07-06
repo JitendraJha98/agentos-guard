@@ -125,15 +125,18 @@ We say plainly where we are, because a technical reader will check `git log` —
 
 - **What AGT does well, and we adopt:** declarative policy, zero-trust identity, sandboxing,
   tamper-evident audit, a red-team layer. We extend these — we are not reinventing them.
-- **Where we are ahead today (shipped):** memory-access interception (their admitted gap),
-  fail-closed redacted audit (they store raw parameters), deny-by-default with coverage
-  verification (they default-allow), and a red-team test that **breaks CI** if a principle is
-  removed.
+- **Where we are ahead today (shipped as of 2026-07-03, roadmap Phases 1–5 merged):**
+  memory-access interception (their admitted gap), fail-closed redacted audit with per-record
+  Ed25519 signatures and RFC-3161 anchoring (they store raw parameters), deny-by-default with
+  coverage verification (they default-allow), a red-team test that **breaks CI** if a
+  principle is removed, the semantic constitution with cited-principle rationale + advisory
+  interpreter, the full eight-outcome graduated spectrum with composable side-effects (vs
+  their three), sequence-intent correlation (`rename_then_drop` denied with a cited
+  principle — the wedge demo), an agent/fleet kill switch, and a zero-infra quickstart.
 - **Where we are behind today, honestly:** framework breadth (1 vs 19+), language SDKs (1 vs 5),
   identity strength (signed JWTs vs SPIFFE/mTLS/DID), audit structure (hash chain vs Merkle),
   sandboxing and MCP gateway (theirs ship now; ours are Phases 8–9), and sheer test/conformance
-  volume. Until roadmap Phase 3 lands, their three shipped outcomes also exceed our shipped
-  three (theirs include approval). These are *deliberate* sequencing choices — parity features
+  volume. These are *deliberate* sequencing choices — parity features
   are late because they are not the wedge — but they are real gaps at evaluation time.
 - **Where we are riskier:** the moonshot features (ZK proofs, BFT consensus, self-play
   patching, decentralized reputation) are research-grade, live in Phase 2, and are

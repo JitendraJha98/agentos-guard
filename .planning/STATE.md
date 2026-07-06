@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: phase_complete
-stopped_at: Phases 4 & 5 complete and merged to development (PRs #12/#14, 2026-07-03); post-merge review fixed the non-ASCII compare_digest 500s (API auth gate + dashboard login) and relocated the phase 3-5 execution plans into .planning/phases/
-last_updated: 2026-07-03
-last_activity: 2026-07-03
+stopped_at: 2026-07-05 planning audit complete (.planning/audit/2026-07-05-planning-audit.md) — stale statuses fixed across REQUIREMENTS/PROJECT/ROADMAP/CLAUDE/manifesto/30-comparison, OSS-01/02 added to Phase 6; next is /gsd:plan-phase 6
+last_updated: 2026-07-05
+last_activity: 2026-07-05
 progress:
   total_phases: 14
   completed_phases: 5
@@ -104,6 +104,9 @@ None yet.
 
 [Issues that affect future work]
 
+- **EU AI Act clock (hard external date):** high-risk obligations bind **2026-08-02** — under four weeks from the 2026-07-05 audit. CMP-03 (minimal Art. 12/26 evidence claim) sits in Phase 6, not started. Start `/gsd:plan-phase 6` now and front-load the CMP-03 slice.
+- **AGT re-verification overdue:** the project's own rule is re-verify AGT at *every* phase start; last verification is 2026-06-10 (v4.1.0), and Phases 4–5 started without a documented re-check. AGT ships monthly — re-verify before Phase 6 planning, and re-check the garak/PyRIT/OTel-GenAI version pins from the 2026-06-01 research snapshot at the same time.
+- **OSS distribution gap (found by the 2026-07-05 audit, now OSS-01/02 in Phase 6):** nothing is published to PyPI and there is no CONTRIBUTING.md / SECURITY.md; the quickstart's "single pip install" is only true inside this repo. Blocks the open-source-adoption goal, not the code.
 - Research-flagged spikes likely needed at plan time: Phase 3 Constitution→YAML→Rego compiler fidelity/precedence; Phase 4 audit external-anchoring + fail-closed-redaction last gate; Phase 8 ASI05/06/07 detector design; Phase 7 multi-node cache invalidation; all of Phases 13–14 (LOW-confidence moonshot tech — evaluate before commit).
 - Competitive framing (confident-but-honest, ADR-0007 + `docs/architecture/00-manifesto.md`): paradigm = *Trust→Verify→Graduate→Prove* vs AGT's *Distrust→Block→Log*, carried by **seven pillars** (semantic constitution, graduated response, intent-based policy, cross-agent permission calculus, explainable denials w/ remediation, CI-gating red-team + self-play, provable audit). Phase 0 reaches AGT parity + already out-features it on graduated/semantic/CI-gating; the full "beat" compounds as pillars land. Crypto-economics (blockchain/staking/MPC) fenced out of core; only token-free Merkle/ZK kept (optional/Phase-2).
 
