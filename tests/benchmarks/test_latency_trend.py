@@ -25,8 +25,10 @@ import asyncio
 import time
 
 import pytest
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from agentos_contract import ActionType, AgentAction, Outcome
+from agentos_pipeline.telemetry import configure_tracing, reset_tracing
 
 pytestmark = pytest.mark.latency
 
@@ -88,3 +90,53 @@ def test_cached_path_latency_gate(pipeline_with_principle) -> None:
     assert mean < _MEAN_BUDGET_S, (
         f"mean {mean * 1000:.3f} ms exceeds the 5 ms budget in all {_SAMPLES} samples (PIPE-04)"
     )
+
+
+@pytest.mark.latency
+def test_cached_path_latency_gate_with_tracing(pipeline_with_principle) -> None:
+    """OBS-01 budget proof: span emission stays within the PIPE-04 budget even under a
+    SYNCHRONOUS in-memory exporter (SimpleSpanProcessor) on the hot path.
+
+    Configures an `InMemorySpanExporter`, confirms one span per evaluate is emitted, then
+    runs the SAME best-of-N gate against the SAME budget, and restores the no-op default.
+    Production wires an ASYNC BatchSpanProcessor (OTLP off the hot path), so the real
+    per-action cost is strictly below this synchronous worst case — and the DEFAULT gate
+    (`test_cached_path_latency_gate` above) runs on the zero-cost no-op path, where no
+    provider is configured and instrumentation pays ~nothing.
+    """
+    wired = pipeline_with_principle
+    exporter = InMemorySpanExporter()
+    configure_tracing(exporter)
+    try:
+        # Warmup (WASM instantiation, identity key parse, SQLite first write).
+        for _ in range(5):
+            action = AgentAction(
+                agent_id=wired.agent_id, type=ActionType.tool_call, target="http_get",
+                payload={"url": "https://api.example.com/data", "content": ""},
+                identity_token=wired.token,
+            )
+            asyncio.run(wired.pipeline.evaluate(action))
+        # Sanity: the exporter really is on the hot path (one span per evaluate).
+        assert len(exporter.get_finished_spans()) == 5
+
+        # Best-of-N (retry-until-clean), identical to the no-op gate above.
+        mean = p95 = None
+        for attempt in range(_SAMPLES):
+            mean, p95 = _measure(wired)
+            print(f"tracing-on latency sample {attempt + 1}/{_SAMPLES}: "
+                  f"mean={mean * 1000:.3f} ms  p95={p95 * 1000:.3f} ms  rounds={_ROUNDS}")
+            if mean < _MEAN_BUDGET_S and p95 < _P95_BUDGET_S:
+                break
+
+        assert p95 < _P95_BUDGET_S, (
+            f"tracing-on p95 {p95 * 1000:.3f} ms exceeds the 10 ms budget in all "
+            f"{_SAMPLES} samples (PIPE-04) — the synchronous exporter dented the budget; "
+            f"production uses an async BatchSpanProcessor off the hot path"
+        )
+        assert mean < _MEAN_BUDGET_S, (
+            f"tracing-on mean {mean * 1000:.3f} ms exceeds the 5 ms budget in all "
+            f"{_SAMPLES} samples (PIPE-04) — the synchronous exporter dented the budget; "
+            f"production uses an async BatchSpanProcessor off the hot path"
+        )
+    finally:
+        reset_tracing()  # restore the no-op default so tracing never leaks to other tests
