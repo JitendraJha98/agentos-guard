@@ -195,3 +195,80 @@ LIVE_DETECTOR_CONTROLS = frozenset(
         "SequenceCorrelator",
     }
 )
+
+
+def export_compliance_evidence(session_factory=None, public_key_pem=None) -> dict:
+    """CMP-03 — a one-call evidence bundle: the control->framework mapping grouped by framework, plus
+    pointers to the CONCRETE evidence backing EU Art. 12 (record-keeping) / Art. 26 (human oversight)
+    claims. When a store is supplied, include LIVE evidence: audit-record count, checkpoint count, and
+    whether the chain currently verifies (AUD-05) — the record-keeping proof itself."""
+    controls = [
+        {
+            "control": m.control,
+            "name": m.name,
+            "owasp": list(m.owasp),
+            "nist_rmf": list(m.nist_rmf),
+            "eu_ai_act": list(m.eu_ai_act),
+            "evidence": m.evidence,
+        }
+        for m in CONTROL_MAPPINGS
+    ]
+    by_owasp = {
+        code: {"name": name, "controls": [m.control for m in CONTROL_MAPPINGS if code in m.owasp]}
+        for code, name in OWASP_AGENTIC.items()
+    }
+    by_nist = {
+        fn: [m.control for m in CONTROL_MAPPINGS if fn in m.nist_rmf] for fn in sorted(NIST_RMF)
+    }
+    by_eu = {
+        art: {"name": name, "controls": [m.control for m in CONTROL_MAPPINGS if art in m.eu_ai_act]}
+        for art, name in EU_AI_ACT.items()
+    }
+    bundle = {
+        "frameworks": {"owasp_agentic_2026": by_owasp, "nist_ai_rmf": by_nist, "eu_ai_act": by_eu},
+        "controls": controls,
+        "evidence": {
+            "eu_art12_record_keeping": "hash-chained, per-record-signed, fail-closed-redacted audit log (AUD-01/03/04/08)",
+            "eu_art26_human_oversight": "require_approval + temporary_exception + governance_review + kill switch (POL-07/13/14, RUN-01/02)",
+        },
+    }
+    if session_factory is not None:
+        from sqlalchemy import func, select
+
+        from agentos_controlplane.audit_verify import verify_chain
+        from agentos_controlplane.store.models import AuditRecord, ChainCheckpoint
+
+        with session_factory() as s:
+            bundle["evidence"]["audit_records"] = s.scalar(select(func.count()).select_from(AuditRecord))
+            bundle["evidence"]["checkpoints"] = s.scalar(select(func.count()).select_from(ChainCheckpoint))
+        result = verify_chain(session_factory, public_key_pem=public_key_pem)
+        bundle["evidence"]["chain_verifies"] = result.ok
+    return bundle
+
+
+def _main(argv=None) -> int:
+    import argparse
+    import json
+
+    from sqlalchemy import create_engine
+
+    from agentos_controlplane.store.engine import create_session_factory
+
+    p = argparse.ArgumentParser(
+        prog="agentos_controlplane.compliance",
+        description="Export the compliance evidence bundle (CMP-03).",
+    )
+    p.add_argument("--db", help="SQLite path / SQLAlchemy URL to include live audit evidence")
+    p.add_argument("--pubkey", help="control-plane public-key PEM (enables chain signature verify)")
+    args = p.parse_args(argv)
+    sf = None
+    if args.db:
+        url = args.db if "://" in args.db else f"sqlite+pysqlite:///{args.db}"
+        sf = create_session_factory(create_engine(url))
+    pub = open(args.pubkey, encoding="utf-8").read() if args.pubkey else None
+    print(json.dumps(export_compliance_evidence(sf, public_key_pem=pub), indent=2, default=str))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())
