@@ -25,10 +25,17 @@ import asyncio
 import time
 
 import pytest
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from agentos_contract import ActionType, AgentAction, Outcome
-from agentos_pipeline.telemetry import configure_tracing, reset_tracing
+from agentos_pipeline.telemetry import (
+    METRIC_ACTIONS,
+    configure_metrics,
+    configure_tracing,
+    reset_metrics,
+    reset_tracing,
+)
 
 pytestmark = pytest.mark.latency
 
@@ -140,3 +147,69 @@ def test_cached_path_latency_gate_with_tracing(pipeline_with_principle) -> None:
         )
     finally:
         reset_tracing()  # restore the no-op default so tracing never leaks to other tests
+
+
+def _allow_count(reader, agent_id: str) -> float:
+    """Cumulative agentos_actions_total{agent_id, outcome=allow} from the reader."""
+    total = 0.0
+    data = reader.get_metrics_data()
+    if data is None:
+        return total
+    for rm in data.resource_metrics:
+        for sm in rm.scope_metrics:
+            for metric in sm.metrics:
+                if metric.name != METRIC_ACTIONS:
+                    continue
+                for p in metric.data.data_points:
+                    if p.attributes.get("agent_id") == agent_id and p.attributes.get("outcome") == "allow":
+                        total += p.value
+    return total
+
+
+@pytest.mark.latency
+def test_cached_path_latency_gate_with_metrics(pipeline_with_principle) -> None:
+    """OBS-03 budget proof: per-agent metric recording stays within the PIPE-04 budget with
+    an in-memory reader configured on the hot path.
+
+    Configures an `InMemoryMetricReader`, confirms metrics really are recorded per evaluate,
+    then runs the SAME best-of-N gate against the SAME budget, and restores the no-op default.
+    Recording is three cheap in-process instrument ops (two counter adds + one histogram
+    record); production reads through a `PeriodicExportingMetricReader` (OTLP) off the hot
+    path, so the real per-action cost is at or below this. The DEFAULT gate
+    (`test_cached_path_latency_gate` above) runs on the zero-cost no-op path (no provider).
+    """
+    wired = pipeline_with_principle
+    reset_metrics()
+    reader = InMemoryMetricReader()
+    configure_metrics(reader)
+    try:
+        # Warmup (WASM instantiation, identity key parse, SQLite first write).
+        for _ in range(5):
+            action = AgentAction(
+                agent_id=wired.agent_id, type=ActionType.tool_call, target="http_get",
+                payload={"url": "https://api.example.com/data", "content": ""},
+                identity_token=wired.token,
+            )
+            asyncio.run(wired.pipeline.evaluate(action))
+        # Sanity: the reader really is on the hot path (one allow recorded per evaluate).
+        assert _allow_count(reader, wired.agent_id) == 5
+
+        # Best-of-N (retry-until-clean), identical to the no-op gate above.
+        mean = p95 = None
+        for attempt in range(_SAMPLES):
+            mean, p95 = _measure(wired)
+            print(f"metrics-on latency sample {attempt + 1}/{_SAMPLES}: "
+                  f"mean={mean * 1000:.3f} ms  p95={p95 * 1000:.3f} ms  rounds={_ROUNDS}")
+            if mean < _MEAN_BUDGET_S and p95 < _P95_BUDGET_S:
+                break
+
+        assert p95 < _P95_BUDGET_S, (
+            f"metrics-on p95 {p95 * 1000:.3f} ms exceeds the 10 ms budget in all "
+            f"{_SAMPLES} samples (PIPE-04) — metric recording dented the budget"
+        )
+        assert mean < _MEAN_BUDGET_S, (
+            f"metrics-on mean {mean * 1000:.3f} ms exceeds the 5 ms budget in all "
+            f"{_SAMPLES} samples (PIPE-04) — metric recording dented the budget"
+        )
+    finally:
+        reset_metrics()  # restore the no-op default so metrics never leak to other tests
