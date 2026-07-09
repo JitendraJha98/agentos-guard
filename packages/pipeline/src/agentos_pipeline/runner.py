@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Mapping, Protocol, Sequence
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from agentos_contract import (
     AgentAction,
@@ -66,6 +66,7 @@ from agentos_pipeline.posture import FailPosture, PostureMap
 from agentos_pipeline.risk import assess_risk
 from agentos_pipeline.risk._text import payload_text
 from agentos_pipeline.sequence import SequenceCorrelator
+from agentos_pipeline.telemetry import SPAN_NAME, annotate_decision_span, get_tracer
 
 
 class _PolicyEngine(Protocol):
@@ -173,13 +174,22 @@ class Pipeline:
         self._kill_switch = kill_switch
 
     async def evaluate(self, action: AgentAction) -> Decision:
-        # Mutable holder: _evaluate records the computed floor as soon as it is
-        # known, so a later exception cannot relax it through the fail-safe.
-        floor_box: list[Outcome | None] = [None]
-        try:
-            return await self._evaluate(action, floor_box)
-        except Exception as exc:  # total control-plane failure (PIPE-05)
-            return await self._fail_safe(action, exc, computed_floor=floor_box[0])
+        # OBS-02: ensure an app-level correlation id exists (the SDK sets it across a
+        # delegation chain; generate one if absent) so every stage + delegated agent
+        # shares it. OBS-01: one span per evaluate covers allow / deny / fail-safe,
+        # annotated with the decision AFTER it is computed. No-op by default (no provider).
+        if action.context.trace_id is None:
+            action.context.trace_id = uuid4().hex
+        with get_tracer().start_as_current_span(SPAN_NAME) as span:
+            # Mutable holder: _evaluate records the computed floor as soon as it is
+            # known, so a later exception cannot relax it through the fail-safe.
+            floor_box: list[Outcome | None] = [None]
+            try:
+                decision = await self._evaluate(action, floor_box)
+            except Exception as exc:  # total control-plane failure (PIPE-05)
+                decision = await self._fail_safe(action, exc, computed_floor=floor_box[0])
+            annotate_decision_span(span, action, decision)
+            return decision
 
     async def _evaluate(self, action: AgentAction, floor_box: list[Outcome | None]) -> Decision:
         reasons: list[Reason] = []
