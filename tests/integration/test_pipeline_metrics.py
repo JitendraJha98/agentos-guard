@@ -21,6 +21,7 @@ from agentos_pipeline.telemetry import (
     METRIC_ACTIONS,
     METRIC_LATENCY,
     METRIC_VIOLATIONS,
+    UNVERIFIED_AGENT_ID,
     configure_metrics,
     reset_metrics,
 )
@@ -49,6 +50,18 @@ def _action(wired, url: str, content: str = "") -> AgentAction:
         target="http_get",
         payload={"url": url, "content": content},
         identity_token=wired.token,
+    )
+
+
+def _forged_action(claimed_agent_id: str) -> AgentAction:
+    # A missing token -> stage-1 identity short-circuit deny; agent_id is the CLAIMED
+    # (attacker-controlled) id, never verified.
+    return AgentAction(
+        agent_id=claimed_agent_id,
+        type=ActionType.tool_call,
+        target="http_get",
+        payload={"url": _BENIGN_URL},
+        identity_token=None,
     )
 
 
@@ -100,3 +113,22 @@ def test_evaluate_records_volume_outcome_mix_violation_and_latency(reader, pipel
     assert lp.attributes["agent_id"] == wired.agent_id
     assert lp.count == 2
     assert lp.sum > 0.0
+
+
+def test_forged_identity_flood_does_not_explode_metric_cardinality(reader, pipeline_with_principle):
+    # OBS-03 cardinality guard: a stage-1 identity short-circuit carries a CLAIMED, unverified
+    # agent_id. A flood of forged actions with distinct claimed ids must NOT mint one time
+    # series per id — they all bucket onto the single <unverified> sentinel series.
+    wired = pipeline_with_principle
+    for i in range(25):
+        d = asyncio.run(wired.pipeline.evaluate(_forged_action(f"attacker-{i}")))
+        assert d.outcome is Outcome.deny  # forged/unknown identity short-circuits to deny
+
+    points = _points_by_name(reader)
+    # All 25 forged actions collapse onto the single sentinel series (not 25 distinct series).
+    assert {p.attributes["agent_id"] for p in points[METRIC_ACTIONS]} == {UNVERIFIED_AGENT_ID}
+    assert {p.attributes["agent_id"] for p in points[METRIC_VIOLATIONS]} == {UNVERIFIED_AGENT_ID}
+    assert {p.attributes["agent_id"] for p in points[METRIC_LATENCY]} == {UNVERIFIED_AGENT_ID}
+    # None of the attacker-controlled claimed ids leaked into any instrument's labels.
+    for name in (METRIC_ACTIONS, METRIC_VIOLATIONS, METRIC_LATENCY):
+        assert all(not p.attributes["agent_id"].startswith("attacker-") for p in points[name])

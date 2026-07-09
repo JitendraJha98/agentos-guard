@@ -141,6 +141,13 @@ METRIC_LATENCY = "agentos_pipeline_latency_ms"
 LABEL_AGENT_ID = "agent_id"
 LABEL_OUTCOME = "outcome"
 
+# Cardinality guard (6b review fix): the constant agent_id label value used for any decision
+# whose identity was NOT verified. On the forged/unknown-identity short-circuit, a pre-identity
+# halt, or a fail-safe that fired before identity ran, `action.agent_id` is the CLAIMED,
+# attacker-controlled id — bucketing every such action under one sentinel keeps a flood of
+# random ids from minting a new time series per value across all three instruments.
+UNVERIFIED_AGENT_ID = "<unverified>"
+
 # Our OWN provider, held module-locally (see the note above for why not the global one).
 _meter_provider: MeterProvider | None = None
 
@@ -184,12 +191,21 @@ def reset_metrics() -> None:
     _instruments = _build_instruments(metrics.get_meter(_METER_NAME))
 
 
-def record_decision_metrics(action, decision, latency_ms: float) -> None:
+def record_decision_metrics(
+    action, decision, latency_ms: float, *, identity_verified: bool
+) -> None:
     """Record volume / outcome-mix / violation / latency for one decision, once per
     `evaluate()`. Guarded: telemetry must NEVER raise into governance. A violation is any
-    non-allow (restricted) outcome. No-op by default (no provider configured)."""
+    non-allow (restricted) outcome. No-op by default (no provider configured).
+
+    The `agent_id` label is the action's claimed id ONLY when `identity_verified` is True.
+    On an UNVERIFIED action (forged/unknown identity, a pre-identity short-circuit, or a
+    fail-safe that fired before identity ran) the claimed id is attacker-controlled, so it is
+    bucketed under the constant `UNVERIFIED_AGENT_ID` sentinel — an unbounded flood of forged
+    ids stays one time series instead of exploding cardinality across the three instruments."""
     try:
-        labels = {LABEL_AGENT_ID: action.agent_id}
+        agent_id = action.agent_id if identity_verified else UNVERIFIED_AGENT_ID
+        labels = {LABEL_AGENT_ID: agent_id}
         _instruments["actions"].add(1, {**labels, LABEL_OUTCOME: decision.outcome.value})
         if decision.outcome is not Outcome.allow:
             _instruments["violations"].add(1, labels)
