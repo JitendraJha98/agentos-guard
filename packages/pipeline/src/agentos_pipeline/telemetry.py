@@ -1,4 +1,4 @@
-"""OBS-01/02 telemetry seam.
+"""OBS-01/02/03 telemetry seam (tracing + per-agent metrics).
 
 `get_tracer()` returns a module-LOCAL `TracerProvider`'s tracer when one is configured
 (via `configure_tracing`), else the OTel global tracer — which is a no-op until a global
@@ -19,9 +19,12 @@ from __future__ import annotations
 
 import contextlib
 
-from opentelemetry import trace
+from opentelemetry import metrics, trace
+from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+from agentos_contract import Outcome
 
 _TRACER_NAME = "agentos_pipeline"
 SPAN_NAME = "agentos.pipeline.evaluate"
@@ -111,5 +114,85 @@ def annotate_decision_span(span, action, decision) -> None:
         span.set_attribute(ATTR_RISK, float(decision.risk_score))
         span.set_attribute(ATTR_TRUST, float(decision.trust_score))
         span.set_attribute(ATTR_REASON_COUNT, len(decision.reasons))
+    except Exception:  # telemetry must never break governance
+        pass
+
+
+# --- OBS-03 metrics seam ----------------------------------------------------------------
+#
+# Mirrors the tracing seam above: a MODULE-LOCAL `MeterProvider` (never OTel's global one —
+# `metrics.set_meter_provider()` has the same override-once footgun as the tracer global,
+# which would break test isolation across configure/reset). The DEFAULT hot path records
+# into no-op instruments (the global meter has no provider), so it pays ~nothing; production
+# wires a `PeriodicExportingMetricReader` (OTLP) off the hot path at startup, and tests
+# install an `InMemoryMetricReader`.
+#
+# Instrument handles are rebuilt in BOTH `configure_metrics` and `reset_metrics` so a
+# reconfigure binds them to the LIVE provider. Without the rebuild, a pre-built no-op
+# instrument (bound to the no-provider global meter at import time) would keep swallowing
+# every record even after a provider is configured.
+
+_METER_NAME = "agentos_pipeline"
+
+# Centralized metric names + label keys (the OTel semconv is experimental — one edit to rename).
+METRIC_ACTIONS = "agentos_actions_total"
+METRIC_VIOLATIONS = "agentos_violations_total"
+METRIC_LATENCY = "agentos_pipeline_latency_ms"
+LABEL_AGENT_ID = "agent_id"
+LABEL_OUTCOME = "outcome"
+
+# Our OWN provider, held module-locally (see the note above for why not the global one).
+_meter_provider: MeterProvider | None = None
+
+
+def _build_instruments(meter) -> dict:
+    """Create the three OBS-03 instrument handles from `meter`. Called at import time
+    (no-op global meter) and on every configure/reset so the handles track the live meter."""
+    return {
+        "actions": meter.create_counter(
+            METRIC_ACTIONS, description="Governed actions evaluated, by outcome"
+        ),
+        "violations": meter.create_counter(
+            METRIC_VIOLATIONS, description="Actions with a non-allow (restricted) outcome"
+        ),
+        "latency": meter.create_histogram(
+            METRIC_LATENCY, unit="ms", description="Pipeline evaluate() wall latency"
+        ),
+    }
+
+
+# No-op instruments at import: the global meter has no provider, so these record nothing
+# until `configure_metrics` rebinds them to a real provider's meter.
+_instruments: dict = _build_instruments(metrics.get_meter(_METER_NAME))
+
+
+def configure_metrics(reader) -> None:
+    """Install a module-local `MeterProvider` reading into `reader` and (re)build the
+    instrument handles from ITS meter. Tests pass an `InMemoryMetricReader`; production
+    passes a `PeriodicExportingMetricReader` (OTLP). Fully re-callable — each call replaces
+    the provider AND rebinds the instruments, so the LIVE reader observes every record."""
+    global _meter_provider, _instruments
+    _meter_provider = MeterProvider(metric_readers=[reader])
+    _instruments = _build_instruments(_meter_provider.get_meter(_METER_NAME))
+
+
+def reset_metrics() -> None:
+    """Drop the provider and rebuild no-op instruments from the global (no-provider) meter,
+    restoring the zero-cost default hot path (test isolation)."""
+    global _meter_provider, _instruments
+    _meter_provider = None
+    _instruments = _build_instruments(metrics.get_meter(_METER_NAME))
+
+
+def record_decision_metrics(action, decision, latency_ms: float) -> None:
+    """Record volume / outcome-mix / violation / latency for one decision, once per
+    `evaluate()`. Guarded: telemetry must NEVER raise into governance. A violation is any
+    non-allow (restricted) outcome. No-op by default (no provider configured)."""
+    try:
+        labels = {LABEL_AGENT_ID: action.agent_id}
+        _instruments["actions"].add(1, {**labels, LABEL_OUTCOME: decision.outcome.value})
+        if decision.outcome is not Outcome.allow:
+            _instruments["violations"].add(1, labels)
+        _instruments["latency"].record(latency_ms, labels)
     except Exception:  # telemetry must never break governance
         pass
