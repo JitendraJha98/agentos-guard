@@ -36,6 +36,7 @@ class names) instead of importing the control plane's RedactionError type.
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from typing import Mapping, Protocol, Sequence
 from uuid import UUID, uuid4
@@ -66,7 +67,11 @@ from agentos_pipeline.posture import FailPosture, PostureMap
 from agentos_pipeline.risk import assess_risk
 from agentos_pipeline.risk._text import payload_text
 from agentos_pipeline.sequence import SequenceCorrelator
-from agentos_pipeline.telemetry import annotate_decision_span, decision_span
+from agentos_pipeline.telemetry import (
+    annotate_decision_span,
+    decision_span,
+    record_decision_metrics,
+)
 
 
 class _PolicyEngine(Protocol):
@@ -186,11 +191,18 @@ class Pipeline:
             # Mutable holder: _evaluate records the computed floor as soon as it is
             # known, so a later exception cannot relax it through the fail-safe.
             floor_box: list[Outcome | None] = [None]
+            # OBS-03: time the full staged evaluation (incl. the fail-safe on total
+            # failure) so per-agent latency reflects the real hot-path cost.
+            start = time.perf_counter()
             try:
                 decision = await self._evaluate(action, floor_box)
             except Exception as exc:  # total control-plane failure (PIPE-05)
                 decision = await self._fail_safe(action, exc, computed_floor=floor_box[0])
+            latency_ms = (time.perf_counter() - start) * 1000.0
             annotate_decision_span(span, action, decision)
+            # OBS-03: record volume / outcome mix / violations / latency once per
+            # evaluate, alongside the span annotation. Guarded — never breaks governance.
+            record_decision_metrics(action, decision, latency_ms)
             return decision
 
     async def _evaluate(self, action: AgentAction, floor_box: list[Outcome | None]) -> Decision:
