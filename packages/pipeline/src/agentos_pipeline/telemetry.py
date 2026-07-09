@@ -17,6 +17,8 @@ to rename). Telemetry must NEVER raise into governance: `annotate_decision_span`
 
 from __future__ import annotations
 
+import contextlib
+
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -63,9 +65,41 @@ def get_tracer():
     return trace.get_tracer(_TRACER_NAME)
 
 
+@contextlib.contextmanager
+def decision_span():
+    """The one `evaluate()` span, acquired so telemetry can NEVER gate the verdict.
+
+    Yields a live span, or None when tracing is a no-op OR anything in the span
+    lifecycle throws. BOTH ends are guarded, because a span processor's hooks fire
+    on the context-manager boundaries, not on the `start_as_current_span()` call:
+    `on_start` (and the sampler) run inside `__enter__`, `on_end` inside `__exit__`.
+    A misconfigured/throwing processor, sampler, or provider therefore degrades to a
+    None span here instead of propagating out of `evaluate()`. The default hot path
+    (no provider) is a no-op recording span, entered and exited at zero cost."""
+    cm = None
+    span = None
+    try:
+        cm = get_tracer().start_as_current_span(SPAN_NAME)
+        span = cm.__enter__()
+    except Exception:  # telemetry must never break governance
+        cm = None
+        span = None
+    try:
+        yield span
+    finally:
+        if cm is not None:
+            try:
+                cm.__exit__(None, None, None)
+            except Exception:  # on_end / exporter flush must not gate the verdict
+                pass
+
+
 def annotate_decision_span(span, action, decision) -> None:
     """Record the decision on the span AFTER it is computed. Defensive: never raise into
-    the hot path (a no-op span accepts `set_attribute` harmlessly; guard anyway)."""
+    the hot path (a no-op span accepts `set_attribute` harmlessly; guard anyway). A None
+    span (acquisition failed, see `decision_span`) short-circuits — nothing to annotate."""
+    if span is None:
+        return
     try:
         span.set_attribute(ATTR_TRACE_ID, action.context.trace_id or "")
         span.set_attribute(ATTR_AGENT_ID, action.agent_id)

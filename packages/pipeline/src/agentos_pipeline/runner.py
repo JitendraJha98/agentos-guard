@@ -66,7 +66,7 @@ from agentos_pipeline.posture import FailPosture, PostureMap
 from agentos_pipeline.risk import assess_risk
 from agentos_pipeline.risk._text import payload_text
 from agentos_pipeline.sequence import SequenceCorrelator
-from agentos_pipeline.telemetry import SPAN_NAME, annotate_decision_span, get_tracer
+from agentos_pipeline.telemetry import annotate_decision_span, decision_span
 
 
 class _PolicyEngine(Protocol):
@@ -180,7 +180,9 @@ class Pipeline:
         # annotated with the decision AFTER it is computed. No-op by default (no provider).
         if action.context.trace_id is None:
             action.context.trace_id = uuid4().hex
-        with get_tracer().start_as_current_span(SPAN_NAME) as span:
+        # OBS-01: span acquisition + teardown are guarded (decision_span) so a throwing
+        # processor/sampler/provider yields a None span, NEVER an exception into the verdict.
+        with decision_span() as span:
             # Mutable holder: _evaluate records the computed floor as soon as it is
             # known, so a later exception cannot relax it through the fail-safe.
             floor_box: list[Outcome | None] = [None]

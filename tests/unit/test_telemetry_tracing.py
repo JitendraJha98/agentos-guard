@@ -72,3 +72,9 @@ def test_annotate_never_raises_into_governance(exporter):
     # Malformed action/decision: annotate must swallow the failure, never propagate it.
     with get_tracer().start_as_current_span("t") as span:
         annotate_decision_span(span, object(), object())
+
+
+def test_annotate_tolerates_none_span():
+    # When span acquisition failed (a throwing processor/sampler), the runner passes a
+    # None span. annotate must skip the set_attribute calls and return without raising.
+    annotate_decision_span(None, object(), object())
