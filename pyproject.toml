@@ -15,7 +15,7 @@ dependencies = [
     "cryptography>=48",
     "rfc3161-client>=1.0.3",
     "anthropic>=0.92",
-    "openai>=1.40,<2",
+    "openai>=1.40,<3",
     "fastapi>=0.115",
     "agentos-constitution",
     "agentos-contract",
@@ -30,6 +30,21 @@ dev = [
     "pytest-repeat",
     "pytest-benchmark",
     "httpx>=0.27",
+]
+# Slice 6e (TEST-02/06): heavy ML red-team libraries — garak + PyRIT — bound to the
+# governed agent via packages/sdk/src/agentos_sdk/redteam_external.py. Pinned for
+# reproducibility. Isolated to this OPTIONAL group so the main deterministic `pytest`
+# suite never imports them; the live gate (tests/redteam/test_garak_pyrit_gate.py)
+# importorskips them, and the dedicated CI `redteam` job installs them via
+# `uv sync --group redteam`.
+# Pins discovered by resolving the two libraries together (Slice 6e Task 1):
+# garak 0.15.1 (latest) needs openai>=2,<3 + datasets>=3,<4; pyrit 0.14.0 needs
+# datasets>=4.8 which is IRRECONCILABLE with garak, so pyrit is held at 0.13.0
+# (datasets 3.x) — the newest pyrit that co-installs with the newest garak. Both
+# need openai>=2, which is why the root openai bound was widened to <3.
+redteam = [
+    "garak==0.15.1",
+    "pyrit==0.13.0",
 ]
 
 # uv workspace: each package under packages/ has its own pyproject.toml and
