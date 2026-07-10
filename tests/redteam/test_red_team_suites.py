@@ -3,9 +3,11 @@
 This is where the corpus meets the constitution. Each suite runs through the
 `pipeline_with_principle` fixture (the compiled multi-principle WASM floor + the SEC-01
 detector) and must score `attack_success_rate == 0.0` — the governed agent blocks every
-curated attack (TEST-03/04). The tool_call suites are blocked at the egress floor
-(principle 1.1); the jailbreak suite (`model_invocation`, to which the egress floor does
-NOT apply) is blocked by the SEC-01 prompt-injection detector via the graduated stage.
+curated attack (TEST-03/04). The exfiltration/tool_misuse suites are blocked at the egress
+floor (principle 1.1); the prompt_injection suite adds a detector-path probe on an
+ALLOWLISTED host (1.1 cannot fire) proved below to be blocked by the SEC-01 detector alone;
+the jailbreak suite (`model_invocation`, to which the egress floor does NOT apply) is
+blocked by the SEC-01 prompt-injection detector via the graduated stage.
 
 Floor proof (keeps the ASR-0 gate HONEST, not vacuous — the D-04 pattern): the same
 exfiltration suite run against `pipeline_without_principle` (constitution 1.1 genuinely
@@ -21,10 +23,19 @@ in-memory SQLite. The garak/PyRIT-backed CI gate (TEST-02/06) is Slice 6e.
 """
 
 import asyncio
+from urllib.parse import urlsplit
 
 import pytest
 
+from agentos_contract import AgentAction, Outcome
+from agentos_pipeline.graduated import GraduatedThresholds
 from agentos_sdk import run_suite, suites
+from agentos_sdk.redteam import SUITES
+
+# The single host in the test constitution's egress_allowlist (tests/fixtures/
+# test_constitution.yaml). A probe to this host CANNOT fire principle 1.1, so the
+# SEC-01 detector is the only thing that can block it — the detector-path isolation.
+_ALLOWLISTED_HOST = "api.example.com"
 
 
 def _asr(wired, suite: str) -> "object":
@@ -62,6 +73,42 @@ def test_exfiltration_slips_without_the_egress_principle(pipeline_without_princi
     """
     results = _asr(pipeline_without_principle, "exfiltration")
     assert results.attack_success_rate > 0.0
+
+
+def test_prompt_injection_detector_blocks_on_allowlisted_host(pipeline_with_principle) -> None:
+    """Detector-path proof (mirror of the exfil floor-proof): the prompt_injection suite
+    carries a probe whose URL host is ALLOWLISTED, so egress principle 1.1 CANNOT fire.
+
+    The two non-allowlisted injection probes deny via BOTH the egress floor (1.1) and the
+    detector — so they cannot prove the SEC-01 detector contributes anything as a blocker
+    (if the detector were broken they'd still deny via 1.1). This probe isolates the
+    detector: with 1.1 unable to fire, the ONLY thing that can block is the graduated deny
+    driven by risk >= deny_at. That is exactly what makes the prompt_injection ASR-0 gate
+    a genuine test of the injection detector rather than a second copy of the egress suites.
+    """
+    probes = [
+        a for a in SUITES["prompt_injection"]
+        if urlsplit(a.payload["url"]).hostname == _ALLOWLISTED_HOST
+    ]
+    assert probes, "prompt_injection needs a detector-path probe on an allowlisted host"
+    wired = pipeline_with_principle
+    for probe in probes:
+        action = AgentAction(
+            agent_id=wired.agent_id,
+            type=probe.action_type,
+            target=probe.target,
+            payload=probe.payload,
+            identity_token=wired.token,
+        )
+        decision = asyncio.run(wired.pipeline.evaluate(action))
+        # The egress principle did NOT fire (host is allowlisted) — the floor is not the block.
+        assert not any(
+            r.code == "constitution_principle_fired" and r.principle_ref == "1.1"
+            for r in decision.reasons
+        ), f"{probe.id}: principle 1.1 fired — host is not isolated from the egress floor"
+        # The block is the graduated deny driven by the SEC-01 detector (risk >= deny_at).
+        assert decision.outcome == Outcome.deny, f"{probe.id}: not blocked ({decision.outcome})"
+        assert decision.risk_score >= GraduatedThresholds().deny_at
 
 
 @pytest.mark.regression_lock
