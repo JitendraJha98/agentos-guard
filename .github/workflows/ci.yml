@@ -60,3 +60,40 @@ jobs:
         # Re-runs detector unit tests 100x to prove the verdict is non-flaky.
         # Meaningful once the SEC-01 detector tests land in plan 01-03.
         run: uv run pytest tests/unit -k detector --count=100 -q
+
+  redteam:
+    # Dedicated garak + PyRIT red-team gate (TEST-02/06). The heavy ML deps (garak/pyrit ->
+    # torch/transformers/datasets) and the longer statistical run are isolated in this job so
+    # the `test` job above stays lean and deterministic (its `pytest -q` never imports them —
+    # tests/redteam/test_garak_pyrit_gate.py importorskips the extra). Hard-fails the build on
+    # an ASR-ceiling breach, i.e. a governance regression that lets materially more attacks
+    # through (TEST-06 — "safety as a failing test").
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.17"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install pinned OPA CLI
+        # The governed pipeline compiles the test constitution at session start (tests/_opa.py
+        # finds OPA on PATH) — the same requirement as the `test` job.
+        run: |
+          curl -fsSL -o /usr/local/bin/opa \
+            "https://openpolicyagent.org/downloads/v${OPA_VERSION}/opa_linux_amd64_static"
+          chmod +x /usr/local/bin/opa
+          opa version
+
+      - name: Sync workspace + redteam extra
+        # Installs garak + pyrit (the optional `redteam` dependency group) alongside the
+        # workspace packages and the default dev group (pytest).
+        run: uv sync --all-packages --group redteam
+
+      - name: garak + PyRIT ASR gate
+        # Hard-fail gate: an ASR breach past the calibrated ceiling breaks the build (TEST-06).
+        run: uv run pytest tests/redteam/test_garak_pyrit_gate.py -q
