@@ -86,17 +86,24 @@ def _warmup(wired) -> None:
         asyncio.run(wired.pipeline.evaluate(action))
 
 
-def _best_measure(wired) -> tuple[float, float]:
-    """Best-of-N floor: the MIN mean and MIN p95 over _SAMPLES samples — the least-preempted
-    estimate of the true cost (preemption only inflates a sample, never speeds it up). Used for the
-    overhead-delta variants so a load spike in one sample does not dominate the comparison."""
-    means: list[float] = []
-    p95s: list[float] = []
+def _min_overhead(wired, configure, reset) -> tuple[float, float]:
+    """Instrumentation overhead as the MIN delta over _SAMPLES INTERLEAVED (baseline, instrumented)
+    pairs. Each pair measures the no-op baseline then the instrumented path BACK-TO-BACK, so both
+    halves see ~the same instantaneous load window and the delta is load-invariant; taking the MIN
+    across pairs rejects a scheduler spike that hit only one pair. (Measuring all baselines then all
+    instrumented in separate phases — the earlier approach — let asymmetric load between the phases
+    inflate the delta and flake under extreme load; interleaving fixes that.)"""
+    d_means: list[float] = []
+    d_p95s: list[float] = []
     for _ in range(_SAMPLES):
-        m, p = _measure(wired)
-        means.append(m)
-        p95s.append(p)
-    return min(means), min(p95s)
+        reset()
+        base_mean, base_p95 = _measure(wired)
+        configure()
+        inst_mean, inst_p95 = _measure(wired)
+        reset()
+        d_means.append(inst_mean - base_mean)
+        d_p95s.append(inst_p95 - base_p95)
+    return min(d_means), min(d_p95s)
 
 
 @pytest.mark.latency
@@ -148,21 +155,23 @@ def test_tracing_overhead_stays_bounded(pipeline_with_principle) -> None:
     reset_tracing()
     reset_metrics()
     _warmup(wired)
-    base_mean, base_p95 = _best_measure(wired)  # no provider -> no-op baseline floor
 
+    # Emission sanity (once): the exporter really is on the hot path (one span per evaluate).
     exporter = InMemorySpanExporter()
     configure_tracing(exporter)
     try:
         _warmup(wired)
-        # Sanity: the exporter really is on the hot path (one span per evaluate).
         assert len(exporter.get_finished_spans()) == 5
-        inst_mean, inst_p95 = _best_measure(wired)
     finally:
-        reset_tracing()  # restore the no-op default so tracing never leaks to other tests
+        reset_tracing()
 
-    d_mean, d_p95 = inst_mean - base_mean, inst_p95 - base_p95
-    print(f"tracing overhead: mean +{d_mean * 1000:.3f} ms  p95 +{d_p95 * 1000:.3f} ms "
-          f"(base mean={base_mean * 1000:.3f} ms, inst mean={inst_mean * 1000:.3f} ms)")
+    # Load-invariant overhead: min delta over interleaved (no-op, tracing-on) pairs.
+    d_mean, d_p95 = _min_overhead(
+        wired,
+        configure=lambda: configure_tracing(InMemorySpanExporter()),
+        reset=reset_tracing,
+    )
+    print(f"tracing overhead: mean +{d_mean * 1000:.3f} ms  p95 +{d_p95 * 1000:.3f} ms")
     assert d_mean < _OVERHEAD_MEAN_BUDGET_S, (
         f"tracing mean overhead +{d_mean * 1000:.3f} ms exceeds {_OVERHEAD_MEAN_BUDGET_S * 1000:.0f} ms "
         f"vs the no-op baseline — span emission got too expensive on the hot path (OBS-01)"
@@ -202,21 +211,23 @@ def test_metrics_overhead_stays_bounded(pipeline_with_principle) -> None:
     reset_metrics()
     reset_tracing()
     _warmup(wired)
-    base_mean, base_p95 = _best_measure(wired)  # no provider -> no-op baseline floor
 
+    # Emission sanity (once): the reader really is on the hot path (one allow recorded per evaluate).
     reader = InMemoryMetricReader()
     configure_metrics(reader)
     try:
         _warmup(wired)
-        # Sanity: the reader really is on the hot path (one allow recorded per evaluate).
         assert _allow_count(reader, wired.agent_id) == 5
-        inst_mean, inst_p95 = _best_measure(wired)
     finally:
-        reset_metrics()  # restore the no-op default so metrics never leak to other tests
+        reset_metrics()
 
-    d_mean, d_p95 = inst_mean - base_mean, inst_p95 - base_p95
-    print(f"metrics overhead: mean +{d_mean * 1000:.3f} ms  p95 +{d_p95 * 1000:.3f} ms "
-          f"(base mean={base_mean * 1000:.3f} ms, inst mean={inst_mean * 1000:.3f} ms)")
+    # Load-invariant overhead: min delta over interleaved (no-op, metrics-on) pairs.
+    d_mean, d_p95 = _min_overhead(
+        wired,
+        configure=lambda: configure_metrics(InMemoryMetricReader()),
+        reset=reset_metrics,
+    )
+    print(f"metrics overhead: mean +{d_mean * 1000:.3f} ms  p95 +{d_p95 * 1000:.3f} ms")
     assert d_mean < _OVERHEAD_MEAN_BUDGET_S, (
         f"metrics mean overhead +{d_mean * 1000:.3f} ms exceeds {_OVERHEAD_MEAN_BUDGET_S * 1000:.0f} ms "
         f"vs the no-op baseline — metric recording got too expensive on the hot path (OBS-03)"
