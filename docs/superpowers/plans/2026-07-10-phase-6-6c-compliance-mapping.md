@@ -226,7 +226,7 @@ if __name__ == "__main__":
 
 ## Self-review
 CMP-01: every shipped detector + policy/effect + audit capability maps to OWASP Agentic Top-10 (2026)
-ASI codes (coverage test imports the live detector classes so an unmapped future detector fails CI).
+ASI codes (coverage test DISCOVERS the live detector classes from their modules so an unmapped future detector fails CI).
 CMP-02: each maps to NIST RMF GOVERN/MAP/MEASURE/MANAGE. CMP-03: EU Art. 12 (record-keeping) / Art. 26
 (human oversight) claims point at concrete evidence — the hash-chained/signed/redacted audit log and
 the approval/exception/review/kill controls — and the export includes LIVE proof (record count +

@@ -184,7 +184,8 @@ CONTROL_MAPPINGS: tuple[ControlMapping, ...] = (
     ),
 )
 
-# Detector CLASS NAMES that MUST be mapped (the coverage test imports the classes and checks these).
+# Detector CLASS NAMES that MUST be mapped. The coverage test DISCOVERS the live detector classes
+# from their modules and asserts this set equals exactly them, so an unmapped new detector fails CI.
 LIVE_DETECTOR_CONTROLS = frozenset(
     {
         "PromptInjectionScorer",
