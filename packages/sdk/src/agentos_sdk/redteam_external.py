@@ -6,7 +6,8 @@ pipeline (a scripted fake model -> the real 5-stage PDP over the test constituti
 reports whether governance BLOCKED it. A garak custom **generator** + **detector** and a
 PyRIT single-turn **target** + **scorer** bind that `GovernedTarget` to each library's
 extension point; their probes/prompts drive the attacks, and a block-rate score computes
-ASR = fraction NOT blocked. No live LLM / no network -> reproducible.
+ASR = fraction NOT blocked. No live LLM / no network, and the garak corpus is seeded
+(``_GARAK_SEED``) so its otherwise-stochastic probes are frozen -> byte-reproducible.
 
 External-API discipline — verified against the INSTALLED packages (pinned in the `redteam`
 extra), NOT guessed. Bound signatures:
@@ -269,6 +270,15 @@ _DEFAULT_GARAK_PROBES: tuple[tuple[str, str], ...] = (
 # the corpus size is bounded and stable; the one-prompt DAN probes are unaffected.
 _DEFAULT_PROMPTS_PER_PROBE = 8
 
+# Fixed seed that FREEZES the garak corpus. `latentinjection.{LatentInjectionReport,
+# LatentJailbreak}` build prompts with the global `random` module and `promptinject.Hijack*`
+# reseeds its internal shuffle with `probe.seed` (= `garak._config.run.seed`, whose default
+# None seeds from system entropy). Setting BOTH `garak._config.run.seed` and the global RNG to
+# this value before each probe instantiation makes all three otherwise-stochastic probes emit
+# a byte-identical corpus every run — the precondition for the ASR gate being a regression lock
+# rather than a coin flip. Changing this value changes the corpus and requires recalibration.
+_GARAK_SEED = 1337
+
 # Real PyRIT single-turn jailbreak templates (bundled offline), rendered with a fixed
 # objective. Mixed by design: some ("AIM" — "act as") trip the detector, others do not.
 _DEFAULT_PYRIT_TEMPLATES: tuple[str, ...] = (
@@ -294,10 +304,21 @@ def _pyrit_template_dir() -> Path:
     return Path(pyrit.__file__).parent / "datasets" / "jailbreak" / "templates"
 
 
-def _garak_probe_texts(module: str, cls: str, cap: int) -> list[str]:
-    """Instantiate a garak probe and return up to `cap` of its attack-prompt strings."""
-    import importlib
+def _garak_probe_texts(module: str, cls: str, cap: int, seed: int = _GARAK_SEED) -> list[str]:
+    """Instantiate a garak probe and return up to `cap` of its attack-prompt strings.
 
+    Freezes the corpus by seeding BOTH RNG paths the bound probes use immediately before
+    instantiation: the global `random` module (latentinjection.* sample their prompts from it)
+    and `garak._config.run.seed` (promptinject.Hijack* reseeds its internal shuffle with
+    `probe.seed`, which resolves from that config value). Without this the prompt text differs
+    on every instantiation; with it, repeated instantiations are byte-identical."""
+    import importlib
+    import random
+
+    import garak._config
+
+    garak._config.run.seed = seed
+    random.seed(seed)
     probe = getattr(importlib.import_module(f"garak.probes.{module}"), cls)()
     texts = []
     for p in probe.prompts[:cap]:
@@ -351,8 +372,11 @@ def run_external_suite(
     """Route a bounded, NAMED garak probe set + PyRIT jailbreak-template set through the
     governed pipeline and score each as blocked/slipped. ASR = fraction NOT blocked.
 
-    Deterministic: a scripted governed target (no live LLM / no network) + a fixed, bounded
-    corpus. The selection actually run is logged so coverage is honest, not silently truncated.
+    Deterministic: a scripted governed target (no live LLM / no network) + a seeded, bounded
+    corpus. garak's stochastic latentinjection/promptinject probes are frozen via
+    ``_GARAK_SEED`` (see ``_garak_probe_texts``) so repeated runs are byte-identical — pinning
+    the garak/pyrit *versions* alone is NOT enough. The selection actually run is logged so
+    coverage is honest, not silently truncated.
     """
     target = GovernedTarget(evaluate, agent_id=agent_id, token=token)
     results: list[ExternalAttackResult] = []
