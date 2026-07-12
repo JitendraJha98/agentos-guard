@@ -36,6 +36,7 @@ from agentos_pipeline.graduated import GraduatedThresholds
 from agentos_pipeline.policy import PolicyEvaluationError
 from agentos_pipeline.posture import PostureMap
 from agentos_pipeline.runner import Pipeline
+from agentos_pipeline.telemetry import reset_tracing
 
 
 # --- fakes / spies -----------------------------------------------------------
@@ -1038,3 +1039,75 @@ def test_redaction_failure_writes_payload_free_record_and_applies_posture() -> N
     assert len(audit.calls) == 2
     assert audit.calls[1].payload == {}  # the retry is payload-free
     assert decision.evidence_ref is not None
+
+
+# --- Slice 6a: telemetry must NEVER break governance (OBS-01) ------------------
+# The evaluate() span lifecycle is defensively guarded: a SpanProcessor.on_start
+# (fires on __enter__) or on_end (fires on __exit__) that raises — a misconfigured
+# exporter/processor/sampler wired in production — must degrade to a no-op span, NEVER
+# propagate out of evaluate() and gate the verdict. The default no-op hot path (no
+# provider) still pays nothing; these tests install a real provider whose processor throws.
+
+
+def _install_throwing_processor(processor) -> None:
+    """Point the telemetry seam at a real provider whose only processor throws.
+    reset_tracing() (called in each test's finally) restores the no-op default."""
+    import agentos_pipeline.telemetry as telemetry
+    from opentelemetry.sdk.trace import TracerProvider
+
+    provider = TracerProvider()
+    provider.add_span_processor(processor)
+    telemetry._provider = provider
+
+
+def _on_start_raising_processor():
+    """A real SpanProcessor whose on_start (span creation, __enter__) raises."""
+    from opentelemetry.sdk.trace import SpanProcessor
+
+    class _P(SpanProcessor):
+        def on_start(self, span, parent_context=None) -> None:
+            raise RuntimeError("span processor on_start boom")
+
+    return _P()
+
+
+def _on_end_raising_processor():
+    """A real SpanProcessor whose on_end (span teardown, __exit__) raises; on_start
+    inherits the base no-op so the span is created before teardown throws."""
+    from opentelemetry.sdk.trace import SpanProcessor
+
+    class _P(SpanProcessor):
+        def on_end(self, span) -> None:
+            raise RuntimeError("span processor on_end boom")
+
+    return _P()
+
+
+def test_throwing_on_start_processor_never_breaks_governance() -> None:
+    """__enter__ (span creation -> on_start) raising must not propagate: evaluate()
+    still returns the computed deny and still audits the decision."""
+    _install_throwing_processor(_on_start_raising_processor())
+    try:
+        pipeline, ident, pol, scorer, audit = _build(
+            identity_ok=True, policy=Outcome.deny, risk=0.0, trust=1.0
+        )
+        decision = asyncio.run(pipeline.evaluate(_action()))
+        assert decision.outcome is Outcome.deny  # governance verdict intact
+        assert len(audit.calls) == 1             # the decision was still audited
+    finally:
+        reset_tracing()
+
+
+def test_throwing_on_end_processor_never_breaks_governance() -> None:
+    """__exit__ (span teardown -> on_end) raising must not swallow the return:
+    evaluate() still returns the computed deny and still audits the decision."""
+    _install_throwing_processor(_on_end_raising_processor())
+    try:
+        pipeline, ident, pol, scorer, audit = _build(
+            identity_ok=True, policy=Outcome.deny, risk=0.0, trust=1.0
+        )
+        decision = asyncio.run(pipeline.evaluate(_action()))
+        assert decision.outcome is Outcome.deny  # governance verdict intact
+        assert len(audit.calls) == 1             # the decision was still audited
+    finally:
+        reset_tracing()

@@ -8,6 +8,8 @@ dependencies = [
     "agentos-contract",
     "opa-wasmtime>=0.1.1,<0.2",
     "wasmtime>=27",
+    "opentelemetry-api>=1.42",
+    "opentelemetry-sdk>=1.42",
 ]
 
 [build-system]

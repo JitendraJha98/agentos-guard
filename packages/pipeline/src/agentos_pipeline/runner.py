@@ -36,9 +36,10 @@ class names) instead of importing the control plane's RedactionError type.
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from typing import Mapping, Protocol, Sequence
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from agentos_contract import (
     AgentAction,
@@ -66,6 +67,11 @@ from agentos_pipeline.posture import FailPosture, PostureMap
 from agentos_pipeline.risk import assess_risk
 from agentos_pipeline.risk._text import payload_text
 from agentos_pipeline.sequence import SequenceCorrelator
+from agentos_pipeline.telemetry import (
+    annotate_decision_span,
+    decision_span,
+    record_decision_metrics,
+)
 
 
 class _PolicyEngine(Protocol):
@@ -173,15 +179,48 @@ class Pipeline:
         self._kill_switch = kill_switch
 
     async def evaluate(self, action: AgentAction) -> Decision:
-        # Mutable holder: _evaluate records the computed floor as soon as it is
-        # known, so a later exception cannot relax it through the fail-safe.
-        floor_box: list[Outcome | None] = [None]
-        try:
-            return await self._evaluate(action, floor_box)
-        except Exception as exc:  # total control-plane failure (PIPE-05)
-            return await self._fail_safe(action, exc, computed_floor=floor_box[0])
+        # OBS-02: ensure an app-level correlation id exists (the SDK sets it across a
+        # delegation chain; generate one if absent) so every stage + delegated agent
+        # shares it. OBS-01: one span per evaluate covers allow / deny / fail-safe,
+        # annotated with the decision AFTER it is computed. No-op by default (no provider).
+        if action.context.trace_id is None:
+            action.context.trace_id = uuid4().hex
+        # OBS-01: span acquisition + teardown are guarded (decision_span) so a throwing
+        # processor/sampler/provider yields a None span, NEVER an exception into the verdict.
+        with decision_span() as span:
+            # Mutable holder: _evaluate records the computed floor as soon as it is
+            # known, so a later exception cannot relax it through the fail-safe.
+            floor_box: list[Outcome | None] = [None]
+            # OBS-03 cardinality guard: agent_id is a metric label ONLY after identity
+            # verifies. On the forged/unknown-identity short-circuit, a pre-identity halt,
+            # or a fail-safe that fired before identity ran, action.agent_id is the CLAIMED
+            # (attacker-controlled) id — labeling with it would let a flood of random ids
+            # mint unbounded time series. _evaluate flips this True the instant identity
+            # verifies, so the fail-safe inherits the real verification state.
+            verified_box: list[bool] = [False]
+            # OBS-03: time the full staged evaluation (incl. the fail-safe on total
+            # failure) so per-agent latency reflects the real hot-path cost.
+            start = time.perf_counter()
+            try:
+                decision = await self._evaluate(action, floor_box, verified_box)
+            except Exception as exc:  # total control-plane failure (PIPE-05)
+                decision = await self._fail_safe(action, exc, computed_floor=floor_box[0])
+            latency_ms = (time.perf_counter() - start) * 1000.0
+            annotate_decision_span(span, action, decision)
+            # OBS-03: record volume / outcome mix / violations / latency once per
+            # evaluate, alongside the span annotation. Guarded — never breaks governance.
+            # An UNVERIFIED action's claimed agent_id is never used as a label (see verified_box).
+            record_decision_metrics(
+                action, decision, latency_ms, identity_verified=verified_box[0]
+            )
+            return decision
 
-    async def _evaluate(self, action: AgentAction, floor_box: list[Outcome | None]) -> Decision:
+    async def _evaluate(
+        self,
+        action: AgentAction,
+        floor_box: list[Outcome | None],
+        verified_box: list[bool],
+    ) -> Decision:
         reasons: list[Reason] = []
 
         # Stage 0 — Kill switch (RUN-01/02): an operator halt denies this agent's actions
@@ -232,6 +271,10 @@ class Pipeline:
             await self._append_with_redaction_fallback(action, decision)
             return decision  # TERMINAL — no later stages
         trust = ident.trust_score
+        # OBS-03 cardinality guard: identity is now verified, so action.agent_id is a
+        # TRUSTED value — safe to use as a metric label. Flipped here (not at the end) so a
+        # fail-safe triggered by a LATER stage still labels with the real, verified agent_id.
+        verified_box[0] = True
         # Identity verified — record the stage that ran so every stage contributes a
         # machine-readable reason on the success path too (PIPE-02).
         reasons.append(Reason(stage="identity", code="identity_verified", detail=ident.detail))

@@ -29,6 +29,14 @@ from agentos_sdk.normalize import (
     normalize_mcp_call,
     normalize_model_call,
 )
+from agentos_sdk.redteam import (
+    BLOCKING_OUTCOMES,
+    Attack,
+    AttackResult,
+    Results,
+    run_suite,
+    suites,
+)
 from agentos_sdk.wrappers import (
     governed_delegation,
     governed_memory_access,
@@ -63,4 +71,11 @@ __all__ = [
     "coverage_matrix",
     "verify_coverage",
     "InterceptionGapError",
+    # pytest-native red-team harness + curated corpus (SDK-03 / TEST-01/03/04)
+    "run_suite",
+    "suites",
+    "Attack",
+    "AttackResult",
+    "Results",
+    "BLOCKING_OUTCOMES",
 ]
