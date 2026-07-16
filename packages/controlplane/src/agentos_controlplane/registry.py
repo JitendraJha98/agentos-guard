@@ -9,9 +9,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from agentos_controlplane.identity_engine import IdentityEngine
 from agentos_controlplane.inventory import InventoryStore
-from agentos_controlplane.store.models import Agent
+from agentos_controlplane.store.models import Agent, TrustProfile
 
-DEFAULT_TRUST_SCORE = 0.5  # TRST-01 seed; the full reputation engine is Phase 7.
+DEFAULT_TRUST_SCORE = 0.5  # TRST-01 seed for a new agent; TRST-03 reputation grades it from there.
 
 
 class Registry:
@@ -75,7 +75,25 @@ class Registry:
             return session.get(Agent, agent_id) is not None
 
     def load_trust(self, agent_id: str) -> float:
-        """TRST-01 seed — the 0-1 score the graduated-response stage consumes."""
+        """The 0-1 score the graduated-response stage consumes (TRST-01 seed, TRST-03 derived).
+
+        Resolution order, most-authoritative first:
+
+          1. the agent's `TrustProfile` — where BOTH the gated operator route
+             (PUT /trust-profiles) and the TRST-03 reputation reconciler write;
+          2. the `Agent` row's seed `trust_score`, for an agent with no profile yet;
+          3. 0.0 for an unknown agent — fail closed, no benefit of the doubt.
+
+        Step 1 is load-bearing, not a nicety: before Phase 7 this method read only
+        the `Agent` seed, so an operator grading an agent down through the only
+        route documented for it changed the dashboard and nothing else — the
+        pipeline kept scoring the agent at its seed trust. Reputation (TRST-03)
+        reaches graduated response through exactly this path, so it must resolve
+        the profile first. Regression-locked in tests/unit/test_reputation.py.
+        """
         with self._session_factory() as session:
+            profile = session.get(TrustProfile, agent_id)
+            if profile is not None:
+                return profile.trust_score
             agent = session.get(Agent, agent_id)
             return agent.trust_score if agent is not None else 0.0
