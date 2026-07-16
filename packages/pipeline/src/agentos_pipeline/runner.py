@@ -58,6 +58,11 @@ from agentos_contract.policy_io import (
     select_floor,
 )
 
+from agentos_pipeline.delegation import (
+    WILDCARD,
+    DelegationDenied,
+    DelegationResolver,
+)
 from agentos_pipeline.enrichment import enrich
 from agentos_pipeline.graduated import GraduatedThresholds, graduated_response
 from agentos_pipeline.identity import IdentityStage, IdentityVerdict
@@ -151,6 +156,7 @@ class Pipeline:
         sequences: list[dict] | None = None,
         correlator: "SequenceCorrelator | None" = None,
         kill_switch: KillSwitchLookup | None = None,
+        delegation: DelegationResolver | None = None,
     ) -> None:
         self._identity = identity
         self._policy = policy
@@ -177,6 +183,10 @@ class Pipeline:
         # RUN-01/02: the operator kill-switch lookup (in-memory, hot-path). None
         # default: the stage-0 check never runs and behavior is unchanged (backward compat).
         self._kill_switch = kill_switch
+        # TRST-04: the delegation authority resolver (bounded trust budget + scope
+        # intersection over lineage). None default: stage 1b never runs and trust is
+        # the agent's own, exactly as before.
+        self._delegation = delegation
 
     async def evaluate(self, action: AgentAction) -> Decision:
         # OBS-02: ensure an app-level correlation id exists (the SDK sets it across a
@@ -278,6 +288,43 @@ class Pipeline:
         # Identity verified — record the stage that ran so every stage contributes a
         # machine-readable reason on the success path too (PIPE-02).
         reasons.append(Reason(stage="identity", code="identity_verified", detail=ident.detail))
+
+        # Stage 1b — Delegation authority (TRST-04). Placed AFTER identity (an unverified
+        # agent must never reach the ledger) and BEFORE policy (the effective trust it
+        # yields is what graduated response must consume). None default: unwired
+        # deployments behave exactly as before.
+        if self._delegation is not None:
+            try:
+                authority = self._delegation.resolve(action, trust)
+            except DelegationDenied as exc:
+                floor_box[0] = Outcome.deny  # an exhausted/empty delegation may NEVER relax
+                reasons.append(
+                    Reason(stage="delegation", code="delegation_denied", detail=str(exc)[:512])
+                )
+                decision = Decision(
+                    action_id=action.id,
+                    outcome=Outcome.deny,
+                    trust_score=trust,
+                    reasons=reasons,
+                    constitution_version=self._policy.constitution_version,
+                    policy_version=self._policy.policy_version,
+                )
+                await self._append_with_redaction_fallback(action, decision)
+                return decision  # TERMINAL
+            # The BUDGET: a delegated action is scored with its chain-capped trust, never
+            # its own standing — this is what stops a distrusted principal from borrowing
+            # a trusted delegate's authority (TRST-04).
+            trust = authority.trust
+            reasons.append(
+                Reason(
+                    stage="delegation",
+                    code="delegation_authority_resolved",
+                    detail=(
+                        f"depth={authority.depth} effective_trust={authority.trust:.3f} "
+                        f"scope={'*' if WILDCARD in authority.scope else len(authority.scope)}"
+                    ),
+                )
+            )
 
         # Stage 2 — Enrichment (SEC-12/D6): deterministic, pure CPU, pre-policy.
         enrichment = enrich(action)

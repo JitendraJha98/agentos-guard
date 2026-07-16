@@ -220,6 +220,11 @@ class TrustProfile(Base):
     agent_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     trust_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
     band: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # TRST-04: the agent's own capability scope — a JSON list of capability strings,
+    # `["*"]` for the wildcard. NULL means "unset", which the ScopeLookup reads as the
+    # wildcard so an agent without an authored scope keeps its pre-Phase-7 behavior;
+    # a delegation still narrows it to the delegator's scope by intersection.
+    scope: Mapped[list | None] = mapped_column(JSON, nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

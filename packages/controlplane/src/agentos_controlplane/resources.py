@@ -47,6 +47,7 @@ class TrustProfileData:
     band: dict | None
     version: int
     updated_at: str | None
+    scope: list | None = None  # TRST-04; defaulted so positional construction stays compatible
 
 
 @dataclass(frozen=True)
@@ -83,12 +84,20 @@ class ResourceStore:
 
     # ---- TrustProfile ----
     def put_trust_profile(
-        self, agent_id: str, *, trust_score: float, band: dict | None, expected_version: int | None
+        self,
+        agent_id: str,
+        *,
+        trust_score: float,
+        band: dict | None,
+        expected_version: int | None,
+        scope: list | None = None,
     ) -> TrustProfileData:
         with self._sf() as s:
             row = s.get(TrustProfile, agent_id)
             if row is None:
-                row = TrustProfile(agent_id=agent_id, trust_score=trust_score, band=band, version=1)
+                row = TrustProfile(
+                    agent_id=agent_id, trust_score=trust_score, band=band, scope=scope, version=1
+                )
                 s.add(row)
             else:
                 # Fast-fail an obviously stale/missing version without a DB round-trip; the
@@ -97,7 +106,8 @@ class ResourceStore:
                     raise VersionConflict(
                         f"trust_profile {agent_id}: expected version {row.version}, got {expected_version}"
                     )
-                row.trust_score, row.band = trust_score, band  # version bumped by version_id_col
+                # version bumped by version_id_col
+                row.trust_score, row.band, row.scope = trust_score, band, scope
             try:
                 s.commit()
             except StaleDataError as exc:
@@ -242,7 +252,25 @@ class ResourceStore:
         return TrustProfileData(
             r.agent_id, r.trust_score, r.band, r.version,
             r.updated_at.isoformat() if r.updated_at else None,
+            r.scope,
         )
+
+    # ---- TRST-04 scope lookup (the pipeline's ScopeLookup seam) ----
+    def scope_for(self, agent_id: str) -> frozenset[str]:
+        """The agent's OWN capability scope (TRST-04). `{"*"}` == the wildcard.
+
+        An agent with no profile, or a profile whose `scope` was never authored,
+        resolves to the wildcard. That is NOT a fail-open: the wildcard is the
+        agent's own standing, exactly what it had before Phase 7, and any
+        delegation still narrows it by intersection with the delegator's scope. The
+        deny-by-default enforcement of what an agent may DO remains the compiled
+        constitution's job — scope bounds what a delegation may CONFER.
+        """
+        with self._sf() as s:
+            row = s.get(TrustProfile, agent_id)
+            if row is None or row.scope is None:
+                return frozenset({"*"})
+            return frozenset(row.scope)
 
     @staticmethod
     def _abom(r: Abom) -> AbomData:

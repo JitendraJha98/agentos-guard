@@ -147,6 +147,10 @@ class TrustProfileIn(BaseModel):
 
     trust_score: float = Field(ge=0.0, le=1.0)
     band: dict | None = None
+    # TRST-04: the agent's own capability scope; `["*"]` is the wildcard, null leaves it
+    # unset (which resolves to the wildcard). Bounded so an operator cannot author an
+    # unbounded scope list into the hot path.
+    scope: list[str] | None = Field(default=None, max_length=256)
     version: int | None = None  # required (== current) to update; omit/None to create
 
 
@@ -187,6 +191,7 @@ def build_resource_router(resources: ResourceStore) -> APIRouter:
                 trust_score=body.trust_score,
                 band=body.band,
                 expected_version=body.version,
+                scope=body.scope,
             )
         except VersionConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
