@@ -173,7 +173,17 @@ class ResourceStore:
             existing = self._fetch_version(s, version)
             if existing is not None:
                 return existing
-            con = ConstitutionResource(name=name, version=version, source=source)
+            # A Constitution row may exist WITHOUT its Policy — the compiled half can be
+            # lost independently (a partial restore, a failed migration, an operator
+            # deleting the derived row). That state is precisely what the API-04
+            # ConstitutionReconciler repairs, so re-applying must ADD the missing Policy
+            # rather than re-insert the Constitution and trip UNIQUE(version).
+            con = s.scalar(
+                select(ConstitutionResource).where(ConstitutionResource.version == version)
+            )
+            if con is None:
+                con = ConstitutionResource(name=name, version=version, source=source)
+                s.add(con)
             pol = PolicyResource(
                 constitution_version=version,
                 yaml_policy=bundle.yaml_policy,
@@ -182,7 +192,6 @@ class ResourceStore:
                 lists=bundle.lists,
                 sequences=bundle.sequences,
             )
-            s.add(con)
             s.add(pol)
             try:
                 s.commit()
@@ -197,12 +206,21 @@ class ResourceStore:
     def _fetch_version(
         self, s: Session, version: str
     ) -> tuple[ConstitutionData, PolicyData] | None:
+        """The APPLIED pair for `version`, or None if EITHER half is absent.
+
+        A Constitution without its compiled Policy is not applied — it cannot be
+        enforced. Returning it as if it were let `apply_constitution` report success
+        on an unenforceable version, and made the caller dereference a None Policy
+        (AttributeError). None means "not fully applied", so the caller re-compiles.
+        """
         con = s.scalar(select(ConstitutionResource).where(ConstitutionResource.version == version))
         if con is None:
             return None
         pol = s.scalar(
             select(PolicyResource).where(PolicyResource.constitution_version == version)
         )
+        if pol is None:
+            return None
         return self._con(con), self._pol(pol)
 
     def get_constitution(self, version: str) -> ConstitutionData | None:
