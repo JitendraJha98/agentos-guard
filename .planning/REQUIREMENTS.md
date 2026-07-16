@@ -81,15 +81,15 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 - [x] **IDN-01** [P0]: Each `Agent` registers and is issued a signed identity token
 - [x] **IDN-02** [P0]: The identity stage verifies the token; forged/unknown identity short-circuits to deny
-- [ ] **IDN-03** [P1]: Agents are issued X.509-style certificates binding identity to keys
+- [x] **IDN-03** [P1]: Agents are issued X.509-style certificates binding identity to keys
 - [ ] **IDN-04** [P2]: SPIFFE/SVID workload identity enables zero-trust mTLS
 
 ### Trust & Reputation
 
 - [x] **TRST-01** [P0]: Each `Agent` has a 0–1 trust score consumed by the graduated-response stage
 - [x] **TRST-02** [P0]: Trust modulates outcome within a policy-defined band but never overrides a deterministic policy decision
-- [ ] **TRST-03** [P1]: A longitudinal reputation score is derived from violation/approval history
-- [ ] **TRST-04** [P1]: Trust propagates (and decays) across delegation edges as a bounded budget; delegated scope is enforced as an intersection, not a union
+- [x] **TRST-03** [P1]: A longitudinal reputation score is derived from violation/approval history
+- [x] **TRST-04** [P1]: Trust propagates (and decays) across delegation edges as a bounded budget; delegated scope is enforced as an intersection, not a union
 - [ ] **TRST-05** [P2]: Portable, longitudinal reputation is exportable across deployments via an **optional, deployment-pluggable** reputation backend; any stake/slashing economics live *only* in that optional backend and are **never required** to run the control plane (ADR-0007 — crypto-economics fenced out of core)
 
 ### Discovery & Agent Graph
@@ -163,7 +163,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **API-01** [P0]: A declarative API validates, versions, and stores resources (Agent, Constitution, Policy, TrustProfile, ApprovalRequest, ABOM) in PostgreSQL
 - [x] **API-02** [P0]: Applying a Constitution compiles it to Policy/Rego on write (compile-on-write)
 - [x] **API-03** [P0]: Operators approve/deny `ApprovalRequest`s via the API
-- [ ] **API-04** [P1]: Reconciliation loops continuously compile constitutions, refresh trust, materialize the graph, and warm hot-path caches
+- [x] **API-04** [P1]: Reconciliation loops continuously compile constitutions, refresh trust, materialize the graph, and warm hot-path caches
 
 ### Python SDK
 
@@ -275,12 +275,12 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | RUN-07 | Phase 9 | Pending |
 | IDN-01 | Phase 1 | Complete |
 | IDN-02 | Phase 1 | Complete |
-| IDN-03 | Phase 7 | Pending |
+| IDN-03 | Phase 7 | Complete |
 | IDN-04 | Phase 14 | Pending |
 | TRST-01 | Phase 1 | Complete |
 | TRST-02 | Phase 3 | Complete |
-| TRST-03 | Phase 7 | Pending |
-| TRST-04 | Phase 7 | Pending |
+| TRST-03 | Phase 7 | Complete |
+| TRST-04 | Phase 7 | Complete |
 | TRST-05 | Phase 14 | Pending |
 | DISC-01 | Phase 5 | Complete |
 | DISC-02 | Phase 5 | Complete |
@@ -330,7 +330,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | API-01 | Phase 5 | Complete |
 | API-02 | Phase 5 | Complete |
 | API-03 | Phase 3 | Complete |
-| API-04 | Phase 7 | Pending |
+| API-04 | Phase 7 | Complete |
 | SDK-01 | Phase 1 | Complete |
 | SDK-02 | Phase 5 | Complete |
 | SDK-03 | Phase 6 | Complete |

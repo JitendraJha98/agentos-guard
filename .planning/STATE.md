@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: phase_in_progress
-stopped_at: 2026-07-12 — Phase 6 slices 6a–6e merged (PR #16 → development); OSS-02 (SECURITY.md/CONTRIBUTING.md/templates) + OSS-01 release workflow scaffold added; OSS-01 first PyPI release still pending. development→main promotion opened as PR #17 (blocked on required review). AGT re-verification still overdue.
-last_updated: 2026-07-12
-last_activity: 2026-07-12
+stopped_at: 2026-07-17 — Phase 7 COMPLETE (4/4 slices, committed to development). AGT re-verification debt cleared (AGT still v4.1.0; cross-action-correlation gap downgraded Durable→Contested). Phase 8 in progress. Phase 6's OSS-01 (first tagged PyPI release) still pending.
+last_updated: 2026-07-17
+last_activity: 2026-07-17
 progress:
   total_phases: 14
-  completed_phases: 5
-  total_plans: 31
-  completed_plans: 31
-  percent: 39
+  completed_phases: 6
+  total_plans: 35
+  completed_plans: 35
+  percent: 46
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-01)
 
 **Core value:** Every agent action is intercepted at runtime and returned an explainable, graduated decision grounded in policy + a human-readable constitution, with tamper-evident audit evidence — making unsafe agent behavior structurally impossible rather than merely unlikely.
-**Current focus:** Phase 6 — Observability, Compliance & Red-Team Gate (in progress; 6a–6e + OSS-02 merged, OSS-01 first release pending)
+**Current focus:** Phase 8 — Full Security Engine & MCP Gateway (in progress)
 
 ## Current Position
 
-Phase: 6
-Plan: 6a–6e (OTel tracing, per-agent metrics, compliance mapping/export, red-team harness, garak/PyRIT CI gate) merged via PR #16; OSS-02 (SECURITY.md/CONTRIBUTING.md/templates) added 2026-07-12
-Status: In progress — OSS-01 (first tagged PyPI release; release.yml scaffolded, PyPI Trusted-Publisher setup pending) is the last item before Phase 0 closes. development→main promotion = PR #17 (blocked on required approving review; enforce_admins on).
-Last activity: 2026-07-12
+Phase: 8 (Phase 7 complete 2026-07-17)
+Plan: Phase 7 delivered as 4 slices, one per requirement — 7a TRST-03 reputation, 7b TRST-04 delegation trust budget + scope intersection, 7c IDN-03 X.509 certificates, 7d API-04 reconciliation loops. Committed directly to `development` (user-chosen delivery mode, not a PR).
+Status: Phase 8 in progress. Phase 6's OSS-01 (first tagged PyPI release) remains the last Phase-0 item.
+Last activity: 2026-07-17
 
-Progress: [█████████·] Phases 1–5 complete + Phase 6 ~5/6; 5/14 phases fully done
+Progress: [██████████] Phases 1–5, 7 complete + Phase 6 ~5/6; 6/14 phases fully done
 
 ## Performance Metrics
 
@@ -93,6 +93,12 @@ Recent decisions affecting current work:
 - [Phase 2]: INT-06 coverage = a `@covers(ActionType)` registry populated at import (static gap -> `verify_coverage()` raises) PLUS a runtime bypass test (no-identity action -> fail-closed deny via IDN-02). No silent gaps.
 - [Phase 2]: Egress principle scoped to `tool_call` egress (egress.rego + rebuilt WASM); non-tool types pass the floor (`no_egress_policy_applicable`) and get real policies in Phase 3 — Phase-1 deny-by-default tool gate (D-04) untouched.
 - [Phase 2]: Audit redactor (D-15 fail-closed) extended to the four new payload shapes — identifiers verbatim, free-text/secret fields (messages/value/args/task) digested; `parent_action_id`+`conversation_id` persisted in the audit body (INT-05 lineage; AUD-09 seed).
+
+- [Phase 7]: [7a] TRST-03 reputation = time-decayed Beta posterior (half-life 7d) over audit outcomes + human approval rulings, MIN'd with an anti-farming violation ceiling `1/(1+bad)`. The ceiling is the design's point: good conduct is diluted by volume, a violation is not, so 1000 allows cannot wash out one fresh deny (Pitfall 10). Only time heals. No history -> the seed, never an invented opinion.
+- [Phase 7]: [7a] `Registry.load_trust` now resolves TrustProfile -> Agent seed -> 0.0. Before this, operator-graded trust (the gated `PUT /trust-profiles` route) never reached the pipeline — a pre-existing disconnect TRST-03 depends on.
+- [Phase 7]: [7b] TRST-04 delegation = `min(child_trust, parent_trust*decay)` + scope INTERSECTION. Both halves are anti-escalation: the cap kills trust laundering (a 0.05-trust principal borrowing a trusted delegate's standing would bypass TRST-03 in one hop); intersection stops a delegation conjuring a capability neither party held. Unknown lineage FAILS CLOSED — a ledger miss must never be an escalation channel. In-process ledger is non-persistent (documented; distributed form is future work).
+- [Phase 7]: [7c] IDN-03 = per-agent Ed25519 keypair + CA-issued X.509 with a SPIFFE-shaped URI SAN (`agentos://agent/<id>`), so IDN-04 is a change of scheme, not model. Control plane NEVER stores the agent private key. Real CRL; re-enroll rotates but does not auto-revoke (else a shared-token holder could knock out a healthy agent's cert).
+- [Phase 7]: [7d] API-04 reconcilers report items CHANGED (zero == converged), isolate failures (a dead loop rots derived state silently — worse than a noisy one), and run via `asyncio.to_thread` since they do blocking DB I/O. CacheReconciler fires only on version change.
 
 ### Pending Todos
 
