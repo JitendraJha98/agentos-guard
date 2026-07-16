@@ -6,12 +6,23 @@ enforcement, zero-trust identity, sandboxed execution, and tamper-evident audit 
 red-teaming layer. We keep all of that and change the *model*. This doc is the head-to-head
 scorecard; the paradigm behind it is in [`00-manifesto.md`](00-manifesto.md).
 
-> **Verification discipline:** AGT ships monthly (v3.2.0 → v4.1.0 between Apr and Jun 2026).
-> This scorecard was **re-verified against the live repo, docs site, and `LIMITATIONS.md` on
-> 2026-06-10 (AGT v4.1.0)**. Re-verify AGT's feature set at the start of every roadmap phase
-> before citing any claim here; competitive facts older than one phase are presumed stale.
+> **Verification discipline:** AGT ships roughly monthly (v3.2.0 → v4.1.0 between Apr and Jun
+> 2026). This scorecard was **re-verified against the live repo, releases page, and
+> `LIMITATIONS.md` on 2026-07-17 (Phase-7 start)**. Re-verify AGT's feature set at the start of
+> every roadmap phase before citing any claim here; competitive facts older than one phase are
+> presumed stale.
+>
+> **2026-07-17 re-verification result:** AGT is **still v4.1.0 (released 2026-06-09)** — no new
+> release in the five weeks since the previous check, so every *shipped-feature* claim below
+> remains accurate as written. One **material change**, from their `LIMITATIONS.md` future-work
+> section rather than a release: AGT has now publicly committed to **workflow-level policies
+> that evaluate action sequences** ("including cross-session sequences under persistent memory")
+> and to **intent declaration** ("agents declare what they plan to do before doing it, and the
+> policy engine validates the plan"). Both land squarely on pillars we had classified *durable*.
+> The durability table below is updated accordingly — we still **ship** what they **plan**, but
+> we no longer claim their architecture structurally prevents it.
 
-## AGT as shipped (v4.1.0, verified 2026-06-10)
+## AGT as shipped (v4.1.0, re-verified 2026-07-17 — unchanged since 2026-06-10)
 
 ```
 Agent Call → Policy Engine (YAML/CEL · OPA/Rego · Cedar) → allow / deny / require_approval
@@ -59,9 +70,10 @@ AGT's velocity means some of these gaps **will close**. Sort them before betting
 
 | Gap in AGT | Durability | Why |
 |------------|-----------|-----|
-| No semantic constitution / LLM interpreter | **Durable** | Philosophically opposed: AGT's core pitch is "deterministic only; prompt-level safety is not a control surface." Adding an LLM judge contradicts their positioning. |
-| No cross-action / sequence intent correlation | **Durable** | Their stateless-kernel architecture (horizontal scaling) makes stateful sequence correlation structurally hard to retrofit. |
-| No amendable constitution, no `require_consensus`, no ZK proofs | **Durable** | Not on their published roadmap; different product philosophy. |
+| No semantic constitution / LLM interpreter | **Durable** | Philosophically opposed: AGT's core pitch is "deterministic only; prompt-level safety is not a control surface." Adding an LLM judge contradicts their positioning. Re-confirmed 2026-07-17: `LIMITATIONS.md` still disclaims governing reasoning, and their planned *intent declaration* is agent-declared-plan validation — still deterministic, still not a semantic judge. |
+| No cross-action / sequence intent correlation | *Contested* — **downgraded from Durable 2026-07-17** | **This bet has weakened.** Their `LIMITATIONS.md` now lists "workflow-level policies that evaluate action *sequences*, including cross-session sequences under persistent memory" as **future work** — so they do not consider their stateless kernel a structural blocker, and our "can't retrofit it" rationale is no longer defensible. We still hold a real *shipped-vs-planned* lead (SEC-13 landed in Phase 3; theirs is unscheduled), but treat this as a timing lead, not an architectural moat. Re-check every phase. |
+| No agent-declared intent validation | *Contested* — **new 2026-07-17** | Also newly listed as AGT future work. Distinct from our inferred-intent tags (SEC-12/SEC-14): theirs validates a plan the agent *declares*, ours infers intent the agent did *not* declare. The inference framing survives their roadmap; the bare "intent-based policy" framing does not. |
+| No amendable constitution, no `require_consensus`, no ZK proofs | **Durable** | Not on their published roadmap (re-confirmed 2026-07-17); different product philosophy. |
 | Unredacted audit parameters | *Incidental* | A Presidio-style redactor is a sprint for that team. Claim it now, expect parity later. |
 | Memory governance gap | *Incidental–medium* | Basic memory hooks are easy; *semantic* memory-poisoning governance is harder and leans on our durable strengths. |
 | No CI-gating red-team / garak / PyRIT | *Incidental* | Tooling integration, not architecture. Our durable edge is the pytest-native DX framing, not the capability. |
@@ -72,11 +84,22 @@ loudly while they last, and do **not** spend early phases chasing AGT parity fea
 already does well (privilege rings, SPIFFE/mTLS, multi-language SDKs, budget governance —
 all deliberately late in our roadmap).
 
+> **2026-07-17 note — the wedge ordering still holds, but for a different reason.** Pulling
+> SEC-13 forward to Phase 3 was justified as "they structurally cannot retrofit this." That
+> rationale is now dead (see the table). The decision was still *correct*, on the surviving
+> rationale: sequence correlation shipped while theirs is unscheduled future work, and it
+> remains the demoable wedge. No roadmap re-ordering is triggered — Phases 7–8 as scoped
+> (reputation/delegation-trust/certs/reconciliation, then the full detector surface + MCP
+> gateway + ABOM) are unaffected by this finding, since none of them bet on the two downgraded
+> claims. The claim *language* is what must change: say "we ship it, they plan it," never "they
+> can't build it."
+
 ## The weakness → counter scorecard
 
 Each AGT weakness mapped to the agentos-guard counter, the doc that delivers it, and the build
-phase. Pillars 1–7 are the [manifesto](00-manifesto.md) pillars. Status reflects the 2026-06-10
-verification.
+phase. Pillars 1–7 are the [manifesto](00-manifesto.md) pillars. Status reflects the 2026-07-17
+re-verification (AGT v4.1.0 — unchanged since 2026-06-10; weaknesses 1–8 all re-confirmed as
+still-shipped gaps, with the durability caveats on #3 noted above).
 
 | # | AGT weakness (verified) | Why it matters | agentos-guard counter | Where | Phase |
 |---|--------------|----------------|------------------------|-------|-------|
