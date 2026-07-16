@@ -42,10 +42,17 @@ class Agent(Base):
 
     # agent_id is the natural PK the identity token's `sub` claim references.
     agent_id: Mapped[str] = mapped_column(String(255), primary_key=True)
-    # Identity metadata: the agent's public key (PEM). Phase-1 issuance uses a
-    # single control-plane keypair, but the column models the per-agent key the
-    # X.509 upgrade (IDN-03, Phase 7) will populate.
+    # IDN-03: the AGENT's own Ed25519 public key (PEM) — the key its certificate
+    # binds this agent_id to. Through Phase 6 this column held the CONTROL PLANE's
+    # key (every row identical, certifying nothing); Phase 7 populates it as the
+    # column was always documented to mean. The matching private key is returned to
+    # the agent at registration and never stored here.
     public_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # IDN-03: the CA-issued X.509 certificate (PEM) attesting agent_id <-> public_key,
+    # and its serial as a DECIMAL STRING — X.509 serials are up to 20 bytes and do
+    # not fit BIGINT on any backend.
+    certificate: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cert_serial: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # TRST-01 seed: a single 0-1 score consumed by the graduated-response stage.
     trust_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
     created_at: Mapped[datetime] = mapped_column(
@@ -231,6 +238,25 @@ class TrustProfile(Base):
     )
 
     __mapper_args__ = {"version_id_col": version}
+
+
+class RevokedCertificate(Base):
+    """IDN-03 — the certificate revocation list. One row per revoked serial.
+
+    Presence IS revocation (no status column): a revocation must never be
+    reversible by flipping a flag, and re-issuing is the intended path back. The
+    serial is a decimal string, matching `Agent.cert_serial` (20-byte X.509 serials
+    do not fit BIGINT).
+    """
+
+    __tablename__ = "revoked_certificate"
+
+    serial: Mapped[str] = mapped_column(String(64), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    revoked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class ConstitutionResource(Base):
