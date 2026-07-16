@@ -47,5 +47,5 @@ Use these entry points:
 - `/gsd-quick` for small fixes, doc updates, and ad-hoc tasks
 - `/gsd-debug` for investigation and bug fixing
 
-Next step: `/gsd:plan-phase 6` (Observability, Compliance & Red-Team Gate) — Phases 1–5 are complete and merged. Use judgment on trivial tasks per "Working in this repo" above.
+Next step: **finish Phase 6, then `/gsd:plan-phase 7`**. Phase 6 slices 6a–6e + OSS-02 are merged (PR #16 → development); the remaining Phase-6 items are **OSS-01** (first tagged PyPI release — `.github/workflows/release.yml` is scaffolded, PyPI Trusted-Publisher setup + a `vX.Y.Z` tag pending) and the **overdue AGT re-verification** (do before Phase 7 planning). Use judgment on trivial tasks per "Working in this repo" above.
 <!-- GSD:workflow-end -->

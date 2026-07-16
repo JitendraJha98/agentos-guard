@@ -9,7 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![CI](https://github.com/JitendraJha98/agentos-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/JitendraJha98/agentos-guard/actions/workflows/ci.yml)
-[![Status: alpha](https://img.shields.io/badge/status-alpha%20·%20phase%205%2F14-orange.svg)](.planning/ROADMAP.md)
+[![Status: alpha](https://img.shields.io/badge/status-alpha%20·%20phase%206%2F14-orange.svg)](.planning/ROADMAP.md)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#-contributing)
 
 [**Manifesto**](docs/architecture/00-manifesto.md) · [**Architecture**](docs/architecture/) · [**Roadmap**](.planning/ROADMAP.md) · [**vs Microsoft AGT**](docs/architecture/30-comparison-agt.md)

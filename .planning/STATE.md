@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: phase_complete
-stopped_at: 2026-07-05 planning audit complete (.planning/audit/2026-07-05-planning-audit.md) — stale statuses fixed across REQUIREMENTS/PROJECT/ROADMAP/CLAUDE/manifesto/30-comparison, OSS-01/02 added to Phase 6; next is /gsd:plan-phase 6
-last_updated: 2026-07-05
-last_activity: 2026-07-05
+status: phase_in_progress
+stopped_at: 2026-07-12 — Phase 6 slices 6a–6e merged (PR #16 → development); OSS-02 (SECURITY.md/CONTRIBUTING.md/templates) + OSS-01 release workflow scaffold added; OSS-01 first PyPI release still pending. development→main promotion opened as PR #17 (blocked on required review). AGT re-verification still overdue.
+last_updated: 2026-07-12
+last_activity: 2026-07-12
 progress:
   total_phases: 14
   completed_phases: 5
-  total_plans: 26
-  completed_plans: 26
-  percent: 36
+  total_plans: 31
+  completed_plans: 31
+  percent: 39
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-01)
 
 **Core value:** Every agent action is intercepted at runtime and returned an explainable, graduated decision grounded in policy + a human-readable constitution, with tamper-evident audit evidence — making unsafe agent behavior structurally impossible rather than merely unlikely.
-**Current focus:** Phase 6 — Observability, Compliance & Red-Team Gate (next up; Phases 1–5 complete)
+**Current focus:** Phase 6 — Observability, Compliance & Red-Team Gate (in progress; 6a–6e + OSS-02 merged, OSS-01 first release pending)
 
 ## Current Position
 
-Phase: 5
-Plan: 6/6 slices complete (superpowers workflow; phase history in .planning/phases/05-control-plane-sdk-dashboard/)
-Status: Complete — merged to development 2026-07-03 (PR #12/#14); next is Phase 6
-Last activity: 2026-07-03
+Phase: 6
+Plan: 6a–6e (OTel tracing, per-agent metrics, compliance mapping/export, red-team harness, garak/PyRIT CI gate) merged via PR #16; OSS-02 (SECURITY.md/CONTRIBUTING.md/templates) added 2026-07-12
+Status: In progress — OSS-01 (first tagged PyPI release; release.yml scaffolded, PyPI Trusted-Publisher setup pending) is the last item before Phase 0 closes. development→main promotion = PR #17 (blocked on required approving review; enforce_admins on).
+Last activity: 2026-07-12
 
-Progress: [██████████] 100% (Phases 1–5 complete; 5/14 phases done)
+Progress: [█████████·] Phases 1–5 complete + Phase 6 ~5/6; 5/14 phases fully done
 
 ## Performance Metrics
 
@@ -104,9 +104,10 @@ None yet.
 
 [Issues that affect future work]
 
-- **EU AI Act clock (hard external date):** high-risk obligations bind **2026-08-02** — under four weeks from the 2026-07-05 audit. CMP-03 (minimal Art. 12/26 evidence claim) sits in Phase 6, not started. Start `/gsd:plan-phase 6` now and front-load the CMP-03 slice.
-- **AGT re-verification overdue:** the project's own rule is re-verify AGT at *every* phase start; last verification is 2026-06-10 (v4.1.0), and Phases 4–5 started without a documented re-check. AGT ships monthly — re-verify before Phase 6 planning, and re-check the garak/PyRIT/OTel-GenAI version pins from the 2026-06-01 research snapshot at the same time.
-- **OSS distribution gap (found by the 2026-07-05 audit, now OSS-01/02 in Phase 6):** nothing is published to PyPI and there is no CONTRIBUTING.md / SECURITY.md; the quickstart's "single pip install" is only true inside this repo. Blocks the open-source-adoption goal, not the code.
+- **EU AI Act clock (hard external date):** high-risk obligations bind **2026-08-02**. CMP-03 (minimal Art. 12/26 evidence claim) is **delivered** (PR #16 — `agentos_controlplane.compliance.export_compliance_evidence` + CLI). Resolved.
+- **AGT re-verification STILL overdue:** the project's own rule is re-verify AGT at *every* phase start; last verification is 2026-06-10 (v4.1.0). Phase 6 shipped **without** the mandated re-check (the `30-comparison-agt.md` scorecard is still dated 2026-06-10) — the whole roadmap's competitive bets ride on possibly-stale competitor intel. **Do this before Phase 7 planning**, and re-check the garak/PyRIT/OTel-GenAI version pins at the same time.
+- **OSS distribution — partially closed (2026-07-12):** OSS-02 done (SECURITY.md, CONTRIBUTING.md, issue/PR templates added). OSS-01 scaffolded (`.github/workflows/release.yml`, PyPI Trusted Publishing) but **not yet publishing** — needs the PyPI-side Trusted-Publisher config for each package and a first `vX.Y.Z` tag off `main`. Until then the quickstart's "single pip install" is still only true inside this repo.
+- **OTel GenAI semconv (Phase-6 carryover):** the telemetry seam uses custom `agentos.*` span-attribute keys, not the OTel GenAI `gen_ai.*` semantic conventions the 6a design flagged, and the `opentelemetry-semantic-conventions` pin the spec called for was not added. Standard `gen_ai.*` attributes would let operators reuse off-the-shelf OTel GenAI dashboards — an adoption edge worth a small follow-up (attribute names are already centralized in `telemetry.py`, so it is a one-file change).
 - Research-flagged spikes likely needed at plan time: Phase 3 Constitution→YAML→Rego compiler fidelity/precedence; Phase 4 audit external-anchoring + fail-closed-redaction last gate; Phase 8 ASI05/06/07 detector design; Phase 7 multi-node cache invalidation; all of Phases 13–14 (LOW-confidence moonshot tech — evaluate before commit).
 - Competitive framing (confident-but-honest, ADR-0007 + `docs/architecture/00-manifesto.md`): paradigm = *Trust→Verify→Graduate→Prove* vs AGT's *Distrust→Block→Log*, carried by **seven pillars** (semantic constitution, graduated response, intent-based policy, cross-agent permission calculus, explainable denials w/ remediation, CI-gating red-team + self-play, provable audit). Phase 0 reaches AGT parity + already out-features it on graduated/semantic/CI-gating; the full "beat" compounds as pillars land. Crypto-economics (blockchain/staking/MPC) fenced out of core; only token-free Merkle/ZK kept (optional/Phase-2).
 

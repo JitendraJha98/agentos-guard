@@ -31,6 +31,13 @@ Shipped by Phases 1–5 (merged to `development` 2026-07-03; ~1,040 tests, CI-ga
 - Tamper-evident audit: hash chain + per-record Ed25519 signatures, fail-closed redaction + secret last gate, CI chain verifier, RFC-3161 anchoring; agent/fleet kill switch (Phase 4)
 - Declarative resource API with compile-on-write + optimistic versioning, gated self-registration + inventory, `ControlPlaneClient` SDK, zero-infra SQLite/opa-wasm quickstart, cookie-gated dashboard (Phase 5)
 
+Shipped by Phase 6 (merged to `development` 2026-07-12, PR #16 — slices 6a–6e):
+
+- OpenTelemetry tracing + per-agent metrics seam (`agentos_pipeline.telemetry`) — one guarded span per `evaluate()`, `agentos_actions_total` / `agentos_violations_total` / `agentos_pipeline_latency_ms`, cardinality guard bucketing unverified/forged `agent_id`s under a sentinel; telemetry can never raise into the verdict (OBS-01/02/03)
+- Compliance mapping + one-call evidence export (`agentos_controlplane.compliance`) — every live control → OWASP Agentic Top 10 (2026) / NIST AI RMF / EU AI Act Art. 12/26, coverage test that fails CI on an unmapped detector, CLI export (CMP-01/02/03)
+- pytest-native red-team harness (`agentos_sdk.redteam`) + garak/PyRIT-backed ASR gate in a dedicated CI job that hard-fails on an ASR-ceiling breach (SDK-03, TEST-01–06)
+- OSS table-stakes (OSS-02): `SECURITY.md`, `CONTRIBUTING.md`, issue/PR templates. **Remaining:** OSS-01 first tagged PyPI release (`release.yml` scaffolded; PyPI Trusted-Publisher setup pending)
+
 ### Active
 
 Building toward the full vision (Phases 0–2). Phase tags reflect the documented build sequence: **P0** = MVP reaching AGT parity + the durable wedge (semantic constitution, sequence-intent correlation), **P1** = trust / sandbox / scale, **P2** = moonshot differentiators.
@@ -65,24 +72,24 @@ Building toward the full vision (Phases 0–2). Phase tags reflect the documente
 
 **Audit & Compliance**
 - [x] Tamper-evident hash-chained audit log with per-record EdDSA signatures (single-record verifiable); decision records with policy-version provenance; forensic evidence graph by joining the audit log with the agent graph at query time — no separate graph DB (P0 log/signing; P1 evidence-graph join) (P0)
-- [ ] OWASP Agentic Top 10 + NIST AI RMF baseline compliance mapping (P0)
+- [x] OWASP Agentic Top 10 + NIST AI RMF baseline compliance mapping + minimal EU AI Act Art. 12/26 evidence export (P0 — Phase 6)
 - [ ] Merkle DAG audit upgrade; EU AI Act + SOC 2 mapping; one-click compliance report export (P1)
 - [ ] Zero-knowledge compliance proofs (RISC Zero / SP1) (P2)
 
 **Testing & Red-Team**
-- [ ] pytest-native red-team layer: injection suites, attack library, statistical safety thresholds, security-regression locks in CI (P0)
+- [x] pytest-native red-team layer: injection suites, attack library, statistical safety thresholds, security-regression locks in CI + garak/PyRIT ASR gate in a dedicated CI job (P0 — Phase 6)
 - [ ] Attack-success-rate tracking, continuous validation, multi-step adversarial simulations (P1)
 - [ ] Continuous adversarial self-play + runtime patching + threat-intel feed (P2)
 
 **Observability, Economics & ABOM**
-- [ ] OpenTelemetry spans/metrics, distributed tracing, per-agent metrics (P0)
+- [x] OpenTelemetry spans/metrics, distributed tracing, per-agent metrics (P0 — Phase 6)
 - [ ] Agent health monitoring, conversation tracing, per-agent SLO/violation dashboards (P1)
 - [ ] Cost monitoring + token/GPU/API budgets enforced as policy; ABOM dependency tracking (P1)
 - [ ] ROI analytics; ABOM vulnerability impact analysis (P2)
 
 **Control Plane, API, SDK & Dashboard**
 - [x] Declarative Control-Plane API (Agent / Constitution / Policy / TrustProfile / ApprovalRequest / ABOM) on Postgres; compile-on-write (P0)
-- [ ] Python SDK: interception decorators/middleware, registration, pytest adapters, control-plane client (P0) — *shipped except the pytest adapters (SDK-03, Phase 6)*
+- [x] Python SDK: interception decorators/middleware, registration, pytest adapters, control-plane client (P0) — *pytest red-team adapters (SDK-03) shipped in Phase 6 (PR #16)*
 - [x] Zero-infra quickstart: full governed loop on SQLite + in-process opa-wasm from a single `pip install` — no Docker/Postgres/OPA server (P0)
 - [x] Minimal dashboard: read-only views + approvals + kill switch (P0)
 - [ ] Reconciliation loops; richer dashboard (live graph, SLOs, attack visualization) (P1)
@@ -165,5 +172,6 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-05 — post-Phase-5 planning audit: Validated section populated (Phases 1–5 shipped), stale "design-only / no code" claims removed, ADR outcomes marked validated, OSS-01/02 distribution requirements added (Phase 6)*
+*Last updated: 2026-07-12 — Phase 6 (PR #16) close-out: Validated section adds the observability/compliance/red-team deliverables + OSS-02; Active checkboxes for compliance/testing/observability/SDK-03 marked done. Remaining Phase-6 item is OSS-01 (first PyPI release). Note: the mandated AGT re-verification was skipped at Phase-6 start — do it before Phase 7.*
+*Previous: 2026-07-05 — post-Phase-5 planning audit: Validated section populated (Phases 1–5 shipped), stale "design-only / no code" claims removed, ADR outcomes marked validated, OSS-01/02 distribution requirements added (Phase 6)*
 *Previous: 2026-06-10 — AGT v4.1.0 re-verification: corrected competitive facts, layer-first positioning, SEC-13 pull-forward, SDK-05 zero-infra quickstart, per-phase AGT re-verification rule*

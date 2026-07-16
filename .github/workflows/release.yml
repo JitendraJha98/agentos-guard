@@ -1,0 +1,77 @@
+name: Release
+
+# OSS-01 — publish the workspace packages to PyPI on a version tag, so the zero-infra
+# quickstart's single `pip install` (SDK-05) is true for someone outside this repo.
+#
+# ONE-TIME SETUP (required before the first successful run):
+#   For EACH published distribution — agentos-contract, agentos-constitution,
+#   agentos-pipeline, agentos-controlplane, agentos-sdk (and agentos-guard if the root
+#   is published) — add a PyPI "Trusted Publisher" (Publishing → GitHub) pointing at:
+#     owner: JitendraJha98   repo: agentos-guard
+#     workflow: release.yml   environment: pypi
+#   Trusted Publishing uses short-lived OIDC — no API token is stored in the repo.
+#   Until the publishers exist, the `publish` job will fail fast (expected).
+#
+# CUT A RELEASE: bump every package `version`, commit to `main`, then tag `vX.Y.Z`
+# (e.g. `git tag v0.2.0 && git push origin v0.2.0`). All packages share one version.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.17"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Verify the tag matches the package version
+        # Fail closed if the tag (v0.2.0) doesn't match the workspace version — never
+        # publish a mislabeled release.
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(grep -m1 '^version' packages/contract/pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          echo "tag=$TAG  package=$PKG"
+          test "$TAG" = "$PKG" || { echo "::error::tag $TAG != package version $PKG"; exit 1; }
+
+      - name: Build all workspace packages
+        run: uv build --all-packages --out-dir dist
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write        # OIDC token for PyPI Trusted Publishing (no stored secret)
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.17"
+
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI (Trusted Publishing)
+        run: uv publish dist/*

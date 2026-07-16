@@ -115,21 +115,21 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 ### Compliance
 
-- [ ] **CMP-01** [P0]: Each detector/policy maps to OWASP Agentic Top 10 categories
-- [ ] **CMP-02** [P0]: Policy + audit evidence maps to NIST AI RMF (Govern/Map/Measure/Manage)
-- [ ] **CMP-03** [P0]: Minimal logging + human-oversight evidence supports EU AI Act Art. 12 / Art. 26 claims at launch (obligations bind 2026-08-02)
+- [x] **CMP-01** [P0]: Each detector/policy maps to OWASP Agentic Top 10 categories
+- [x] **CMP-02** [P0]: Policy + audit evidence maps to NIST AI RMF (Govern/Map/Measure/Manage)
+- [x] **CMP-03** [P0]: Minimal logging + human-oversight evidence supports EU AI Act Art. 12 / Art. 26 claims at launch (obligations bind 2026-08-02)
 - [ ] **CMP-04** [P1]: Full EU AI Act mapping (risk classification, logging, human oversight) is produced
 - [ ] **CMP-05** [P1]: SOC 2 control evidence (access, change, monitoring) is derived from the audit log
 - [ ] **CMP-06** [P1]: One-click export produces evidence bundles per framework and time range
 
 ### Testing & Red-Team
 
-- [ ] **TEST-01** [P0]: Engineers write pytest safety tests using provided fixtures/adapters that run an attack library against an agent
-- [ ] **TEST-02** [P0]: A prompt-injection attack suite (garak/PyRIT-backed) runs in CI
-- [ ] **TEST-03** [P0]: Red-team suites cover tool misuse, exfiltration, and jailbreak scenarios
-- [ ] **TEST-04** [P0]: Safety assertions use statistical thresholds (e.g. attack-success-rate < X%), not single runs
-- [ ] **TEST-05** [P0]: Fixed vulnerabilities are locked by regression tests so they cannot silently return
-- [ ] **TEST-06** [P0]: A failing safety test breaks the CI build
+- [x] **TEST-01** [P0]: Engineers write pytest safety tests using provided fixtures/adapters that run an attack library against an agent
+- [x] **TEST-02** [P0]: A prompt-injection attack suite (garak/PyRIT-backed) runs in CI
+- [x] **TEST-03** [P0]: Red-team suites cover tool misuse, exfiltration, and jailbreak scenarios
+- [x] **TEST-04** [P0]: Safety assertions use statistical thresholds (e.g. attack-success-rate < X%), not single runs
+- [x] **TEST-05** [P0]: Fixed vulnerabilities are locked by regression tests so they cannot silently return
+- [x] **TEST-06** [P0]: A failing safety test breaks the CI build
 - [ ] **TEST-07** [P1]: Attack-success-rate is tracked over time per agent/attack class
 - [ ] **TEST-08** [P1]: Continuous validation re-runs suites against the live agent on a schedule
 - [ ] **TEST-09** [P1]: Multi-step adversarial simulations run campaign-style attacks
@@ -138,9 +138,9 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 ### Observability
 
-- [ ] **OBS-01** [P0]: Every `AgentAction`/`Decision` is emitted as an OpenTelemetry span to the user's backend
-- [ ] **OBS-02** [P0]: `trace_id` correlates an action across pipeline stages and across agents (distributed tracing)
-- [ ] **OBS-03** [P0]: Per-agent metrics (action volume, outcome mix, violation counts, p95 pipeline latency) are emitted
+- [x] **OBS-01** [P0]: Every `AgentAction`/`Decision` is emitted as an OpenTelemetry span to the user's backend
+- [x] **OBS-02** [P0]: `trace_id` correlates an action across pipeline stages and across agents (distributed tracing)
+- [x] **OBS-03** [P0]: Per-agent metrics (action volume, outcome mix, violation counts, p95 pipeline latency) are emitted
 - [ ] **OBS-04** [P1]: Agent health monitoring tracks liveness/error-rate/circuit-breaker state per agent
 - [ ] **OBS-05** [P1]: Conversation tracing reconstructs a full conversation across tools and delegations
 - [ ] **OBS-06** [P1]: Per-agent SLO and violation dashboards with attack visualization
@@ -169,7 +169,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 - [x] **SDK-01** [P0]: The SDK provides interception decorators/middleware for LangChain/LangGraph (the PEP)
 - [x] **SDK-02** [P0]: The SDK provides agent self-registration returning an identity token
-- [ ] **SDK-03** [P0]: The SDK provides pytest adapters for the red-team layer
+- [x] **SDK-03** [P0]: The SDK provides pytest adapters for the red-team layer
 - [x] **SDK-04** [P0]: The SDK provides a control-plane client for resource CRUD and approvals
 - [x] **SDK-05** [P0]: A zero-infra quickstart runs the full governed loop with SQLite + in-process opa-wasm from a single `pip install` — no Docker, Postgres, or OPA server required (first-run friction must match AGT's one-decorator pitch)
 
@@ -183,7 +183,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 ### OSS Distribution & Community
 
 - [ ] **OSS-01** [P0]: Versioned releases of the workspace packages (and the quickstart extra) are published to PyPI via a tagged release workflow, so the zero-infra quickstart's single `pip install` (SDK-05) is true for someone outside this repository — added 2026-07-05 audit: the "best in open source" goal had zero distribution requirements
-- [ ] **OSS-02** [P0]: Adoption and security table stakes ship with the P0 launch: `CONTRIBUTING.md`, `SECURITY.md` (vulnerability-disclosure policy — non-negotiable for a security product), and issue/PR templates
+- [x] **OSS-02** [P0]: Adoption and security table stakes ship with the P0 launch: `CONTRIBUTING.md`, `SECURITY.md` (vulnerability-disclosure policy — non-negotiable for a security product), and issue/PR templates
 
 ### Performance
 
@@ -297,26 +297,26 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | AUD-07 | Phase 14 | Pending |
 | AUD-08 | Phase 4 | Complete |
 | AUD-09 | Phase 12 | Pending |
-| CMP-01 | Phase 6 | Pending |
-| CMP-02 | Phase 6 | Pending |
-| CMP-03 | Phase 6 | Pending |
+| CMP-01 | Phase 6 | Complete |
+| CMP-02 | Phase 6 | Complete |
+| CMP-03 | Phase 6 | Complete |
 | CMP-04 | Phase 11 | Pending |
 | CMP-05 | Phase 11 | Pending |
 | CMP-06 | Phase 11 | Pending |
-| TEST-01 | Phase 6 | Pending |
-| TEST-02 | Phase 6 | Pending |
-| TEST-03 | Phase 6 | Pending |
-| TEST-04 | Phase 6 | Pending |
-| TEST-05 | Phase 6 | Pending |
-| TEST-06 | Phase 6 | Pending |
+| TEST-01 | Phase 6 | Complete |
+| TEST-02 | Phase 6 | Complete |
+| TEST-03 | Phase 6 | Complete |
+| TEST-04 | Phase 6 | Complete |
+| TEST-05 | Phase 6 | Complete |
+| TEST-06 | Phase 6 | Complete |
 | TEST-07 | Phase 12 | Pending |
 | TEST-08 | Phase 12 | Pending |
 | TEST-09 | Phase 12 | Pending |
 | TEST-10 | Phase 14 | Pending |
 | TEST-11 | Phase 14 | Pending |
-| OBS-01 | Phase 6 | Pending |
-| OBS-02 | Phase 6 | Pending |
-| OBS-03 | Phase 6 | Pending |
+| OBS-01 | Phase 6 | Complete |
+| OBS-02 | Phase 6 | Complete |
+| OBS-03 | Phase 6 | Complete |
 | OBS-04 | Phase 12 | Pending |
 | OBS-05 | Phase 12 | Pending |
 | OBS-06 | Phase 12 | Pending |
@@ -333,7 +333,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | API-04 | Phase 7 | Pending |
 | SDK-01 | Phase 1 | Complete |
 | SDK-02 | Phase 5 | Complete |
-| SDK-03 | Phase 6 | Pending |
+| SDK-03 | Phase 6 | Complete |
 | SDK-04 | Phase 5 | Complete |
 | SDK-05 | Phase 5 | Complete |
 | DASH-01 | Phase 5 | Complete |
@@ -341,7 +341,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | DASH-03 | Phase 5 | Complete |
 | DASH-04 | Phase 12 | Pending |
 | OSS-01 | Phase 6 | Pending |
-| OSS-02 | Phase 6 | Pending |
+| OSS-02 | Phase 6 | Complete |
 | PERF-01 | Phase 14 | Pending |
 
 **Coverage:**
@@ -351,6 +351,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 
 ---
 *Requirements defined: 2026-06-01*
-*Last updated: 2026-07-05 — post-Phase-5 planning audit: marked the 36 requirements delivered by Phases 3–5 Complete (checkboxes + traceability were stale at "Pending"); added OSS-01/OSS-02 (PyPI release engineering + CONTRIBUTING/SECURITY.md, Phase 6) — the open-source-market goal had no distribution/community requirements; 123/123 mapped*
+*Last updated: 2026-07-12 — Phase 6 slices 6a–6e merged (PR #16): marked OBS-01/02/03, CMP-01/02/03, TEST-01–06, SDK-03 Complete. OSS-01 (PyPI release workflow — `.github/workflows/release.yml` added; PyPI Trusted Publisher setup pending) and OSS-02 (`SECURITY.md` + `CONTRIBUTING.md` + issue/PR templates added) are the remaining Phase 6 items; OSS-01 stays Pending until the first tagged release publishes. 123/123 mapped.*
+*Previous: 2026-07-05 — post-Phase-5 planning audit: marked the 36 requirements delivered by Phases 3–5 Complete (checkboxes + traceability were stale at "Pending"); added OSS-01/OSS-02 (PyPI release engineering + CONTRIBUTING/SECURITY.md, Phase 6) — the open-source-market goal had no distribution/community requirements; 123/123 mapped*
 *Previous: 2026-06-10 — AGT v4.1.0 re-verification: pulled SEC-13 (sequence/lineage intent correlation) forward P1→P0 / Phase 8→Phase 3 (durable AGT gap, demoable wedge); added SDK-05 (zero-infra SQLite + opa-wasm quickstart, Phase 5); 121/121 mapped*
 *Previous: 2026-06-06 — added graduated-response extensions PIPE-09 (composable side-effects), POL-13 (temporary_exception), POL-14 (governance_review), AUD-08 (per-record signatures), AUD-09 (query-time evidence graph)*

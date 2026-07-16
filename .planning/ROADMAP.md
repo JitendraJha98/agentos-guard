@@ -27,7 +27,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Constitution, Graduated Response, Approvals & Sequence Intent** - Human-readable Constitution compiles to OPA/Rego with cited-principle interpreter; full graduated outcome spectrum with policy-driven thresholds, trust-modulates-only, a working approval workflow, and sequence/lineage intent correlation (SEC-13, pulled forward — the durable AGT gap) proven by a 5-minute `rename_then_drop` wedge demo (completed 2026-06-12)
 - [x] **Phase 4: Tamper-Evident Audit & Operator Containment** - Provenance-rich hash-chained audit with per-record Ed25519 signatures, fail-closed redaction + secret-scan last gate, a CI chain verifier, RFC-3161 external anchoring, and agent + fleet kill switches (completed 2026-07-03)
 - [x] **Phase 5: Control Plane, SDK & Minimal Dashboard** - Declarative resource API with compile-on-write and optimistic versioning, gated self-registration + agent inventory, the `ControlPlaneClient` SDK, a zero-infra quickstart (SQLite + in-process opa-wasm — SDK-05), and a cookie-gated dashboard with approvals and kill switch (completed 2026-07-03)
-- [ ] **Phase 6: Observability, Compliance & Red-Team Gate** - OTel spans/metrics, OWASP/NIST/EU-minimal compliance mapping, and the pytest-native red-team layer that statistically gates CI (closes Phase 0)
+- [~] **Phase 6: Observability, Compliance & Red-Team Gate** - OTel spans/metrics, OWASP/NIST/EU-minimal compliance mapping, and the pytest-native red-team layer that statistically gates CI (closes Phase 0). Slices 6a–6e + OSS-02 merged (PR #16 → development); **OSS-01 (first tagged PyPI release) remains** before Phase 0 fully closes
 - [ ] **Phase 7: Trust, Reputation & Identity Hardening** - Longitudinal reputation, bounded delegation trust chains, agent certificates, and reconciliation loops
 - [ ] **Phase 8: Full Security Engine & MCP Gateway** - Data-exfil, secret-leakage, tool-poisoning, supply-chain, plus the ASI05/06/07 gap detectors and an MCP security gateway
 - [ ] **Phase 9: Runtime Containment & Consensus** - Sandbox execution, privilege rings, resource isolation, circuit breakers, emergency shutdown, and 2-of-3 multi-agent consensus
@@ -126,7 +126,15 @@ four weeks away. Front-load CMP-03 (minimal Art. 12/26 evidence claim) in the sl
 re-verify AGT's live feature set at phase start (last verification 2026-06-10, v4.1.0 — now stale
 per the project's own per-phase rule) plus the garak/PyRIT/OTel version pins from the 2026-06-01
 research snapshot.
-**Plans**: TBD
+**Status (2026-07-12):** Slices 6a–6e delivered via PR #16 (merged to `development`): OTel tracing +
+per-agent metrics seam (`agentos_pipeline.telemetry`), compliance mapping + evidence export
+(`agentos_controlplane.compliance`), the pytest-native red-team harness (`agentos_sdk.redteam`), and
+the garak/PyRIT ASR gate in a dedicated CI job. OSS-02 (SECURITY.md, CONTRIBUTING.md, issue/PR
+templates) added 2026-07-12. **Remaining to close Phase 0: OSS-01** — `.github/workflows/release.yml`
+is in place, but the first tagged PyPI release + the PyPI Trusted-Publisher setup are still pending.
+**Carried debt:** the mandated AGT re-verification was NOT done at Phase-6 start (comparison scorecard
+still dated 2026-06-10); do it before Phase 7 planning.
+**Plans**: `docs/superpowers/plans/2026-07-10-phase-6-6{a..e}-*.md` (spec: `docs/superpowers/specs/2026-07-10-phase-6-*-design.md`) — note these live under `docs/superpowers/`, not `.planning/phases/06-*/` like Phases 1–5
 
 ### Phase 7: Trust, Reputation & Identity Hardening
 **Goal**: Evolve flat trust into longitudinal reputation and bounded delegation trust, harden identity with certificates, and add the reconciliation loops that keep derived state and caches correct across writes.
@@ -233,7 +241,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 3. Constitution, Graduated Response, Approvals & Sequence Intent | 7/7 | Complete    | 2026-06-12 |
 | 4. Tamper-Evident Audit & Operator Containment | 6/6 | Complete    | 2026-07-03 |
 | 5. Control Plane, SDK & Minimal Dashboard | 6/6 | Complete    | 2026-07-03 |
-| 6. Observability, Compliance & Red-Team Gate | 0/TBD | Not started | - |
+| 6. Observability, Compliance & Red-Team Gate | 5/6 | In progress (6a–6e + OSS-02 done; OSS-01 first release pending) | - |
 | 7. Trust, Reputation & Identity Hardening | 0/TBD | Not started | - |
 | 8. Full Security Engine & MCP Gateway | 0/TBD | Not started | - |
 | 9. Runtime Containment & Consensus | 0/TBD | Not started | - |
