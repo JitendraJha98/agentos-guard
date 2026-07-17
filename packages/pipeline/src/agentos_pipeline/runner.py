@@ -42,6 +42,7 @@ from typing import Mapping, Protocol, Sequence
 from uuid import UUID, uuid4
 
 from agentos_contract import (
+    ActionType,
     AgentAction,
     Decision,
     Outcome,
@@ -123,6 +124,25 @@ class KillSwitchLookup(Protocol):
     def status(self, agent_id: str) -> "KillVerdict | None": ...
 
 
+class CardVerdict(Protocol):
+    """Structural shape of a SEC-10 card verdict (AgentCardVerifier.CardVerdict satisfies it)."""
+
+    ok: bool
+    detail: str
+
+
+class CardVerifierProtocol(Protocol):
+    """The injected SEC-10/ASI07 seam (control-plane AgentCardVerifier satisfies it).
+
+    `card_for` builds the delegatee's agent card from a delegation action; `verify`
+    checks it against the control plane (registration + IDN-03 cert + CRL + scope).
+    Kept behind a Protocol so the pipeline stays on its single contract dependency.
+    """
+
+    def card_for(self, action: AgentAction) -> object: ...
+    def verify(self, card: object) -> "CardVerdict": ...
+
+
 def _is_redaction_error(exc: BaseException) -> bool:
     """Structurally detect the audit writer's RedactionError (D-15) without
     importing the control plane (this package's one internal dependency is the
@@ -157,6 +177,7 @@ class Pipeline:
         correlator: "SequenceCorrelator | None" = None,
         kill_switch: KillSwitchLookup | None = None,
         delegation: DelegationResolver | None = None,
+        card_verifier: "CardVerifierProtocol | None" = None,
     ) -> None:
         self._identity = identity
         self._policy = policy
@@ -187,6 +208,9 @@ class Pipeline:
         # intersection over lineage). None default: stage 1b never runs and trust is
         # the agent's own, exactly as before.
         self._delegation = delegation
+        # SEC-10/ASI07: verifies a delegatee's agent card. None default: stage 1c
+        # never runs and delegation trusts the caller's word, exactly as before.
+        self._card_verifier = card_verifier
 
     async def evaluate(self, action: AgentAction) -> Decision:
         # OBS-02: ensure an app-level correlation id exists (the SDK sets it across a
@@ -324,6 +348,33 @@ class Pipeline:
                         f"scope={'*' if WILDCARD in authority.scope else len(authority.scope)}"
                     ),
                 )
+            )
+
+        # Stage 1c — Inter-agent auth (SEC-10 / ASI07): on a DELEGATION, verify the
+        # DELEGATEE's agent card against the control plane before authority flows to it.
+        # A hijacked/spoofed/unregistered/revoked peer is denied here — trusting the
+        # caller's word about who "B" is is exactly the ASI07 gap. None default: unwired
+        # deployments skip the check. Only delegation actions carry a peer to verify.
+        if self._card_verifier is not None and action.type is ActionType.delegation:
+            card = self._card_verifier.card_for(action)
+            verdict = self._card_verifier.verify(card)
+            if not verdict.ok:
+                floor_box[0] = Outcome.deny  # an unverifiable peer may NEVER relax
+                reasons.append(
+                    Reason(stage="delegation", code="agent_card_unverified", detail=verdict.detail[:512])
+                )
+                decision = Decision(
+                    action_id=action.id,
+                    outcome=Outcome.deny,
+                    trust_score=trust,
+                    reasons=reasons,
+                    constitution_version=self._policy.constitution_version,
+                    policy_version=self._policy.policy_version,
+                )
+                await self._append_with_redaction_fallback(action, decision)
+                return decision  # TERMINAL
+            reasons.append(
+                Reason(stage="delegation", code="agent_card_verified", detail=verdict.detail[:512])
             )
 
         # Stage 2 — Enrichment (SEC-12/D6): deterministic, pure CPU, pre-policy.
