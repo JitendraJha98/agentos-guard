@@ -21,6 +21,7 @@ from agentos_controlplane.inventory import InventoryStore
 from agentos_controlplane.killswitch import KillSwitchStore
 from agentos_controlplane.registry import Registry
 from agentos_controlplane.resources import ConstitutionError, ResourceStore, VersionConflict
+from agentos_controlplane.supply_chain import KnownBad, SupplyChainChecker
 from agentos_controlplane.store.models import ApprovalRequest, GovernanceReview
 
 
@@ -168,7 +169,7 @@ class ConstitutionIn(BaseModel):
     source: dict  # the authored Constitution document (validated + compiled on write)
 
 
-def build_resource_router(resources: ResourceStore) -> APIRouter:
+def build_resource_router(resources: ResourceStore, known_bad: "KnownBad | None" = None) -> APIRouter:
     """API-01 — declarative TrustProfile / Abom resources: validate (422), version (409), store."""
     router = APIRouter()
 
@@ -230,6 +231,12 @@ def build_resource_router(resources: ResourceStore) -> APIRouter:
     @router.get("/aboms/{agent_id}/components")
     def get_abom_components(agent_id: str) -> list[dict]:
         return resources.get_abom_components(agent_id)
+
+    @router.get("/aboms/{agent_id}/supply-chain")
+    def scan_supply_chain(agent_id: str) -> list[dict]:
+        """SEC-08 — cross-reference the agent's ABOM against the known-bad set."""
+        checker = SupplyChainChecker(resources, known_bad)
+        return [f.to_dict() for f in checker.scan_agent(agent_id)]
 
     # ---- Constitution / Policy (compile-on-write, API-02) ----
     @router.post("/constitutions")
