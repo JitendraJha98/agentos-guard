@@ -25,6 +25,8 @@ POLICY_INPUT_FIELDS: dict[str, tuple[type, frozenset[str] | str]] = {
     # test_builder_emits_exactly_the_registry_fields_for_every_type).
     "guardrails.secret": (bool, "all"),           # SEC-05 secret/credential leak
     "guardrails.exfiltration": (bool, "all"),     # SEC-04 sensitive data to an external host
+    "guardrails.code_exec": (bool, "all"),        # SEC-11 unsafe dynamic code/command execution (ASI05)
+    "guardrails.memory_poison": (bool, "all"),    # SEC-09 memory/context poisoning (ASI06)
     "sequence.matched_refs": (list, "all"),
     "egress.host": (str, frozenset({"tool_call", "mcp_call"})),
     "memory.operation": (str, frozenset({"memory_access"})),

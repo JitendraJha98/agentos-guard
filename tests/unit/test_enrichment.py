@@ -15,6 +15,13 @@ Behavior (Slice-3 Task 2):
 from agentos_contract import ActionType, AgentAction
 from agentos_pipeline.enrichment import INTENT_CLASSES, enrich, tag_intent
 
+# Every guardrail flag false — the clean-payload baseline. Derived from a clean
+# enrich() so this stays correct as the detector set grows, rather than a hand-
+# maintained literal that drifts every time a Phase-8 slice adds a flag.
+_ALL_FLAGS_FALSE = {
+    k: False for k in enrich(AgentAction(agent_id="a", type=ActionType.model_invocation, target="t")).guardrails
+}
+
 
 def _act(type_: ActionType, target: str, payload: dict | None = None) -> AgentAction:
     return AgentAction(agent_id="a", type=type_, target=target, payload=payload or {})
@@ -54,7 +61,7 @@ def test_intent_classes_export_is_the_emitted_vocabulary() -> None:
 def test_enrich_shape() -> None:
     e = enrich(_act(ActionType.tool_call, "drop_table"))
     assert e.intent_class == "DATA_DESTRUCTION"
-    assert e.guardrails == {"pii": False, "unsafe": False, "format": False, "secret": False, "exfiltration": False}  # clean payload
+    assert e.guardrails == _ALL_FLAGS_FALSE  # clean payload
 
 
 # --- Slice 4: real guardrail flags + carried findings (SEC-02) ------------------
@@ -68,7 +75,7 @@ def test_pii_payload_sets_flag_and_carries_finding() -> None:
 
 def test_clean_payload_all_flags_false() -> None:
     e = enrich(_act(ActionType.tool_call, "http_post", {"content": "hello"}))
-    assert e.guardrails == {"pii": False, "unsafe": False, "format": False, "secret": False, "exfiltration": False}
+    assert e.guardrails == _ALL_FLAGS_FALSE
     assert all(not f.matched for f in e.guardrail_findings)
 
 

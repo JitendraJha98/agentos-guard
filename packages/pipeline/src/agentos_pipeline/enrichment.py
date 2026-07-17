@@ -59,21 +59,25 @@ def tag_intent(action: AgentAction) -> str | None:
 # in IntentScorer, which imports tag_intent from THIS module — so the scorer
 # imports must run after tag_intent exists for either entry point of the cycle
 # to resolve.
+from agentos_pipeline.risk.code_execution import CodeExecutionScorer  # noqa: E402
 from agentos_pipeline.risk.exfiltration import ExfiltrationScorer  # noqa: E402
 from agentos_pipeline.risk.format_check import FormatViolationScorer  # noqa: E402
+from agentos_pipeline.risk.memory_poison import MemoryPoisoningScorer  # noqa: E402
 from agentos_pipeline.risk.pii import PiiScorer  # noqa: E402
 from agentos_pipeline.risk.secret_leak import SecretLeakScorer  # noqa: E402
 from agentos_pipeline.risk.unsafe_content import UnsafeContentScorer  # noqa: E402
 
 # Stateless, patterns compiled once as class attributes — instantiate ONCE.
-# SEC-05 (secret_leak) + SEC-04 (exfiltration) join the Slice-4 guardrail tier so
-# their findings feed both the guardrail flags AND the stage-4 risk max-pool.
+# The Phase-8 detectors (SEC-04/05/09/11) join the Slice-4 guardrail tier so their
+# findings feed both the guardrail flags AND the stage-4 risk max-pool.
 _GUARDRAIL_SCORERS = (
     PiiScorer(),
     UnsafeContentScorer(),
     FormatViolationScorer(),
     SecretLeakScorer(),
     ExfiltrationScorer(),
+    CodeExecutionScorer(),
+    MemoryPoisoningScorer(),
 )
 
 _FLAG_BY_CATEGORY = {
@@ -82,13 +86,18 @@ _FLAG_BY_CATEGORY = {
     "format_violation": "format",
     "secret_leak": "secret",
     "egress_exfil": "exfiltration",
+    "code_execution": "code_exec",
+    "memory_poisoning": "memory_poison",
 }
 
 
 def enrich(action: AgentAction) -> Enrichment:
     """Build the full enrichment document the policy-input builder consumes (D4)."""
     findings = tuple(s.score(action) for s in _GUARDRAIL_SCORERS)
-    flags = {"pii": False, "unsafe": False, "format": False, "secret": False, "exfiltration": False}
+    flags = {
+        "pii": False, "unsafe": False, "format": False, "secret": False,
+        "exfiltration": False, "code_exec": False, "memory_poison": False,
+    }
     for finding in findings:
         if finding.matched:
             flags[_FLAG_BY_CATEGORY[finding.category]] = True

@@ -13,7 +13,8 @@ from agentos_pipeline.enrichment import enrich
 from agentos_pipeline.policy_input import build_policy_input
 
 _BASE_GUARDRAILS = {
-    "pii": False, "unsafe": False, "format": False, "secret": False, "exfiltration": False,
+    "pii": False, "unsafe": False, "format": False, "secret": False,
+    "exfiltration": False, "code_exec": False, "memory_poison": False,
 }
 
 
