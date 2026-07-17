@@ -20,6 +20,11 @@ POLICY_INPUT_FIELDS: dict[str, tuple[type, frozenset[str] | str]] = {
     "guardrails.pii": (bool, "all"),
     "guardrails.unsafe": (bool, "all"),
     "guardrails.format": (bool, "all"),
+    # Phase-8 detector flags — principle authors may condition on these. Each is
+    # added here in lockstep with the enrich() flag that emits it (drift-locked by
+    # test_builder_emits_exactly_the_registry_fields_for_every_type).
+    "guardrails.secret": (bool, "all"),           # SEC-05 secret/credential leak
+    "guardrails.exfiltration": (bool, "all"),     # SEC-04 sensitive data to an external host
     "sequence.matched_refs": (list, "all"),
     "egress.host": (str, frozenset({"tool_call", "mcp_call"})),
     "memory.operation": (str, frozenset({"memory_access"})),

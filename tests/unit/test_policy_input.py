@@ -12,7 +12,9 @@ from agentos_contract.policy_io import POLICY_INPUT_FIELDS
 from agentos_pipeline.enrichment import enrich
 from agentos_pipeline.policy_input import build_policy_input
 
-_BASE_GUARDRAILS = {"pii": False, "unsafe": False, "format": False}
+_BASE_GUARDRAILS = {
+    "pii": False, "unsafe": False, "format": False, "secret": False, "exfiltration": False,
+}
 
 
 def _act(type_: ActionType, target: str, payload: dict | None = None) -> AgentAction:

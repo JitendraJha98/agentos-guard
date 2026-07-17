@@ -45,6 +45,9 @@ def build_policy_input(
         "type": action.type.value,
         "target": action.target,
         "intent": {"class": enrichment.intent_class or ""},
+        # dict(enrichment.guardrails) already carries every derived flag — pii/unsafe/
+        # format plus the Phase-8 secret/exfiltration/code_exec/memory_poison flags —
+        # so a constitution principle can condition on any of them with no builder change.
         "guardrails": dict(enrichment.guardrails),
         # SEC-13: the SequenceCorrelator's matches — compiled membership rules
         # turn these refs into REAL fired principles (deterministic floor).

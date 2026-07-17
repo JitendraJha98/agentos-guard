@@ -58,14 +58,19 @@ class PiiScorer:
     _CARD_CANDIDATE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
     _PHONE = re.compile(r"\+\d{7,15}\b|\(\d{3}\)\s?\d{3}-\d{4}")
 
-    def score(self, action: AgentAction) -> RiskFinding:
-        text, truncated = payload_text(action)
+    @classmethod
+    def find_pii(cls, text: str) -> list[str]:
+        """The PII pattern IDs present in `text` (never raw values).
+
+        Extracted from `score` so the SEC-04 exfiltration scorer can reuse the
+        exact same PII definition rather than a divergent copy.
+        """
         matched: list[str] = []
-        if self._EMAIL.search(text):
+        if cls._EMAIL.search(text):
             matched.append("email")
-        if self._SSN.search(text):
+        if cls._SSN.search(text):
             matched.append("ssn")
-        for candidate in self._CARD_CANDIDATE.findall(text):
+        for candidate in cls._CARD_CANDIDATE.findall(text):
             digits = re.sub(r"[ -]", "", candidate)
             # IIN guard BEFORE Luhn: real card networks issue first digits 2-6
             # only. 13-19-digit runs starting "1" (epoch-ms timestamps until
@@ -76,9 +81,13 @@ class PiiScorer:
             if 13 <= len(digits) <= 19 and _luhn_valid(digits):
                 matched.append("credit_card")
                 break
-        if self._PHONE.search(text):
+        if cls._PHONE.search(text):
             matched.append("phone")
+        return matched
 
+    def score(self, action: AgentAction) -> RiskFinding:
+        text, truncated = payload_text(action)
+        matched = self.find_pii(text)
         detail = "; ".join(matched) or "no pii patterns matched"
         if truncated:
             detail += " (input truncated at 32 KB)"
