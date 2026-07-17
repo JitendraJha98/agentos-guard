@@ -131,6 +131,16 @@ class CardVerdict(Protocol):
     detail: str
 
 
+class McpQuarantineLookup(Protocol):
+    """The injected SEC-07 seam (MCPGateway.is_quarantined satisfies it).
+
+    Sync, in-memory (like the kill-switch): a quarantined (server, tool) is one
+    the MCP gateway flagged as hostile, and any mcp_call to it is denied before it
+    runs. Returns True iff the target is quarantined."""
+
+    def is_quarantined(self, server: str, tool: str) -> bool: ...
+
+
 class CardVerifierProtocol(Protocol):
     """The injected SEC-10/ASI07 seam (control-plane AgentCardVerifier satisfies it).
 
@@ -178,6 +188,7 @@ class Pipeline:
         kill_switch: KillSwitchLookup | None = None,
         delegation: DelegationResolver | None = None,
         card_verifier: "CardVerifierProtocol | None" = None,
+        mcp_quarantine: "McpQuarantineLookup | None" = None,
     ) -> None:
         self._identity = identity
         self._policy = policy
@@ -211,6 +222,9 @@ class Pipeline:
         # SEC-10/ASI07: verifies a delegatee's agent card. None default: stage 1c
         # never runs and delegation trusts the caller's word, exactly as before.
         self._card_verifier = card_verifier
+        # SEC-07: the MCP gateway's quarantine lookup. None default: stage 1d never
+        # runs and mcp_call actions are not quarantine-checked, exactly as before.
+        self._mcp_quarantine = mcp_quarantine
 
     async def evaluate(self, action: AgentAction) -> Decision:
         # OBS-02: ensure an app-level correlation id exists (the SDK sets it across a
@@ -376,6 +390,33 @@ class Pipeline:
             reasons.append(
                 Reason(stage="delegation", code="agent_card_verified", detail=verdict.detail[:512])
             )
+
+        # Stage 1d — MCP gateway quarantine (SEC-07): an mcp_call to a tool the gateway
+        # quarantined as hostile (tool-poisoning / typosquat / rug-pull) is denied before
+        # it runs. None default: unwired deployments skip the check. Only mcp_call actions
+        # target an MCP tool.
+        if self._mcp_quarantine is not None and action.type is ActionType.mcp_call:
+            server = str((action.payload or {}).get("server", ""))
+            tool = str((action.payload or {}).get("tool", ""))
+            if self._mcp_quarantine.is_quarantined(server, tool):
+                floor_box[0] = Outcome.deny  # a quarantined MCP tool may NEVER relax
+                reasons.append(
+                    Reason(
+                        stage="mcp_gateway",
+                        code="mcp_tool_quarantined",
+                        detail=f"MCP tool {server}/{tool} is quarantined by the security gateway",
+                    )
+                )
+                decision = Decision(
+                    action_id=action.id,
+                    outcome=Outcome.deny,
+                    trust_score=trust,
+                    reasons=reasons,
+                    constitution_version=self._policy.constitution_version,
+                    policy_version=self._policy.policy_version,
+                )
+                await self._append_with_redaction_fallback(action, decision)
+                return decision  # TERMINAL
 
         # Stage 2 — Enrichment (SEC-12/D6): deterministic, pure CPU, pre-policy.
         enrichment = enrich(action)
