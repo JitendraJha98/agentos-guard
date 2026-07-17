@@ -29,7 +29,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: Control Plane, SDK & Minimal Dashboard** - Declarative resource API with compile-on-write and optimistic versioning, gated self-registration + agent inventory, the `ControlPlaneClient` SDK, a zero-infra quickstart (SQLite + in-process opa-wasm — SDK-05), and a cookie-gated dashboard with approvals and kill switch (completed 2026-07-03)
 - [~] **Phase 6: Observability, Compliance & Red-Team Gate** - OTel spans/metrics, OWASP/NIST/EU-minimal compliance mapping, and the pytest-native red-team layer that statistically gates CI (closes Phase 0). Slices 6a–6e + OSS-02 merged (PR #16 → development); **OSS-01 (first tagged PyPI release) remains** before Phase 0 fully closes
 - [x] **Phase 7: Trust, Reputation & Identity Hardening** - Longitudinal reputation, bounded delegation trust chains, agent certificates, and reconciliation loops (completed 2026-07-17)
-- [ ] **Phase 8: Full Security Engine & MCP Gateway** - Data-exfil, secret-leakage, tool-poisoning, supply-chain, plus the ASI05/06/07 gap detectors and an MCP security gateway
+- [x] **Phase 8: Full Security Engine & MCP Gateway** - Data-exfil, secret-leakage, tool-poisoning, supply-chain, plus the ASI05/06/07 gap detectors and an MCP security gateway (completed 2026-07-17)
 - [ ] **Phase 9: Runtime Containment & Consensus** - Sandbox execution, privilege rings, resource isolation, circuit breakers, emergency shutdown, and 2-of-3 multi-agent consensus
 - [ ] **Phase 10: Gateway PEP, Second Adapter & Live Graph** - Framework-agnostic gateway PEP, a second framework adapter, framework/shadow/rogue discovery, and the live agent graph
 - [ ] **Phase 11: Merkle Audit, Economics, ABOM & Compliance Export** - Merkle DAG audit upgrade, cost/budget governance, Agent Bill of Materials, and one-click EU AI Act + SOC 2 evidence export
@@ -167,7 +167,15 @@ still dated 2026-06-10); do it before Phase 7 planning.
   2. Malicious or drifted tool definitions are flagged (manifest-drift), an MCP security gateway inspects/normalizes MCP interactions and quarantines hostile manifests, and supply-chain checks cross-reference an agent's ABOM against known-bad components.
   3. The gap detectors fire: memory/context-poisoning (ASI06) flags malicious memory writes/reads, inter-agent comms (ASI07) are authenticated with agent-card verification on delegation, and unsafe dynamic code/command execution (ASI05) is detected; intent classification deepens beyond the Phase-3 sequence analysis (SEC-13, delivered in Phase 3) — an embedding-similarity classifier flags novel actions near a forbidden-intent exemplar when deterministic tags are ambiguous (SEC-14).
   4. Each `Agent` declares a versioned, provenance-tracked Agent Bill of Materials of models, prompts, tools, and MCP servers.
-**Plans**: TBD
+**Plans**: 8/8 complete — grouped by cohesion
+- [x] 8a — SEC-05 secret-leakage + SEC-04 data-exfiltration scorers (`risk/secret_leak.py`, `risk/exfiltration.py`). Exfil grades by data class: a secret is 0.6 to any external host, PII stays advisory (preserving "PII to an allowlisted host stays allow").
+- [x] 8b — SEC-11 unsafe code-execution detector / ASI05 (`risk/code_execution.py`).
+- [x] 8c — SEC-09 memory/context-poisoning detector / ASI06 (`risk/memory_poison.py`), scoped to memory_access where persistence makes injection worse than a transient one.
+- [x] 8d — SEC-10 inter-agent auth + agent-card verification / ASI07 (`agent_card.py` + pipeline stage 1c), layered on IDN-01/IDN-03/TRST-04.
+- [x] 8e — ABOM-01/02 provenance-tracked Agent Bill of Materials (`abom.py`): per-component digest/version/source, drift-preserving merge on re-declaration. The digests feed 8f.
+- [x] 8f — SEC-06 tool-poisoning (manifest-hash drift) + SEC-08 supply-chain known-bad cross-reference (`supply_chain.py`).
+- [x] 8g — SEC-07 MCP security gateway (`mcp_gateway.py` + pipeline stage 1d): hidden-instruction/typosquat/rug-pull inspection, sticky quarantine enforced on mcp_call.
+- [x] 8h — SEC-14 embedding-similarity intent classifier (`intent_similarity/`), ambiguity-gated + advisory, following the POL-04 interpreter precedent (offline HashingEmbedder default + pluggable real adapter).
 
 ### Phase 9: Runtime Containment & Consensus
 **Goal**: Make the sandbox and containment outcomes real — isolation, privilege rings, circuit breakers, emergency shutdown — and add 2-of-3 multi-agent consensus as a first-class graduated outcome.
@@ -252,7 +260,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 5. Control Plane, SDK & Minimal Dashboard | 6/6 | Complete    | 2026-07-03 |
 | 6. Observability, Compliance & Red-Team Gate | 5/6 | In progress (6a–6e + OSS-02 done; OSS-01 first release pending) | - |
 | 7. Trust, Reputation & Identity Hardening | 4/4 | Complete    | 2026-07-17 |
-| 8. Full Security Engine & MCP Gateway | 0/TBD | Not started | - |
+| 8. Full Security Engine & MCP Gateway | 8/8 | Complete    | 2026-07-17 |
 | 9. Runtime Containment & Consensus | 0/TBD | Not started | - |
 | 10. Gateway PEP, Second Adapter & Live Graph | 0/TBD | Not started | - |
 | 11. Merkle Audit, Economics, ABOM & Compliance Export | 0/TBD | Not started | - |

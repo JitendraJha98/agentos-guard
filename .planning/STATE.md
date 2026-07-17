@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: phase_in_progress
-stopped_at: 2026-07-17 — Phase 7 COMPLETE (4/4 slices, committed to development). AGT re-verification debt cleared (AGT still v4.1.0; cross-action-correlation gap downgraded Durable→Contested). Phase 8 in progress. Phase 6's OSS-01 (first tagged PyPI release) still pending.
+stopped_at: 2026-07-17 — Phases 7 AND 8 COMPLETE (4/4 + 8/8 slices, committed to development). AGT re-verification debt cleared. Phase 6's OSS-01 (first tagged PyPI release) is the sole remaining open item across Phases 6-8; Phase 9 not started.
 last_updated: 2026-07-17
 last_activity: 2026-07-17
 progress:
   total_phases: 14
-  completed_phases: 6
-  total_plans: 35
-  completed_plans: 35
-  percent: 46
+  completed_phases: 7
+  total_plans: 43
+  completed_plans: 43
+  percent: 54
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-01)
 
 **Core value:** Every agent action is intercepted at runtime and returned an explainable, graduated decision grounded in policy + a human-readable constitution, with tamper-evident audit evidence — making unsafe agent behavior structurally impossible rather than merely unlikely.
-**Current focus:** Phase 8 — Full Security Engine & MCP Gateway (in progress)
+**Current focus:** Phase 9 — Runtime Containment & Consensus (not started)
 
 ## Current Position
 
-Phase: 8 (Phase 7 complete 2026-07-17)
-Plan: Phase 7 delivered as 4 slices, one per requirement — 7a TRST-03 reputation, 7b TRST-04 delegation trust budget + scope intersection, 7c IDN-03 X.509 certificates, 7d API-04 reconciliation loops. Committed directly to `development` (user-chosen delivery mode, not a PR).
-Status: Phase 8 in progress. Phase 6's OSS-01 (first tagged PyPI release) remains the last Phase-0 item.
+Phase: 9 (Phases 7 AND 8 complete 2026-07-17)
+Plan: Phase 8 delivered as 8 slices covering all 11 requirements — 8a SEC-04/05, 8b SEC-11, 8c SEC-09, 8d SEC-10, 8e ABOM-01/02, 8f SEC-06/08, 8g SEC-07, 8h SEC-14. Committed directly to `development` (user-chosen delivery mode).
+Status: Phases 1–5, 7, 8 complete; Phase 6 ~5/6 (OSS-01 first PyPI release the sole open item). Phase 9 not started.
 Last activity: 2026-07-17
 
-Progress: [██████████] Phases 1–5, 7 complete + Phase 6 ~5/6; 6/14 phases fully done
+Progress: [███████████·] 7/14 phases fully done (1–5, 7, 8) + Phase 6 ~5/6
 
 ## Performance Metrics
 
@@ -99,6 +99,14 @@ Recent decisions affecting current work:
 - [Phase 7]: [7b] TRST-04 delegation = `min(child_trust, parent_trust*decay)` + scope INTERSECTION. Both halves are anti-escalation: the cap kills trust laundering (a 0.05-trust principal borrowing a trusted delegate's standing would bypass TRST-03 in one hop); intersection stops a delegation conjuring a capability neither party held. Unknown lineage FAILS CLOSED — a ledger miss must never be an escalation channel. In-process ledger is non-persistent (documented; distributed form is future work).
 - [Phase 7]: [7c] IDN-03 = per-agent Ed25519 keypair + CA-issued X.509 with a SPIFFE-shaped URI SAN (`agentos://agent/<id>`), so IDN-04 is a change of scheme, not model. Control plane NEVER stores the agent private key. Real CRL; re-enroll rotates but does not auto-revoke (else a shared-token holder could knock out a healthy agent's cert).
 - [Phase 7]: [7d] API-04 reconcilers report items CHANGED (zero == converged), isolate failures (a dead loop rots derived state silently — worse than a noisy one), and run via `asyncio.to_thread` since they do blocking DB I/O. CacheReconciler fires only on version change.
+
+- [Phase 8]: All detectors follow the Phase-2 guardrail discipline (stdlib re compiled once, ReDoS-safe, pure CPU, no model/network; `matched` = pattern IDs, never raw payload). SEC-04/05/09/11 join the enrich() guardrail tier; new `guardrails.*` flags added to POLICY_INPUT_FIELDS in LOCKSTEP with the emitting flag (drift-locked test).
+- [Phase 8]: [8a] Exfiltration (SEC-04) grades by DATA CLASS to honor "untrusted targets" without re-implementing the allowlist: a SECRET is 0.6 to any external host (a credential must never egress anywhere), PII stays advisory 0.35 (PII egress to an APPROVED host is the legit case the Phase-2 invariant protects; the egress floor denies PII to unapproved hosts). Preserved the "PII to allowlisted host stays allow" invariant.
+- [Phase 8]: [8c] Memory-poisoning (SEC-09) is distinct from prompt_injection precisely because memory PERSISTS — it fires only on memory_access and raises `guardrails.memory_poison` so a constitution can hold STORED instructions to a stricter standard than transient ones. Poisoned READ flagged as well as WRITE.
+- [Phase 8]: [8d] SEC-10 pipeline stages now 1b (delegation trust) / 1c (agent card) / 1d (MCP quarantine) — all injected, structural, None-default, terminal-audited denies. The fail-closed fail-safe caught a missing-import bug in 1c during dev (denied not allowed) — defensive posture working.
+- [Phase 8]: [8e] ABOM-02 component DIGEST (canonical-JSON sha256) is the load-bearing field — SEC-06 drift + SEC-08 known-bad both consume it. merge_components preserves provenance (unchanged keeps first_seen/version; drift bumps + dates). Raw Phase-5 put_abom path untouched (provenance form under a reserved key).
+- [Phase 8]: [8g] MCP gateway quarantine is STICKY — a rug-pull can't un-poison by serving a clean manifest; only operator release lifts it. Note: `(?m)` inline-flag mid-regex is illegal on Python 3.11+ — use `re.MULTILINE`.
+- [Phase 8]: [8h] SEC-14 is ambiguity-gated (runs only when the deterministic SEC-12 tag is None) and STRICTLY advisory — a probabilistic match becomes an inferred_intent label + advisory risk finding (0.5, sandbox-at-most), NEVER a deterministic policy floor. Follows the POL-04 interpreter precedent: offline HashingEmbedder default (honest lexical proxy, NOT semantic) + pluggable real adapter behind the Embedder Protocol.
 
 ### Pending Todos
 

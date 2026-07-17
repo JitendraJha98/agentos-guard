@@ -55,17 +55,17 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **SEC-01** [P0]: The risk stage scores prompt-injection patterns in tool inputs, retrieved content, and inter-agent messages, contributing to `risk_score` with typed findings
 - [x] **SEC-02** [P0]: Baseline runtime guardrails score PII, unsafe content, and format violations on inputs/outputs
 - [x] **SEC-03** [P0]: Detectors are pluggable scorers — cheap heuristics run inline, expensive models only when flagged
-- [ ] **SEC-04** [P1]: Data-exfiltration detection scores outbound payloads carrying secrets/PII to untrusted targets
-- [ ] **SEC-05** [P1]: Secret-leakage detection flags credentials/keys in prompts, tool args, or outputs
-- [ ] **SEC-06** [P1]: Tool-poisoning detection flags malicious/drifted tool definitions (P0 records tool-manifest hashes for after-the-fact detection)
-- [ ] **SEC-07** [P1]: An MCP security gateway inspects/normalizes MCP interactions and quarantines hostile tool manifests
-- [ ] **SEC-08** [P1]: Supply-chain checks cross-reference an agent's ABOM against known-bad models/prompts/tools
-- [ ] **SEC-09** [P1]: A memory/context-poisoning detector flags malicious memory writes/reads (OWASP ASI06)
-- [ ] **SEC-10** [P1]: Inter-agent communication is authenticated and agent identity/card is verified on delegation (OWASP ASI07)
-- [ ] **SEC-11** [P1]: A code-execution detector flags unsafe dynamic code/command execution by agents (OWASP ASI05)
+- [x] **SEC-04** [P1]: Data-exfiltration detection scores outbound payloads carrying secrets/PII to untrusted targets
+- [x] **SEC-05** [P1]: Secret-leakage detection flags credentials/keys in prompts, tool args, or outputs
+- [x] **SEC-06** [P1]: Tool-poisoning detection flags malicious/drifted tool definitions (P0 records tool-manifest hashes for after-the-fact detection)
+- [x] **SEC-07** [P1]: An MCP security gateway inspects/normalizes MCP interactions and quarantines hostile tool manifests
+- [x] **SEC-08** [P1]: Supply-chain checks cross-reference an agent's ABOM against known-bad models/prompts/tools
+- [x] **SEC-09** [P1]: A memory/context-poisoning detector flags malicious memory writes/reads (OWASP ASI06)
+- [x] **SEC-10** [P1]: Inter-agent communication is authenticated and agent identity/card is verified on delegation (OWASP ASI07)
+- [x] **SEC-11** [P1]: A code-execution detector flags unsafe dynamic code/command execution by agents (OWASP ASI05)
 - [x] **SEC-12** [P0]: Intent-based policy (pillar 3) — deterministic intent-class tags map single actions to a coarse intent class (e.g. `DATA_DESTRUCTION`), contributing to `risk_score` and populating `Decision.inferred_intent`; advisory to the policy floor, never a substitute for it
 - [x] **SEC-13** [P0]: Sequence/lineage intent analysis over delegation chains catches multi-step evasions (e.g. `rename_then_drop`, copy-then-delete) that no single action string matches — *pulled forward from P1 (2026-06-10): cross-action correlation is a durable AGT gap (their stateless kernel can't retrofit it) and the demoable wedge; see `docs/architecture/30-comparison-agt.md`*
-- [ ] **SEC-14** [P1]: An embedding-similarity intent classifier flags novel actions semantically close to a forbidden-intent exemplar, running only when deterministic tags are ambiguous
+- [x] **SEC-14** [P1]: An embedding-similarity intent classifier flags novel actions semantically close to a forbidden-intent exemplar, running only when deterministic tags are ambiguous
 
 ### Runtime Security — Containment
 
@@ -154,8 +154,8 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 ### ABOM (Supply Chain)
 
-- [ ] **ABOM-01** [P1]: Each `Agent` declares an Agent Bill of Materials (models, prompts, tools, MCP servers) as a resource
-- [ ] **ABOM-02** [P1]: ABOM components are versioned with provenance
+- [x] **ABOM-01** [P1]: Each `Agent` declares an Agent Bill of Materials (models, prompts, tools, MCP servers) as a resource
+- [x] **ABOM-02** [P1]: ABOM components are versioned with provenance
 - [ ] **ABOM-03** [P2]: Vulnerability impact analysis answers "which agents use compromised component vX?" instantly
 
 ### Control-Plane API & Persistence
@@ -255,17 +255,17 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | SEC-01 | Phase 1 | Complete |
 | SEC-02 | Phase 3 | Complete |
 | SEC-03 | Phase 3 | Complete |
-| SEC-04 | Phase 8 | Pending |
-| SEC-05 | Phase 8 | Pending |
-| SEC-06 | Phase 8 | Pending |
-| SEC-07 | Phase 8 | Pending |
-| SEC-08 | Phase 8 | Pending |
-| SEC-09 | Phase 8 | Pending |
-| SEC-10 | Phase 8 | Pending |
-| SEC-11 | Phase 8 | Pending |
+| SEC-04 | Phase 8 | Complete |
+| SEC-05 | Phase 8 | Complete |
+| SEC-06 | Phase 8 | Complete |
+| SEC-07 | Phase 8 | Complete |
+| SEC-08 | Phase 8 | Complete |
+| SEC-09 | Phase 8 | Complete |
+| SEC-10 | Phase 8 | Complete |
+| SEC-11 | Phase 8 | Complete |
 | SEC-12 | Phase 3 | Complete |
 | SEC-13 | Phase 3 | Complete |
-| SEC-14 | Phase 8 | Pending |
+| SEC-14 | Phase 8 | Complete |
 | RUN-01 | Phase 4 | Complete |
 | RUN-02 | Phase 4 | Complete |
 | RUN-03 | Phase 9 | Pending |
@@ -324,8 +324,8 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | ECON-02 | Phase 11 | Pending |
 | ECON-03 | Phase 11 | Pending |
 | ECON-04 | Phase 14 | Pending |
-| ABOM-01 | Phase 8 | Pending |
-| ABOM-02 | Phase 8 | Pending |
+| ABOM-01 | Phase 8 | Complete |
+| ABOM-02 | Phase 8 | Complete |
 | ABOM-03 | Phase 14 | Pending |
 | API-01 | Phase 5 | Complete |
 | API-02 | Phase 5 | Complete |
