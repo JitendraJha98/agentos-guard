@@ -47,5 +47,5 @@ Use these entry points:
 - `/gsd-quick` for small fixes, doc updates, and ad-hoc tasks
 - `/gsd-debug` for investigation and bug fixing
 
-Next step: **finish Phase 6, then `/gsd:plan-phase 7`**. Phase 6 slices 6a–6e + OSS-02 are merged (PR #16 → development); the remaining Phase-6 items are **OSS-01** (first tagged PyPI release — `.github/workflows/release.yml` is scaffolded, PyPI Trusted-Publisher setup + a `vX.Y.Z` tag pending) and the **overdue AGT re-verification** (do before Phase 7 planning). Use judgment on trivial tasks per "Working in this repo" above.
+Next step: **Phase 9 (Runtime Containment & Consensus), `/gsd:plan-phase 9`**. Phases 7 and 8 are complete and committed to `development` (2026-07-17): Phase 7 = TRST-03 reputation, TRST-04 delegation trust/scope, IDN-03 X.509 certs, API-04 reconcilers; Phase 8 = the full detector surface (SEC-04/05/06/07/08/09/10/11/14) + MCP gateway + ABOM-01/02. The AGT re-verification debt is cleared (AGT still v4.1.0; cross-action-correlation gap downgraded Durable→Contested — see `docs/architecture/30-comparison-agt.md`). **The one remaining pre-Phase-9 item is Phase 6's OSS-01** — the first tagged PyPI release (`.github/workflows/release.yml` is scaffolded; PyPI Trusted-Publisher setup + a `vX.Y.Z` tag pending). Use judgment on trivial tasks per "Working in this repo" above.
 <!-- GSD:workflow-end -->
