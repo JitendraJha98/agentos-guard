@@ -67,6 +67,7 @@ from agentos_pipeline.delegation import (
 from agentos_pipeline.enrichment import enrich
 from agentos_pipeline.graduated import GraduatedThresholds, graduated_response
 from agentos_pipeline.identity import IdentityStage, IdentityVerdict
+from agentos_pipeline.intent_similarity import IntentSimilarityClassifier
 from agentos_pipeline.interpreter import InterpretationRequest, SemanticInterpreter
 from agentos_pipeline.policy_input import build_policy_input
 from agentos_pipeline.posture import FailPosture, PostureMap
@@ -189,6 +190,7 @@ class Pipeline:
         delegation: DelegationResolver | None = None,
         card_verifier: "CardVerifierProtocol | None" = None,
         mcp_quarantine: "McpQuarantineLookup | None" = None,
+        intent_classifier: "IntentSimilarityClassifier | None" = None,
     ) -> None:
         self._identity = identity
         self._policy = policy
@@ -225,6 +227,9 @@ class Pipeline:
         # SEC-07: the MCP gateway's quarantine lookup. None default: stage 1d never
         # runs and mcp_call actions are not quarantine-checked, exactly as before.
         self._mcp_quarantine = mcp_quarantine
+        # SEC-14: the embedding-similarity intent classifier. None default: runs never;
+        # when wired it runs ONLY on an action the deterministic tagger left untagged.
+        self._intent_classifier = intent_classifier
 
     async def evaluate(self, action: AgentAction) -> Decision:
         # OBS-02: ensure an app-level correlation id exists (the SDK sets it across a
@@ -420,6 +425,43 @@ class Pipeline:
 
         # Stage 2 — Enrichment (SEC-12/D6): deterministic, pure CPU, pre-policy.
         enrichment = enrich(action)
+
+        # Stage 2b — SEC-14 embedding-similarity intent classifier. Runs ONLY when the
+        # deterministic SEC-12 tagger was AMBIGUOUS (no class) — the actions exact tags
+        # miss. Strictly advisory: a probabilistic match becomes an inferred-intent label
+        # + an advisory risk finding (which can only RESTRICT via graduated response),
+        # NEVER a deterministic policy floor. None default / a tagged action: skipped.
+        inferred_intent_override: str | None = None
+        similarity_findings: tuple[RiskFinding, ...] = ()
+        if self._intent_classifier is not None and enrichment.intent_class is None:
+            try:
+                verdict = await self._intent_classifier.classify(payload_text(action)[0])
+            except Exception:
+                # A classifier failure is advisory-path only — it must never break the
+                # verdict. Degrade to "no signal", exactly like an unwired classifier.
+                verdict = None
+            if verdict is not None and verdict.matched:
+                inferred_intent_override = verdict.label
+                similarity_findings = (
+                    RiskFinding(
+                        scorer="intent_similarity.v1",
+                        category="intent",
+                        # Advisory band: contributes risk (graduated may sandbox), below the
+                        # 0.7 deny band so a probabilistic signal alone never forces a deny.
+                        risk_score=0.5,
+                        matched=[verdict.label] if verdict.label else [],
+                        detail=f"near forbidden-intent exemplar ({verdict.label}, sim={verdict.score:.2f})",
+                        inline=False,
+                    ),
+                )
+                reasons.append(
+                    Reason(
+                        stage="intent_similarity",
+                        code="forbidden_intent_similarity",
+                        detail=f"{verdict.label} (sim={verdict.score:.2f})",
+                    )
+                )
+
         # SEC-13: sequence-intent correlation over the conversation/lineage window;
         # matches feed the compiled membership rules as a REAL deterministic floor.
         sequence_refs: tuple[str, ...] = ()
@@ -532,7 +574,9 @@ class Pipeline:
         risk_score, findings = assess_risk(
             action,
             self._scorers,
-            extra_findings=enrichment.guardrail_findings,
+            # SEC-14: the advisory similarity finding (if any) merges here alongside the
+            # SEC-02 guardrail findings — the max-pool lets it raise risk, never relax it.
+            extra_findings=enrichment.guardrail_findings + similarity_findings,
             expensive_scorers=self._expensive_scorers,
         )
         for finding in findings:
@@ -562,7 +606,10 @@ class Pipeline:
             trust_score=trust,
             reasons=reasons,
             side_effects=self._derive_side_effects(res.matched, findings),  # PIPE-09
-            inferred_intent=enrichment.intent_class,        # SEC-12 explainability
+            # SEC-12 deterministic tag when present; else the SEC-14 similarity label
+            # (advisory) when the classifier flagged one — explainability for the
+            # otherwise-untagged action, clearly a probabilistic inference in the reason.
+            inferred_intent=enrichment.intent_class or inferred_intent_override,
             # PIPE-08: set BEFORE the audit append — remediation is hash-covered.
             remediation=self._derive_remediation(outcome, res.matched),
             constitution_version=self._policy.constitution_version,  # POL-08
