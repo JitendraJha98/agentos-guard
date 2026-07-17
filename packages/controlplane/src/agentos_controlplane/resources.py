@@ -15,6 +15,7 @@ where a non-atomic Python read-then-compare would silently drop the second write
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -23,6 +24,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
 
 from agentos_constitution import Constitution, compile_constitution
+from agentos_controlplane.abom import build_components, merge_components
 from agentos_controlplane.store.models import (
     Abom,
     ConstitutionResource,
@@ -146,6 +148,54 @@ class ResourceStore:
             except StaleDataError as exc:
                 raise VersionConflict(f"abom {agent_id}: concurrent update") from exc
             return self._abom(row)
+
+    def declare_abom(
+        self,
+        agent_id: str,
+        declaration: dict,
+        *,
+        expected_version: int | None,
+        source: str = "declared",
+        now: datetime | None = None,
+    ) -> AbomData:
+        """ABOM-02 — declare an ABOM as provenance-tracked components.
+
+        Stores both the provenance list (under `abom_components`, what SEC-06/08
+        consume) and the raw declaration (under `declared`, for re-merge). Merges
+        onto the prior components so a re-declaration preserves each unchanged
+        component's history and bumps only what actually drifted.
+        """
+        with self._sf() as s:
+            row = s.get(Abom, agent_id)
+            if row is None:
+                components = build_components(declaration, source=source, now=now)
+                row = Abom(
+                    agent_id=agent_id,
+                    components={"abom_components": components, "declared": declaration},
+                    version=1,
+                )
+                s.add(row)
+            else:
+                if expected_version != row.version:
+                    raise VersionConflict(
+                        f"abom {agent_id}: expected version {row.version}, got {expected_version}"
+                    )
+                prior = (row.components or {}).get("abom_components", [])
+                components = merge_components(prior, declaration, source=source, now=now)
+                row.components = {"abom_components": components, "declared": declaration}
+            try:
+                s.commit()
+            except StaleDataError as exc:
+                raise VersionConflict(f"abom {agent_id}: concurrent update") from exc
+            return self._abom(row)
+
+    def get_abom_components(self, agent_id: str) -> list[dict]:
+        """The provenance-tracked components for `agent_id` (empty if none / raw ABOM)."""
+        with self._sf() as s:
+            row = s.get(Abom, agent_id)
+            if row is None:
+                return []
+            return list((row.components or {}).get("abom_components", []))
 
     def get_abom(self, agent_id: str) -> AbomData | None:
         with self._sf() as s:

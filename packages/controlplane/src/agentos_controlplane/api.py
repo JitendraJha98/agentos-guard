@@ -216,6 +216,21 @@ def build_resource_router(resources: ResourceStore) -> APIRouter:
             raise HTTPException(status_code=409, detail=str(exc)) from None
         return vars(d)
 
+    @router.put("/aboms/{agent_id}/declare")
+    def declare_abom(agent_id: str, body: AbomIn) -> dict:
+        """ABOM-02 — declare an ABOM as provenance-tracked components (digest/version/source)."""
+        try:
+            d = resources.declare_abom(
+                agent_id, body.components, expected_version=body.version
+            )
+        except VersionConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return vars(d)
+
+    @router.get("/aboms/{agent_id}/components")
+    def get_abom_components(agent_id: str) -> list[dict]:
+        return resources.get_abom_components(agent_id)
+
     # ---- Constitution / Policy (compile-on-write, API-02) ----
     @router.post("/constitutions")
     def apply_constitution(body: ConstitutionIn) -> dict:
