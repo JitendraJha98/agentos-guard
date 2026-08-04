@@ -152,6 +152,9 @@ def test_middleware_tool_hook_surfaces_quarantined_without_running_the_tool(wire
     assert calls == []  # the tool NEVER executed
     assert isinstance(result, ToolMessage)
     assert result.content.startswith("Quarantined by agentos-guard")
+    # A quarantine is surfaced as a FAILED tool result, not a successful one: any
+    # consumer branching on ToolMessage.status (default "success") must see "error".
+    assert result.status == "error"
     assert len(wired.rows()) == 1 and len(wired.events("sandbox_executed")) == 1
 
 
@@ -171,6 +174,7 @@ def test_middleware_without_a_runner_fails_closed_as_blocked(wired) -> None:
 
     assert calls == []  # fail-CLOSED: still no execution
     assert result.content.startswith("Blocked by agentos-guard")
+    assert result.status == "error"
     assert wired.rows() == []                       # nothing observed
     assert wired.events("sandbox_executed") == []   # nothing audited
 

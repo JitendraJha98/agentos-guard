@@ -13,7 +13,9 @@ scripted Decision and a spy handler records its call count):
   - allow: a Decision(outcome=allow) calls handler exactly once and returns its result.
   - deny: a Decision(outcome=deny) returns a ToolMessage carrying the fired reasons
     and does NOT call handler (call count 0 — no egress). The ToolMessage's
-    tool_call_id == request.tool_call["id"].
+    tool_call_id == request.tool_call["id"] and its `status` is "error" — a contained
+    action must never be structurally indistinguishable from a completed one
+    (ToolMessage defaults to status="success", LangChain's tool-failure convention).
   - no nested loop: the hook does not call asyncio.run (proven by source grep below).
 """
 
@@ -127,6 +129,9 @@ def test_deny_blocks_handler_and_returns_tool_message() -> None:
     assert result.tool_call_id == "call_deny_42"
     # The fired reason is surfaced (machine-readable code present in the message).
     assert "constitution_principle_fired" in result.content
+    # And the block is structurally a FAILURE, not a success: a consumer branching on
+    # ToolMessage.status (which defaults to "success") must read it as non-execution.
+    assert result.status == "error"
 
 
 # --- Outcome map without a coordinator: blocking outcomes fail CLOSED (6b-2) ------
@@ -152,6 +157,7 @@ def test_sandbox_blocks_tool_fail_closed() -> None:
     assert isinstance(result, ToolMessage)
     assert result.tool_call_id == "call_sbx_7"
     assert "Blocked by agentos-guard" in result.content
+    assert result.status == "error"
 
 
 def test_warn_executes_tool() -> None:

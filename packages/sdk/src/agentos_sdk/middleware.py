@@ -12,7 +12,8 @@ posture cannot diverge across enforcement sites (Slice 6b unification).
 Block surfacing is the only hook-specific part: a wrapper raises GovernanceDenied;
 a LangChain hook must NOT raise into the agent loop, so each hook catches the
 governed exception and surfaces the block as its native message type (ToolMessage
-for tools, AIMessage for model calls) carrying the fired reasons. Either way the
+for tools — with `status="error"`, so a block/quarantine is never structurally a
+success — and AIMessage for model calls) carrying the fired reasons. Either way the
 governed operation never executed (no egress — the enforcement contract; T-01-19).
 
 Async-hook resolution (Open Q2 / Assumption A3, RESOLVED 2026-06-02): langchain 1.3.2
@@ -87,9 +88,15 @@ class GovernanceMiddleware(AgentMiddleware):
             # SHORT-CIRCUIT happened inside the core: handler was never called.
             # `str(denied)` is the governed exception's OWN message, so a
             # GovernanceQuarantined reads as quarantined while a deny is unchanged.
+            # `status="error"` is load-bearing, not cosmetic: this is the ONE surface
+            # that turns the governed exception back into a normal return value, and
+            # ToolMessage defaults to status="success". Without it a consumer that
+            # branches on `status` (LangChain's tool-failure convention) reads a
+            # contained action as a completed one.
             return ToolMessage(
                 content=str(denied),
                 tool_call_id=request.tool_call["id"],
+                status="error",
             )
 
     async def awrap_model_call(self, request: ModelRequest, handler):
