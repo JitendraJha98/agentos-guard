@@ -61,6 +61,7 @@ from agentos_contract.policy_io import (
 
 from agentos_pipeline.delegation import (
     WILDCARD,
+    Authority,
     DelegationDenied,
     DelegationResolver,
 )
@@ -151,10 +152,15 @@ class PrivilegeVerdictProtocol(Protocol):
 
 
 class PrivilegeLookup(Protocol):
-    """RUN-04 seam (PrivilegeRingStore.check satisfies it). `check` returns None when permitted,
-    a verdict when refused. MUST be in-memory (called per action on the hot path)."""
+    """RUN-04 seam (PrivilegeRingStore satisfies it). `check` returns None when permitted, a verdict
+    when refused; `held_ring` overrides the agent's own tier with the delegation-chain minimum.
+    `ring_for` is what the delegation resolver caps over. MUST be in-memory (per action, hot path)."""
 
-    def check(self, agent_id: str, target: str) -> "PrivilegeVerdictProtocol | None": ...
+    def ring_for(self, agent_id: str) -> int: ...
+
+    def check(
+        self, agent_id: str, target: str, *, held_ring: int | None = None
+    ) -> "PrivilegeVerdictProtocol | None": ...
 
 
 class CardVerifierProtocol(Protocol):
@@ -249,6 +255,11 @@ class Pipeline:
         # RUN-04: the privilege-ring lookup (in-memory, hot-path). None default: stage 1e never
         # runs and behavior is unchanged (backward compat).
         self._privilege = privilege
+        # RUN-04 x TRST-04: when BOTH are wired the ring must be chain-capped like trust, or a
+        # ring-0 principal reaches a gated target through a ring-3 delegate. Auto-wired here so
+        # that cannot depend on the operator remembering a second seam.
+        if self._delegation is not None and self._privilege is not None:
+            self._delegation.use_ring_lookup(self._privilege)
 
     async def evaluate(self, action: AgentAction) -> Decision:
         # OBS-02: ensure an app-level correlation id exists (the SDK sets it across a
@@ -355,6 +366,7 @@ class Pipeline:
         # agent must never reach the ledger) and BEFORE policy (the effective trust it
         # yields is what graduated response must consume). None default: unwired
         # deployments behave exactly as before.
+        authority: Authority | None = None
         if self._delegation is not None:
             try:
                 authority = self._delegation.resolve(action, trust)
@@ -445,22 +457,28 @@ class Pipeline:
         # Stage 1e — Privilege rings (RUN-04): a sensitive target requires a capability tier; an
         # agent holding a lower ring is denied before the action runs. Placed AFTER identity so the
         # ring is keyed on a VERIFIED agent_id (an unverified caller never consumes ring state), and
-        # alongside the other post-identity gates. The lookup is in-memory (no per-action DB read).
+        # AFTER 1b so the resolved authority's chain-capped ring is available. The lookup is
+        # in-memory (no per-action DB read).
         # None default: unwired deployments skip the check. Only REGISTERED targets are gated, so an
         # unregistered tool is unaffected and still governed by the constitution floor.
         if self._privilege is not None:
-            pv = self._privilege.check(action.agent_id, action.target)
+            # The held ring is the delegation-chain MINIMUM (TRST-04 shape), never the acting
+            # agent's own tier: otherwise a ring-0 principal borrows a ring-3 delegate's privilege
+            # in one hop — the same laundering the trust budget forbids. None (no delegation wired,
+            # or no ring lookup) -> the store keys on the agent's own ring, exactly as before.
+            held_ring = authority.ring if authority is not None else None
+            pv = self._privilege.check(action.agent_id, action.target, held_ring=held_ring)
             if pv is not None:
                 floor_box[0] = Outcome.deny  # insufficient privilege may NEVER relax
+                detail = (
+                    f"target {pv.target} requires privilege ring {pv.required}; "
+                    f"agent holds {pv.held}"
+                )
+                if held_ring is not None and authority is not None and authority.depth > 0:
+                    # Name the cap: a delegate refused below its OWN tier is otherwise baffling.
+                    detail += f" (chain-capped over a delegation of depth {authority.depth})"
                 reasons.append(
-                    Reason(
-                        stage="privilege",
-                        code="insufficient_ring",
-                        detail=(
-                            f"target {pv.target} requires privilege ring {pv.required}; "
-                            f"agent holds {pv.held}"
-                        ),
-                    )
+                    Reason(stage="privilege", code="insufficient_ring", detail=detail)
                 )
                 decision = Decision(
                     action_id=action.id,

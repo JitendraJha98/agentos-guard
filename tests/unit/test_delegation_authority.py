@@ -21,14 +21,15 @@ from agentos_pipeline.delegation import (
     Authority,
     DelegationDenied,
     DelegationLedger,
+    cap_ring,
     delegate,
     intersect_scope,
     permits,
 )
 
 
-def _root(trust: float = 1.0, scope=ALL) -> Authority:
-    return Authority(agent_id="root", trust=trust, scope=scope)
+def _root(trust: float = 1.0, scope=ALL, ring: int | None = None) -> Authority:
+    return Authority(agent_id="root", trust=trust, scope=scope, ring=ring)
 
 
 # --------------------------------------------------------------- scope algebra
@@ -133,6 +134,47 @@ def test_decay_must_be_a_bounded_fraction():
     for bad in (1.5, -0.1):
         with pytest.raises(ValueError):
             delegate(_root(), "b", child_trust=1.0, child_scope=ALL, decay=bad)
+
+
+# ------------------------------------------------- the privilege ring (RUN-04)
+
+
+def test_ring_is_capped_to_the_chain_minimum():
+    """THE anti-escalation property for privilege rings, the mirror of the trust budget: a low-ring
+    principal must not reach a ring-gated target through a high-ring delegate."""
+    child = delegate(_root(1.0, ring=0), "b", child_trust=1.0, child_ring=3, decay=1.0)
+    assert child.ring == 0, "a ring-0 principal borrowed a ring-3 delegate's privilege"
+
+
+def test_a_high_ring_parent_never_promotes_a_low_ring_child():
+    """min() of both halves, exactly like trust."""
+    assert delegate(_root(1.0, ring=3), "b", child_trust=1.0, child_ring=1, decay=1.0).ring == 1
+
+
+def test_ring_is_monotonically_non_increasing_down_a_chain():
+    a = _root(1.0, ring=3)
+    b = delegate(a, "b", child_trust=1.0, child_ring=2, decay=1.0)
+    c = delegate(b, "c", child_trust=1.0, child_ring=5, decay=1.0)
+    assert [a.ring, b.ring, c.ring] == [3, 2, 2], "a deeper link minted privilege"
+
+
+def test_ring_is_none_when_rings_are_not_in_play():
+    """Unwired (no ring lookup) == None, so the pipeline falls back to the agent's own ring and
+    behavior is unchanged for deployments that do not use RUN-04."""
+    assert _root().ring is None
+    assert delegate(_root(), "b", child_trust=1.0).ring is None
+
+
+def test_cap_ring_treats_an_absent_ring_as_the_identity():
+    assert cap_ring(None, 2) == 2
+    assert cap_ring(2, None) == 2
+    assert cap_ring(None, None) is None
+    assert cap_ring(3, 1) == 1
+
+
+def test_a_negative_ring_is_rejected():
+    with pytest.raises(ValueError):
+        Authority(agent_id="a", trust=1.0, ring=-1)
 
 
 # ------------------------------------------------------------------ the ledger

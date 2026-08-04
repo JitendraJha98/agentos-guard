@@ -167,38 +167,52 @@ def test_negative_ring_rejected_and_changes_nothing(store, rings: PrivilegeRingS
     assert _events(store, "privilege_ring_set") == []
 
 
+class _CommitRaises:
+    """A session-factory whose session commits explode (a durability failure)."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __call__(self):
+        return self
+
+    def __enter__(self):
+        self._s = self._inner().__enter__()
+        return _Sess(self._s)
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _Sess:
+    def __init__(self, s):
+        self._s = s
+
+    def __getattr__(self, name):
+        return getattr(self._s, name)
+
+    def commit(self):
+        raise RuntimeError("durability failure")
+
+
+class _AuditRaises:
+    """An audit writer whose append_event explodes — the AUD-04 SecretLeakError scan over a body
+    carrying operator-supplied `key`/`set_by`, an unknown-kind ValueError, or an audit DB failure."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def append_event(self, kind: str, body: dict) -> None:
+        self.calls += 1
+        raise RuntimeError("audit failure")
+
+
 def test_durable_first_a_failed_persist_leaves_memory_unchanged(store) -> None:
     """Fail-toward-contained ordering (the Slice-4e lesson): the row is persisted+committed BEFORE
     the in-memory hot-path map is updated, so a failed commit can never leave the hot path
     believing a LOWER target requirement (or a HIGHER agent tier) than the table records."""
     rings = PrivilegeRingStore(store, AuditWriter(store))
     asyncio.run(rings.set_target_ring("db_drop", 3, set_by="op"))
-
-    class _CommitRaises:
-        """A session-factory whose session commits explode."""
-
-        def __init__(self, inner):
-            self._inner = inner
-
-        def __call__(self):
-            return self
-
-        def __enter__(self):
-            self._s = self._inner().__enter__()
-            return _Sess(self._s)
-
-        def __exit__(self, *exc):
-            return False
-
-    class _Sess:
-        def __init__(self, s):
-            self._s = s
-
-        def __getattr__(self, name):
-            return getattr(self._s, name)
-
-        def commit(self):
-            raise RuntimeError("durability failure")
 
     rings._sf = _CommitRaises(store)  # noqa: SLF001 — the point of the test
     with pytest.raises(RuntimeError):
@@ -209,6 +223,55 @@ def test_durable_first_a_failed_persist_leaves_memory_unchanged(store) -> None:
     assert rings.check("a", "db_drop") is not None
     # No audit event claimed a change that never landed.
     assert len(_events(store, "privilege_ring_set")) == 1
+
+
+def test_a_failed_persist_on_a_tightening_leaves_table_and_memory_agreeing(store) -> None:
+    """The TIGHTENING direction of the same failure: nothing committed, so the hot path keeps the
+    old (looser) value — which is still exactly what the table says. Memory never diverges."""
+    rings = PrivilegeRingStore(store, AuditWriter(store))
+    rings._sf = _CommitRaises(store)  # noqa: SLF001
+    with pytest.raises(RuntimeError):
+        asyncio.run(rings.set_target_ring("db_drop", 3, set_by="op"))  # a TIGHTENING
+
+    with store() as s:
+        assert s.get(TargetPrivilege, "db_drop") is None  # nothing committed
+    assert rings.required_ring("db_drop") == 0  # == the table
+    assert _events(store, "privilege_ring_set") == []
+
+
+def test_a_failed_audit_never_leaves_the_hot_path_looser_than_the_table(store) -> None:
+    """A TIGHTENING whose AUDIT append fails after the row committed. Memory is updated between the
+    commit and the audit write, so the hot path already enforces the durable requirement. The
+    inverse (table says ring 3, hot path says 0) would turn a failed audit write into a silently
+    DISABLED gate — the exact escalation this ordering exists to forbid."""
+    rings = PrivilegeRingStore(store, AuditWriter(store))
+    rings._audit = _AuditRaises()  # noqa: SLF001 — the point of the test
+    with pytest.raises(RuntimeError):
+        asyncio.run(rings.set_target_ring("db_drop", 3, set_by="op"))
+
+    with store() as s:
+        assert s.get(TargetPrivilege, "db_drop").required_ring == 3  # committed
+    assert rings.required_ring("db_drop") == 3  # hot path == table, not looser
+    assert rings.check("a", "db_drop") is not None  # the gate is ON
+    assert _events(store, "privilege_ring_set") == []  # only the event is missing
+
+
+def test_a_failed_audit_never_leaves_a_revoked_agent_privileged(store) -> None:
+    """The agent-tier half: a REVOCATION (ring 3 -> 0) whose audit append fails. The row committed,
+    so a durably-revoked agent must not keep its tier in the live process."""
+    rings = PrivilegeRingStore(store, AuditWriter(store))
+    asyncio.run(rings.set_target_ring("db_drop", 3, set_by="op"))
+    asyncio.run(rings.set_agent_ring("a", 3, set_by="op"))
+    assert rings.check("a", "db_drop") is None
+
+    rings._audit = _AuditRaises()  # noqa: SLF001
+    with pytest.raises(RuntimeError):
+        asyncio.run(rings.set_agent_ring("a", 0, set_by="op"))
+
+    with store() as s:
+        assert s.get(AgentPrivilege, "a").ring == 0  # committed
+    assert rings.ring_for("a") == 0  # the live process agrees
+    assert rings.check("a", "db_drop") is not None  # privilege is actually gone
 
 
 def test_list_rings_reports_both_maps(rings: PrivilegeRingStore) -> None:

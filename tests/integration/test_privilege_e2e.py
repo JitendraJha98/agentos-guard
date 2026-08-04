@@ -7,6 +7,8 @@ in-memory map the pipeline's stage-1e check reads is the one administration upda
   - register the target at ring 2   -> the same action denies with `privilege`/`insufficient_ring`
   - promote the agent to ring 2     -> allowed again
   - a DIFFERENT agent (ring 0)      -> still denied for that target (per-agent tiering)
+  - a ring-0 principal delegating to a ring-2 delegate -> STILL denied (the ring is chain-capped,
+    mirroring the TRST-04 trust budget: privilege is not borrowable across a delegation edge)
   - both administrative changes landed as `privilege_ring_set` events and the chain still verifies
 
 The pipeline runs the REAL compiled-constitution engine over a benign allowed action, so the ONLY
@@ -26,8 +28,10 @@ from agentos_controlplane.audit import AuditWriter
 from agentos_controlplane.audit_verify import verify_chain
 from agentos_controlplane.privilege import PrivilegeRingStore
 from agentos_controlplane.registry import Registry
+from agentos_controlplane.resources import ResourceStore
 from agentos_controlplane.store.engine import create_all, create_session_factory
 from agentos_controlplane.store.models import AuditRecord
+from agentos_pipeline.delegation import DelegationLedger, DelegationResolver
 from agentos_pipeline.identity import IdentityStage
 from agentos_pipeline.policy import ConstitutionPolicyEngine
 from agentos_pipeline.posture import PostureMap
@@ -66,6 +70,8 @@ class Wired:
             scorers=[PromptInjectionScorer()],
             audit=audit,
             posture=PostureMap(),
+            # TRST-04 resolver: wired so the ring cap over a real delegation chain is exercised.
+            delegation=DelegationResolver(ResourceStore(self.store), ledger=DelegationLedger()),
             privilege=self.rings,  # SAME instance administration updates
         )
 
@@ -124,6 +130,32 @@ def test_promotion_is_per_agent(wired: Wired) -> None:
     other = wired.evaluate(OTHER_AGENT, wired.other_token)
     assert other.outcome is Outcome.deny
     assert other.reasons[-1].code == "insufficient_ring"
+
+
+def test_a_low_ring_principal_cannot_escalate_through_a_high_ring_delegate(wired: Wired) -> None:
+    """The privilege-ring half of the anti-laundering property, over the real stack: a ring-0
+    principal delegating a ring-gated call to a ring-2 delegate must STILL be denied. Without the
+    chain cap the delegate's action carries its own agent_id, holds 2 >= 2, and is allowed —
+    delegation becomes a privilege-escalation path around the whole gate."""
+    asyncio.run(wired.rings.set_target_ring("http_get", 2, set_by="op"))
+    asyncio.run(wired.rings.set_agent_ring(OTHER_AGENT, 2, set_by="op"))
+
+    # Control: the delegate acting as a chain ROOT holds ring 2 in its own right -> allowed.
+    assert wired.evaluate(OTHER_AGENT, wired.other_token).outcome is Outcome.allow
+
+    # The escalation attempt: the ring-0 principal acts (establishing the chain root), then hands
+    # the same call to the ring-2 delegate.
+    root = wired.action(AGENT_ID, wired.token)
+    asyncio.run(wired.pipeline.evaluate(root))
+    delegated = wired.action(OTHER_AGENT, wired.other_token)
+    delegated.context.parent_action_id = root.id
+    decision = asyncio.run(wired.pipeline.evaluate(delegated))
+
+    assert decision.outcome is Outcome.deny
+    assert decision.reasons[-1].stage == "privilege"
+    assert decision.reasons[-1].code == "insufficient_ring"
+    # The detail names the cap, so an operator can see WHY a ring-2 delegate was refused.
+    assert "chain-capped" in decision.reasons[-1].detail
 
 
 def test_admin_changes_are_audited_and_chain_verifies(wired: Wired) -> None:

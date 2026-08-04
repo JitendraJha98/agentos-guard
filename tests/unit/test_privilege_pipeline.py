@@ -17,6 +17,7 @@ import pytest
 
 from agentos_contract import ActionType, AgentAction, Outcome, RiskFinding
 from agentos_contract.policy_io import ConstitutionResult, MatchedPrinciple
+from agentos_pipeline.delegation import ALL, DelegationLedger, DelegationResolver
 from agentos_pipeline.runner import Pipeline
 
 
@@ -93,23 +94,30 @@ class _PV:
 
 
 class StubPrivilege:
-    """A structural PrivilegeLookup: sync `check`, NEVER given a session (proving the hot-path
-    check is in-memory — no DB read per action). Records the agent_id it was keyed on."""
+    """A structural PrivilegeLookup: sync `check`/`ring_for`, NEVER given a session (proving the
+    hot-path check is in-memory — no DB read per action). Records the agent_id it was keyed on and
+    the `held_ring` override the runner passed."""
 
-    def __init__(self, verdict: _PV | None) -> None:
+    def __init__(self, verdict: _PV | None, rings: dict[str, int] | None = None) -> None:
         self._verdict = verdict
+        self._rings = rings or {}
         self.calls = 0
         self.seen: list[tuple[str, str]] = []
+        self.held_rings: list[int | None] = []
 
-    def check(self, agent_id: str, target: str):
+    def ring_for(self, agent_id: str) -> int:
+        return self._rings.get(agent_id, 0)
+
+    def check(self, agent_id: str, target: str, *, held_ring: int | None = None):
         self.calls += 1
         self.seen.append((agent_id, target))
+        self.held_rings.append(held_ring)
         return self._verdict
 
 
-def _action(token: str | None = "tok") -> AgentAction:
+def _action(token: str | None = "tok", agent_id: str = "agent-1") -> AgentAction:
     return AgentAction(
-        agent_id="agent-1",
+        agent_id=agent_id,
         type=ActionType.tool_call,
         target="db_drop",
         payload={"url": "https://api.example.com/data"},
@@ -217,6 +225,72 @@ def test_privilege_deny_survives_a_policy_that_would_allow() -> None:
     )
     assert asyncio.run(pipeline.evaluate(_action())).outcome is Outcome.deny
     assert pol.calls == 0
+
+
+# --- the delegation chain cap (RUN-04 x TRST-04) -----------------------------
+
+
+class StubScope:
+    """A structural ScopeLookup: every agent holds the wildcard, so scope never denies here — the
+    RING cap is what is under test."""
+
+    def scope_for(self, agent_id: str) -> frozenset[str]:
+        return ALL
+
+
+def _build_delegating(rings: dict[str, int]):
+    """A pipeline with BOTH the delegation resolver and the privilege lookup wired. `check` always
+    returns None so every action proceeds — the assertion is on the held ring the runner computed."""
+    priv = StubPrivilege(None, rings=rings)
+    pipeline = Pipeline(
+        identity=FakeIdentityStage(ok=True, trust_score=1.0),
+        policy=SpyPolicyEngine(Outcome.allow),
+        scorers=[SpyScorer()],
+        audit=FakeAuditWriter(),
+        delegation=DelegationResolver(StubScope(), ledger=DelegationLedger()),
+        privilege=priv,
+    )
+    return pipeline, priv
+
+
+def test_no_delegation_wired_passes_no_held_ring_override() -> None:
+    """Backward compatibility: with no delegation resolver the store keys on the agent's OWN ring."""
+    pipeline, ident, pol, scorer, audit, priv = _build(verdict=None)
+    asyncio.run(pipeline.evaluate(_action()))
+    assert priv.held_rings == [None]
+
+
+def test_a_chain_root_is_checked_against_its_own_ring() -> None:
+    """No lineage == chain root: the cap must not penalise ordinary traffic."""
+    pipeline, priv = _build_delegating({"agent-1": 3})
+    asyncio.run(pipeline.evaluate(_action()))
+    assert priv.held_rings == [3]
+
+
+def test_a_delegated_action_is_checked_against_the_chain_minimum_ring() -> None:
+    """THE escalation this closes: a ring-0 principal delegates to a ring-3 delegate, so the
+    delegate's action must be checked at ring 0 — not at the 3 it holds in its own right. Mirrors
+    the stage-1b trust budget, which already refuses to let a delegate lend its standing."""
+    pipeline, priv = _build_delegating({"principal": 0, "delegate": 3})
+
+    root = _action(agent_id="principal")
+    asyncio.run(pipeline.evaluate(root))  # establishes the chain root in the ledger
+    delegated = _action(agent_id="delegate")
+    delegated.context.parent_action_id = root.id
+    asyncio.run(pipeline.evaluate(delegated))
+
+    assert priv.held_rings == [0, 0], "the delegate was checked at its own ring, not the chain min"
+
+
+def test_the_cap_is_a_minimum_not_an_inheritance() -> None:
+    """A high-ring principal does not PROMOTE a low-ring delegate either."""
+    pipeline, priv = _build_delegating({"principal": 3, "delegate": 1})
+    root = _action(agent_id="principal")
+    asyncio.run(pipeline.evaluate(root))
+    delegated = _action(agent_id="delegate")
+    delegated.context.parent_action_id = root.id
+    asyncio.run(pipeline.evaluate(delegated))
+    assert priv.held_rings == [3, 1]
 
 
 @pytest.mark.latency
