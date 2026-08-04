@@ -142,6 +142,21 @@ class McpQuarantineLookup(Protocol):
     def is_quarantined(self, server: str, tool: str) -> bool: ...
 
 
+class PrivilegeVerdictProtocol(Protocol):
+    """RUN-04: what a refused privilege check reports."""
+
+    target: str
+    required: int
+    held: int
+
+
+class PrivilegeLookup(Protocol):
+    """RUN-04 seam (PrivilegeRingStore.check satisfies it). `check` returns None when permitted,
+    a verdict when refused. MUST be in-memory (called per action on the hot path)."""
+
+    def check(self, agent_id: str, target: str) -> "PrivilegeVerdictProtocol | None": ...
+
+
 class CardVerifierProtocol(Protocol):
     """The injected SEC-10/ASI07 seam (control-plane AgentCardVerifier satisfies it).
 
@@ -191,6 +206,7 @@ class Pipeline:
         card_verifier: "CardVerifierProtocol | None" = None,
         mcp_quarantine: "McpQuarantineLookup | None" = None,
         intent_classifier: "IntentSimilarityClassifier | None" = None,
+        privilege: "PrivilegeLookup | None" = None,
     ) -> None:
         self._identity = identity
         self._policy = policy
@@ -230,6 +246,9 @@ class Pipeline:
         # SEC-14: the embedding-similarity intent classifier. None default: runs never;
         # when wired it runs ONLY on an action the deterministic tagger left untagged.
         self._intent_classifier = intent_classifier
+        # RUN-04: the privilege-ring lookup (in-memory, hot-path). None default: stage 1e never
+        # runs and behavior is unchanged (backward compat).
+        self._privilege = privilege
 
     async def evaluate(self, action: AgentAction) -> Decision:
         # OBS-02: ensure an app-level correlation id exists (the SDK sets it across a
@@ -410,6 +429,37 @@ class Pipeline:
                         stage="mcp_gateway",
                         code="mcp_tool_quarantined",
                         detail=f"MCP tool {server}/{tool} is quarantined by the security gateway",
+                    )
+                )
+                decision = Decision(
+                    action_id=action.id,
+                    outcome=Outcome.deny,
+                    trust_score=trust,
+                    reasons=reasons,
+                    constitution_version=self._policy.constitution_version,
+                    policy_version=self._policy.policy_version,
+                )
+                await self._append_with_redaction_fallback(action, decision)
+                return decision  # TERMINAL
+
+        # Stage 1e — Privilege rings (RUN-04): a sensitive target requires a capability tier; an
+        # agent holding a lower ring is denied before the action runs. Placed AFTER identity so the
+        # ring is keyed on a VERIFIED agent_id (an unverified caller never consumes ring state), and
+        # alongside the other post-identity gates. The lookup is in-memory (no per-action DB read).
+        # None default: unwired deployments skip the check. Only REGISTERED targets are gated, so an
+        # unregistered tool is unaffected and still governed by the constitution floor.
+        if self._privilege is not None:
+            pv = self._privilege.check(action.agent_id, action.target)
+            if pv is not None:
+                floor_box[0] = Outcome.deny  # insufficient privilege may NEVER relax
+                reasons.append(
+                    Reason(
+                        stage="privilege",
+                        code="insufficient_ring",
+                        detail=(
+                            f"target {pv.target} requires privilege ring {pv.required}; "
+                            f"agent holds {pv.held}"
+                        ),
                     )
                 )
                 decision = Decision(
