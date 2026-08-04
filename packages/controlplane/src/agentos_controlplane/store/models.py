@@ -403,3 +403,26 @@ class TargetPrivilege(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class ResourceLimit(Base):
+    """RUN-05 — the per-agent execution budget enforced at the PEP. NULL on a numeric column means
+    NO limit for that dimension; an absent row means the agent is unbudgeted (the zero-overhead
+    default path in `agentos_sdk.enforce._run_within_limits`).
+
+    What each dimension actually guarantees differs, and the SDK's `GovernanceResourceExceeded`
+    documents it: `network` prevents (the handler never runs), `wall_s` cancels cooperatively, and
+    `memory_mb` is detected at COMPLETION. This table stores the budget, not a promise of kernel
+    enforcement — that is the opt-in `posix_limits` path and the Phase-10/14 boundaries.
+    """
+
+    __tablename__ = "resource_limit"
+
+    agent_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    wall_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    memory_mb: Mapped[float | None] = mapped_column(Float, nullable=True)
+    network: Mapped[str] = mapped_column(String(16), nullable=False, default="allow")
+    set_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )

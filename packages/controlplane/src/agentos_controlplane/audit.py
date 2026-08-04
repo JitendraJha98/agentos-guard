@@ -116,6 +116,11 @@ EVENT_KINDS = frozenset(
         # RUN-04 (Slice 9b): an administrative privilege-ring assignment (agent tier or target
         # requirement). Short identifiers only; the per-action deny is audited as a DECISION record.
         "privilege_ring_set",
+        # RUN-05 (Slice 9c): the administrative budget assignment, and a per-execution budget
+        # breach. Short identifiers + numbers only — no target, no payload — so the 4d secret-gate
+        # here can never block a breach from being recorded.
+        "resource_limit_set",
+        "resource_limit_exceeded",
     }
 )
 
