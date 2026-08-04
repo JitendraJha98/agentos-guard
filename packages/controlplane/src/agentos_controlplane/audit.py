@@ -113,6 +113,9 @@ EVENT_KINDS = frozenset(
         # redacted detail lives in the sandbox_run TABLE, so the 4d secret-gate here
         # can never block containment.
         "sandbox_executed",
+        # RUN-04 (Slice 9b): an administrative privilege-ring assignment (agent tier or target
+        # requirement). Short identifiers only; the per-action deny is audited as a DECISION record.
+        "privilege_ring_set",
     }
 )
 

@@ -371,3 +371,35 @@ class InventoryComponent(Base):
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class AgentPrivilege(Base):
+    """RUN-04 — the capability tier (privilege ring) an agent HOLDS. Higher = more privileged;
+    absent means ring 0 (least privileged)."""
+
+    __tablename__ = "agent_privilege"
+
+    agent_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    ring: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    set_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class TargetPrivilege(Base):
+    """RUN-04 — the ring a sensitive TARGET (tool / memory key / MCP tool / model) REQUIRES.
+
+    Registered-sensitivity model: only rows present here are gated. An unregistered target is
+    ring 0 (ungated by this stage) and remains governed by the constitution floor — so adding this
+    stage cannot silently break an existing deployment.
+    """
+
+    __tablename__ = "target_privilege"
+
+    target: Mapped[str] = mapped_column(String(255), primary_key=True)
+    required_ring: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    set_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
