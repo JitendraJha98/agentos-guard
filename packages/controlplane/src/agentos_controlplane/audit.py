@@ -109,6 +109,10 @@ EVENT_KINDS = frozenset(
         # the kill_switch TABLE, so the 4d secret-gate here can never block a kill.
         "kill_switch_set",
         "kill_switch_cleared",
+        # RUN-03 (Slice 9a): a quarantined sandbox run. Short identifiers only — the
+        # redacted detail lives in the sandbox_run TABLE, so the 4d secret-gate here
+        # can never block containment.
+        "sandbox_executed",
     }
 )
 

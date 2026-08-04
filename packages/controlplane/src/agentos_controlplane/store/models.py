@@ -190,6 +190,30 @@ class KillSwitch(Base):
     )
 
 
+class SandboxRun(Base):
+    """RUN-03 — one quarantined (sandboxed) execution.
+
+    The REAL handler never ran; this row IS the observation record. `detail` is a short,
+    REDACTED summary — never the raw payload. It lives HERE and not in the audit-event
+    body (which carries short identifiers only) so the AUD-04 secret gate on
+    `append_event` can never refuse — and thereby block — a containment event, exactly
+    the discipline `KillSwitch.reason` follows.
+    """
+
+    __tablename__ = "sandbox_run"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    action_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    action_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    target: Mapped[str] = mapped_column(Text, nullable=False)
+    quarantined: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class ChainCheckpoint(Base):
     """AUD-05 — an external anchor binding the chain head {seq, record_hash} to an unforgeable proof.
 
