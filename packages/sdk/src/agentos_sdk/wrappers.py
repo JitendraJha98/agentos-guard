@@ -4,10 +4,12 @@ LangChain v1 exposes native middleware hooks only for tool and model calls; memo
 MCP, and delegation boundaries have no middleware hook, so the SDK governs them with
 thin async wrappers. Each one normalizes the operation into the same `AgentAction`
 and delegates to the ONE enforcement core (`governed_call`) with the same injected
-coordinator/dispatcher seams as the middleware hooks — the full outcome map applies:
-executable outcomes run the wrapped operation, blocking outcomes park-and-await via
-the coordinator (fail-closed without one), deny raises `GovernanceDenied` WITHOUT
-executing it (no side effect: no memory write, no MCP egress, no sub-agent dispatch).
+coordinator/dispatcher/sandbox seams as the middleware hooks — the full outcome map
+applies: executable outcomes run the wrapped operation, blocking outcomes park-and-await
+via the coordinator (fail-closed without one), a `sandbox` outcome quarantines via the
+sandbox runner (RUN-03; fail-closed without one), and deny raises `GovernanceDenied`
+WITHOUT executing it (no side effect: no memory write, no MCP egress, no sub-agent
+dispatch).
 
 These are deliberately minimal helpers, not a framework: each builds the right action
 and delegates to `governed_call`, so all five action types share one decision path.
@@ -21,7 +23,12 @@ from uuid import UUID
 
 from agentos_contract import PipelineProtocol
 
-from agentos_sdk.enforce import ApprovalCoordinator, SideEffectDispatcher, governed_call
+from agentos_sdk.enforce import (
+    ApprovalCoordinator,
+    SandboxRunner,
+    SideEffectDispatcher,
+    governed_call,
+)
 from agentos_sdk.normalize import (
     normalize_delegation,
     normalize_memory_access,
@@ -43,6 +50,7 @@ async def governed_memory_access(
     conversation_id: str | None = None,
     coordinator: ApprovalCoordinator | None = None,
     dispatcher: SideEffectDispatcher | None = None,
+    sandbox: SandboxRunner | None = None,
 ) -> _T:
     """Govern a memory read/write (INT-03) through the one outcome map.
 
@@ -54,7 +62,8 @@ async def governed_memory_access(
         parent_action_id=parent_action_id, conversation_id=conversation_id,
     )
     return await governed_call(
-        pipeline, action, run, coordinator=coordinator, dispatcher=dispatcher
+        pipeline, action, run,
+        coordinator=coordinator, dispatcher=dispatcher, sandbox=sandbox,
     )
 
 
@@ -70,6 +79,7 @@ async def governed_mcp_call(
     conversation_id: str | None = None,
     coordinator: ApprovalCoordinator | None = None,
     dispatcher: SideEffectDispatcher | None = None,
+    sandbox: SandboxRunner | None = None,
 ) -> _T:
     """Govern an MCP-server call (INT-04) through the one outcome map."""
     action = normalize_mcp_call(
@@ -77,7 +87,8 @@ async def governed_mcp_call(
         parent_action_id=parent_action_id, conversation_id=conversation_id,
     )
     return await governed_call(
-        pipeline, action, run, coordinator=coordinator, dispatcher=dispatcher
+        pipeline, action, run,
+        coordinator=coordinator, dispatcher=dispatcher, sandbox=sandbox,
     )
 
 
@@ -92,6 +103,7 @@ async def governed_delegation(
     conversation_id: str | None = None,
     coordinator: ApprovalCoordinator | None = None,
     dispatcher: SideEffectDispatcher | None = None,
+    sandbox: SandboxRunner | None = None,
 ) -> _T:
     """Govern an agent-to-agent delegation (INT-05), capturing `parent_action_id`
     lineage. Allow dispatches the sub-agent (`run`); a block never dispatches it."""
@@ -100,5 +112,6 @@ async def governed_delegation(
         parent_action_id=parent_action_id, conversation_id=conversation_id,
     )
     return await governed_call(
-        pipeline, action, run, coordinator=coordinator, dispatcher=dispatcher
+        pipeline, action, run,
+        coordinator=coordinator, dispatcher=dispatcher, sandbox=sandbox,
     )

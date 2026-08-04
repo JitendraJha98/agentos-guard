@@ -17,6 +17,9 @@ from agentos_sdk.coverage import (
 from agentos_sdk.enforce import (
     ApprovalCoordinator,
     GovernanceDenied,
+    GovernanceQuarantined,
+    SandboxResult,
+    SandboxRunner,
     SideEffectDispatcher,
     format_reasons,
     governed_call,
@@ -65,6 +68,10 @@ __all__ = [
     "format_reasons",
     "ApprovalCoordinator",
     "SideEffectDispatcher",
+    # RUN-03 containment seam: a `sandbox` outcome quarantines instead of executing
+    "SandboxRunner",
+    "SandboxResult",
+    "GovernanceQuarantined",
     # interception coverage (INT-06)
     "covers",
     "covered_types",

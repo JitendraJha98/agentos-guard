@@ -6,8 +6,10 @@
 | temporary_exception        | execute (a ratified allow; expiry checked at decision time)|
 | governance_review          | open review (non-blocking) + execute                       |
 | require_approval           | park + block-await; no coordinator -> GovernanceDenied     |
-| sandbox, require_consensus | escalate to the approval path (audited substitution);      |
-|                            | no coordinator -> GovernanceDenied                         |
+| sandbox                    | quarantined via SandboxRunner (RUN-03) — see               |
+|                            | test_sandbox_enforcement.py; no runner -> GovernanceDenied |
+| require_consensus          | escalate to the approval path (audited substitution)       |
+|                            | until Slice 9f; no coordinator -> GovernanceDenied         |
 | deny                       | GovernanceDenied                                           |
 
 PDP decides, PEP blocks: the blocking lives HERE (the SDK enforcement core) via
@@ -179,10 +181,12 @@ def test_no_coordinator_require_approval_fail_closed() -> None:
     assert op.ran == 0
 
 
-# --- sandbox / require_consensus: substituted escalation (until RUN-03/POL-09) --
+# --- require_consensus: substituted escalation (until POL-09, Slice 9f) ---------
+# `sandbox` LEFT this set in Slice 9a: RUN-03 quarantines it instead — its own
+# enforcement tests live in tests/unit/test_sandbox_enforcement.py.
 
 
-@pytest.mark.parametrize("outcome", [Outcome.sandbox, Outcome.require_consensus])
+@pytest.mark.parametrize("outcome", [Outcome.require_consensus])
 def test_unrealized_outcomes_escalate_to_approval_path(approvals, store, outcome) -> None:
     action = _action()
     pipeline = _Pipeline(_decision(action, outcome))
@@ -202,13 +206,37 @@ def test_unrealized_outcomes_escalate_to_approval_path(approvals, store, outcome
     assert subs[0]["substituted"] == "require_approval"
 
 
-@pytest.mark.parametrize("outcome", [Outcome.sandbox, Outcome.require_consensus])
+@pytest.mark.parametrize("outcome", [Outcome.require_consensus])
 def test_unrealized_outcomes_without_coordinator_blocked(outcome) -> None:
     action = _action()
     op = _Op()
     with pytest.raises(GovernanceDenied):
         asyncio.run(governed_call(_Pipeline(_decision(action, outcome)), action, op))
     assert op.ran == 0
+
+
+def test_sandbox_does_not_record_a_substitution(approvals, store) -> None:
+    """RUN-03 replaced the escalation: a `sandbox` outcome with a runner wired
+    quarantines and audits NO `enforcement_substitution`, even with a coordinator."""
+    from agentos_contract import SandboxResult
+    from agentos_sdk.enforce import GovernanceQuarantined
+
+    class _Runner:
+        async def run(self, action, decision) -> SandboxResult:
+            return SandboxResult(quarantined=True, run_id="r1")
+
+    action = _action()
+    pipeline = _Pipeline(_decision(action, Outcome.sandbox))
+    coord = _coordinator(approvals)
+    op = _Op()
+
+    with pytest.raises(GovernanceQuarantined):
+        asyncio.run(
+            governed_call(pipeline, action, op, coordinator=coord, sandbox=_Runner())
+        )
+    assert op.ran == 0
+    assert _events(store, "enforcement_substitution") == []
+    assert approvals.list_requests() == []  # never parked
 
 
 # --- governance_review: proceed + async non-blocking review (POL-14) -----------

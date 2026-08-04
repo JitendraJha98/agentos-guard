@@ -5,6 +5,7 @@ extra="forbid"; scores bounded to [0, 1] (threat T-01-03).
 """
 
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from uuid import UUID
@@ -29,6 +30,25 @@ class SideEffect(str, Enum):
     additional_monitoring = "additional_monitoring"
     risk_flag = "risk_flag"
     create_incident = "create_incident"
+
+
+@dataclass(frozen=True)
+class SandboxResult:
+    """RUN-03 — what a quarantined (sandboxed) run OBSERVED.
+
+    Deliberately NOT an imitation of the real handler's return value: the real handler
+    was never invoked, so there is no result to imitate. `detail` is a short, redacted
+    summary — never raw payload.
+
+    It lives in the contract (not the SDK) because both sides of the seam need it: the
+    SDK's enforcement core raises it and the control plane's concrete runner returns it,
+    and `agentos-sdk` already depends on `agentos-controlplane` — so the reverse import
+    would be a package cycle. `agentos_sdk.enforce` re-exports it.
+    """
+
+    quarantined: bool
+    run_id: str
+    detail: str = ""
 
 
 def _evidence_strings(node):

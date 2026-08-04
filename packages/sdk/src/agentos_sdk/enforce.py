@@ -13,8 +13,11 @@ The outcome-enforcement map (replaces the interim `should_execute`, retired):
     governance_review          -> open review via coordinator (non-blocking) + execute
     require_approval           -> park + block-await via coordinator;
                                   no coordinator -> GovernanceDenied (fail-closed)
-    sandbox, require_consensus -> escalate to the approval path until RUN-03/POL-09
-                                  (Phase 9), audited as `enforcement_substitution`;
+    sandbox                    -> quarantine via the SandboxRunner seam (RUN-03):
+                                  `run` is NEVER awaited -> GovernanceQuarantined;
+                                  no runner -> GovernanceDenied (fail-closed)
+    require_consensus          -> escalate to the approval path until POL-09
+                                  (Slice 9f), audited as `enforcement_substitution`;
                                   no coordinator -> GovernanceDenied
     deny                       -> GovernanceDenied
 
@@ -24,6 +27,7 @@ keeps its review.
 
 The collaborators are structural Protocols (no control-plane import): the
 concrete coordinator is `agentos_controlplane.coordinator.StoreApprovalCoordinator`,
+the concrete sandbox runner is `agentos_controlplane.sandbox.QuarantineSandbox`,
 the concrete dispatcher arrives with PIPE-09 dispatch.
 """
 
@@ -33,7 +37,13 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Protocol, TypeVar
 
-from agentos_contract import AgentAction, Decision, Outcome, PipelineProtocol
+from agentos_contract import (
+    AgentAction,
+    Decision,
+    Outcome,
+    PipelineProtocol,
+    SandboxResult,
+)
 
 _T = TypeVar("_T")
 
@@ -61,6 +71,17 @@ class ApprovalCoordinator(Protocol):
     ) -> None: ...
 
 
+class SandboxRunner(Protocol):
+    """RUN-03 seam: run the action in an isolated context with quarantined side effects.
+
+    The concrete runner is `agentos_controlplane.sandbox.QuarantineSandbox`. It is NOT
+    given the handler on purpose: quarantine means the real operation never runs, so
+    there is nothing to invoke — the runner only observes, persists, and audits.
+    """
+
+    async def run(self, action: AgentAction, decision: Decision) -> SandboxResult: ...
+
+
 class SideEffectDispatcher(Protocol):
     """The PIPE-09 dispatch seam: one audit event per Decision side effect."""
 
@@ -79,13 +100,36 @@ class GovernanceDenied(Exception):
         super().__init__(f"Blocked by agentos-guard: {format_reasons(decision)}")
 
 
+class GovernanceQuarantined(GovernanceDenied):
+    """A `sandbox` outcome (RUN-03): the action was OBSERVED in quarantine and its real
+    side effect never happened.
+
+    Subclasses `GovernanceDenied` deliberately: every existing `except GovernanceDenied`
+    site (the LangChain hooks, user code) then treats a quarantine as a non-execution,
+    so a caller can NEVER mistake it for a successful result. `sandbox_result` carries
+    the observation.
+    """
+
+    def __init__(self, decision: Decision, result: SandboxResult) -> None:
+        # Bypass GovernanceDenied.__init__ so the surfaced message says QUARANTINED
+        # while the exception stays a GovernanceDenied for every catch site.
+        Exception.__init__(
+            self,
+            f"Quarantined by agentos-guard (sandboxed, no real effect): "
+            f"{format_reasons(decision)}",
+        )
+        self.decision = decision
+        self.sandbox_result = result
+
+
 # Outcomes that run the governed operation directly (no coordinator involvement).
 _EXECUTABLE = frozenset(
     {Outcome.allow, Outcome.warn, Outcome.temporary_exception, Outcome.governance_review}
 )
-# Outcomes whose dedicated enforcement is not realized until RUN-03/POL-09
-# (Phase 9): substituted with the approval path, audited as such.
-_SUBSTITUTED_TO_APPROVAL = frozenset({Outcome.sandbox, Outcome.require_consensus})
+# Outcomes whose dedicated enforcement is not realized until POL-09 (Slice 9f):
+# substituted with the approval path, audited as such. `sandbox` LEFT this set in
+# Slice 9a — RUN-03 containment is real now (see the `Outcome.sandbox` route below).
+_SUBSTITUTED_TO_APPROVAL = frozenset({Outcome.require_consensus})
 
 
 def _review_obliged(decision: Decision) -> bool:
@@ -108,6 +152,7 @@ async def governed_call(
     *,
     coordinator: ApprovalCoordinator | None = None,
     dispatcher: SideEffectDispatcher | None = None,
+    sandbox: SandboxRunner | None = None,
 ) -> _T:
     """Evaluate `action` and enforce the outcome map; `run` executes only when
     the map says so (after the approval resolves, for blocking outcomes).
@@ -137,8 +182,16 @@ async def governed_call(
         return await run()
     if outcome is Outcome.deny:
         raise GovernanceDenied(decision)
-    # Blocking outcomes from here: require_approval natively; sandbox /
-    # require_consensus escalated onto the same path (audited substitution).
+    if outcome is Outcome.sandbox:
+        # RUN-03: real containment. `run` is NEVER awaited on this path — no side
+        # effect, no egress. No runner wired -> fail closed, exactly like a blocking
+        # outcome without a coordinator.
+        if sandbox is None:
+            raise GovernanceDenied(decision)
+        result = await sandbox.run(action, decision)
+        raise GovernanceQuarantined(decision, result)
+    # Blocking outcomes from here: require_approval natively; require_consensus
+    # escalated onto the same path (audited substitution) until Slice 9f.
     if coordinator is None:
         raise GovernanceDenied(decision)  # fail-closed: nothing can block-await
     if outcome in _SUBSTITUTED_TO_APPROVAL:

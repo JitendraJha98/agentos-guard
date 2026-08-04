@@ -37,8 +37,8 @@ from agentos_contract import PipelineProtocol
 from agentos_sdk.enforce import (
     ApprovalCoordinator,
     GovernanceDenied,
+    SandboxRunner,
     SideEffectDispatcher,
-    format_reasons,
     governed_call,
 )
 from agentos_sdk.normalize import normalize_action, normalize_model_call
@@ -51,7 +51,8 @@ class GovernanceMiddleware(AgentMiddleware):
     invocations (INT-02). Memory, MCP, and delegation are not LangChain middleware
     hooks — they are governed by the SDK wrappers in `agentos_sdk.wrappers`, sharing
     the same enforcement core. Without a `coordinator`, blocking outcomes
-    (require_approval / sandbox / require_consensus) fail CLOSED.
+    (require_approval / require_consensus) fail CLOSED; without a `sandbox` runner,
+    so does the `sandbox` outcome (RUN-03).
     """
 
     def __init__(
@@ -61,11 +62,13 @@ class GovernanceMiddleware(AgentMiddleware):
         *,
         coordinator: ApprovalCoordinator | None = None,
         dispatcher: SideEffectDispatcher | None = None,
+        sandbox: SandboxRunner | None = None,
     ) -> None:
         self._pipeline = pipeline  # the in-process PDP (D-07); satisfies PipelineProtocol
         self._token = token        # the agent's signed JWT (from registration, IDN-01)
         self._coordinator = coordinator
         self._dispatcher = dispatcher
+        self._sandbox = sandbox
 
     async def awrap_tool_call(self, request: ToolCallRequest, handler):
         """Async PEP hook (langchain 1.3.2). The map decides; a block returns a
@@ -78,11 +81,14 @@ class GovernanceMiddleware(AgentMiddleware):
                 lambda: handler(request),
                 coordinator=self._coordinator,
                 dispatcher=self._dispatcher,
+                sandbox=self._sandbox,
             )
         except GovernanceDenied as denied:
             # SHORT-CIRCUIT happened inside the core: handler was never called.
+            # `str(denied)` is the governed exception's OWN message, so a
+            # GovernanceQuarantined reads as quarantined while a deny is unchanged.
             return ToolMessage(
-                content=f"Blocked by agentos-guard: {format_reasons(denied.decision)}",
+                content=str(denied),
                 tool_call_id=request.tool_call["id"],
             )
 
@@ -98,8 +104,7 @@ class GovernanceMiddleware(AgentMiddleware):
                 lambda: handler(request),
                 coordinator=self._coordinator,
                 dispatcher=self._dispatcher,
+                sandbox=self._sandbox,
             )
         except GovernanceDenied as denied:
-            return AIMessage(
-                content=f"Blocked by agentos-guard: {format_reasons(denied.decision)}"
-            )
+            return AIMessage(content=str(denied))
