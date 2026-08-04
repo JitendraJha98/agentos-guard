@@ -18,6 +18,9 @@ from agentos_sdk.enforce import (
     ApprovalCoordinator,
     GovernanceDenied,
     GovernanceQuarantined,
+    GovernanceResourceExceeded,
+    ResourceGovernor,
+    ResourceLimits,
     SandboxResult,
     SandboxRunner,
     SideEffectDispatcher,
@@ -72,6 +75,11 @@ __all__ = [
     "SandboxRunner",
     "SandboxResult",
     "GovernanceQuarantined",
+    # RUN-05 resource budgets: wall/memory/network per agent, at both run sites.
+    # `GovernanceResourceExceeded.preventive` distinguishes a BLOCK from a post-hoc DETECTION.
+    "ResourceLimits",
+    "ResourceGovernor",
+    "GovernanceResourceExceeded",
     # interception coverage (INT-06)
     "covers",
     "covered_types",

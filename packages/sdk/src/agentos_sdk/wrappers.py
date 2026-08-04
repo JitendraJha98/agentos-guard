@@ -25,6 +25,7 @@ from agentos_contract import PipelineProtocol
 
 from agentos_sdk.enforce import (
     ApprovalCoordinator,
+    ResourceGovernor,
     SandboxRunner,
     SideEffectDispatcher,
     governed_call,
@@ -51,6 +52,7 @@ async def governed_memory_access(
     coordinator: ApprovalCoordinator | None = None,
     dispatcher: SideEffectDispatcher | None = None,
     sandbox: SandboxRunner | None = None,
+    governor: ResourceGovernor | None = None,
 ) -> _T:
     """Govern a memory read/write (INT-03) through the one outcome map.
 
@@ -64,6 +66,7 @@ async def governed_memory_access(
     return await governed_call(
         pipeline, action, run,
         coordinator=coordinator, dispatcher=dispatcher, sandbox=sandbox,
+        governor=governor,
     )
 
 
@@ -80,6 +83,7 @@ async def governed_mcp_call(
     coordinator: ApprovalCoordinator | None = None,
     dispatcher: SideEffectDispatcher | None = None,
     sandbox: SandboxRunner | None = None,
+    governor: ResourceGovernor | None = None,
 ) -> _T:
     """Govern an MCP-server call (INT-04) through the one outcome map."""
     action = normalize_mcp_call(
@@ -89,6 +93,7 @@ async def governed_mcp_call(
     return await governed_call(
         pipeline, action, run,
         coordinator=coordinator, dispatcher=dispatcher, sandbox=sandbox,
+        governor=governor,
     )
 
 
@@ -104,6 +109,7 @@ async def governed_delegation(
     coordinator: ApprovalCoordinator | None = None,
     dispatcher: SideEffectDispatcher | None = None,
     sandbox: SandboxRunner | None = None,
+    governor: ResourceGovernor | None = None,
 ) -> _T:
     """Govern an agent-to-agent delegation (INT-05), capturing `parent_action_id`
     lineage. Allow dispatches the sub-agent (`run`); a block never dispatches it."""
@@ -114,4 +120,5 @@ async def governed_delegation(
     return await governed_call(
         pipeline, action, run,
         coordinator=coordinator, dispatcher=dispatcher, sandbox=sandbox,
+        governor=governor,
     )

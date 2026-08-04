@@ -38,6 +38,7 @@ from agentos_contract import PipelineProtocol
 from agentos_sdk.enforce import (
     ApprovalCoordinator,
     GovernanceDenied,
+    ResourceGovernor,
     SandboxRunner,
     SideEffectDispatcher,
     governed_call,
@@ -64,12 +65,14 @@ class GovernanceMiddleware(AgentMiddleware):
         coordinator: ApprovalCoordinator | None = None,
         dispatcher: SideEffectDispatcher | None = None,
         sandbox: SandboxRunner | None = None,
+        governor: ResourceGovernor | None = None,
     ) -> None:
         self._pipeline = pipeline  # the in-process PDP (D-07); satisfies PipelineProtocol
         self._token = token        # the agent's signed JWT (from registration, IDN-01)
         self._coordinator = coordinator
         self._dispatcher = dispatcher
         self._sandbox = sandbox
+        self._governor = governor  # RUN-05 per-agent execution budgets (None = unbudgeted)
 
     async def awrap_tool_call(self, request: ToolCallRequest, handler):
         """Async PEP hook (langchain 1.3.2). The map decides; a block returns a
@@ -83,6 +86,7 @@ class GovernanceMiddleware(AgentMiddleware):
                 coordinator=self._coordinator,
                 dispatcher=self._dispatcher,
                 sandbox=self._sandbox,
+                governor=self._governor,
             )
         except GovernanceDenied as denied:
             # SHORT-CIRCUIT happened inside the core: handler was never called.
@@ -112,6 +116,7 @@ class GovernanceMiddleware(AgentMiddleware):
                 coordinator=self._coordinator,
                 dispatcher=self._dispatcher,
                 sandbox=self._sandbox,
+                governor=self._governor,
             )
         except GovernanceDenied as denied:
             return AIMessage(content=str(denied))
