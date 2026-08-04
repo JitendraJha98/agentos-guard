@@ -35,7 +35,11 @@ platform-team containment levers:
 3. **Every containment action is audited** (`docs/architecture/05`: "All findings and containment
    actions are `AuditRecord`s and OTel events"). New `EVENT_KINDS`: `sandbox_executed`,
    `consensus_vote`, `consensus_resolved`, `circuit_tripped`, `circuit_reset`, `emergency_shutdown`,
-   `privilege_denied`, `resource_limit_exceeded`. Event bodies carry **short identifiers only**;
+   `privilege_ring_set`, `resource_limit_exceeded`. **Convention (settled in 9b):** a per-action
+   *deny* by a pipeline gate is audited as the **decision record** carrying its `Reason` — the
+   established shape for stages 1b/1c/1d — so no duplicate per-action event is added; dedicated event
+   kinds are reserved for **state transitions and administration** (ring assignment, breaker
+   trip/reset, shutdown, sandbox run, consensus votes). Event bodies carry **short identifiers only**;
    operator/agent free text (shutdown justification, quarantine detail) lives in its table — the
    Phase-4 AUD-04 secret-gate lesson, so a hostile string can never block an emergency control.
 4. **Hot-path discipline.** The per-action gates (privilege ring, circuit breaker) follow the proven
@@ -97,7 +101,10 @@ every commit — the Phases 3–6 rhythm.
 ### 9b — Privilege rings (RUN-04)
 - `PrivilegeRingStore`: per-agent ring tier and per-target `required_ring` (table + in-memory
   lookup). A verified agent whose ring is below the target's requirement is denied with
-  `Reason(stage="privilege", code="insufficient_ring")` and an audited `privilege_denied`.
+  `Reason(stage="privilege", code="insufficient_ring")`, audited as a **decision record** (per the
+  convention in decision 3); the *administrative* ring assignment is audited as `privilege_ring_set`.
+  A delegated action's effective ring is **capped by its delegation chain**, so a child can never
+  exceed the ring its parent held (the TRST-04 intersection principle applied to privilege).
 - Gate placement: a deterministic check **after** identity verification (it needs the verified
   agent_id) and before policy — a pure restriction, so the floor invariant holds trivially.
 - **Registered-sensitivity model:** only explicitly registered targets carry a `required_ring`;
