@@ -142,6 +142,11 @@ class CircuitReporter(Protocol):
     The concrete reporter is `agentos_controlplane.circuit_breaker.CircuitBreakerStore`. Only
     FAILURES are reported here: success is the PDP's job (its graduated path already recorded it),
     and reporting it twice could close a breaker on the strength of one action.
+
+    Note the honest ordering: the PDP records its closing signal for a PERMITTED DECISION, before the
+    handler runs. A trial whose decision was permitted but whose execution then fails therefore closes
+    the breaker and starts a fresh window from this failure — a repeat pattern still re-trips at the
+    threshold, one round later.
     """
 
     async def record_failure(self, agent_id: str, target: str) -> None: ...
@@ -468,12 +473,21 @@ async def _run_reported(
     governor: ResourceGovernor | None,
     reporter: CircuitReporter | None,
 ) -> _T:
-    """RUN-06: a governed execution that RAISES is an error signal for the breaker. Governance blocks
-    (GovernanceDenied and its subclasses) are NOT execution errors — they are already counted by the
-    PDP's graduated-path recording, so double-counting them would trip breakers twice as fast."""
+    """RUN-06: a governed execution that RAISES is an error signal for the breaker. A governance block
+    the PDP already counted is NOT an execution error — double-counting it would trip breakers twice as
+    fast — but a RUN-05 budget breach is, because the PDP counted a PERMITTED decision for it."""
     try:
         return await _run_within_limits(run, action, decision, governor)
+    except GovernanceResourceExceeded:
+        # Raised at the EXECUTION site, after the PDP recorded a permitted decision — so nothing has
+        # counted this yet. An agent that blows its wall/memory budget on every call must be able to
+        # trip a breaker; that runaway is exactly what a breaker exists to contain.
+        if reporter is not None:
+            await reporter.record_failure(action.agent_id, action.target)
+        raise
     except GovernanceDenied:
+        # A block raised from INSIDE the run — a NESTED governed_call, say — was already counted by
+        # the PDP that produced it. (deny / sandbox are raised at the decision site, never here.)
         raise
     except Exception:
         if reporter is not None:

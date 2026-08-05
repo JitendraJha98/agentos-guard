@@ -36,6 +36,7 @@ class names) instead of importing the control plane's RedactionError type.
 
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime, timezone
 from typing import Mapping, Protocol, Sequence
@@ -164,11 +165,24 @@ class PrivilegeLookup(Protocol):
 
 
 class BreakerVerdictProtocol(Protocol):
-    """RUN-06: what a refusing breaker reports."""
+    """RUN-06: what a refusing breaker reports. The breaker is identified by (scope, agent_id, target)
+    — three fields, never a concatenated key, so no breaker's identity can alias another's."""
 
-    key: str
     scope: str
+    agent_id: str
+    target: str   # "" for the agent scope
     state: str
+
+
+# RUN-06: the outcomes that count as a breaker VIOLATION, written down as a set. Every other outcome
+# records a SUCCESS, so the two sets are exact COMPLEMENTS — the invariant recovery depends on: any
+# outcome that does not trip a closed breaker must be able to close a half-open one. `warn`,
+# POL-14 `governance_review` (proceeds, reviewed asynchronously) and POL-13 `temporary_exception` (a
+# HUMAN-RATIFIED allow that executes) are deliberately NOT violations: counting them while only
+# `allow` could close turned an approval-shaped workload into permanent self-inflicted containment.
+_BREAKER_FAILURES = frozenset(
+    {Outcome.deny, Outcome.sandbox, Outcome.require_consensus, Outcome.require_approval}
+)
 
 
 class CircuitBreakerLookup(Protocol):
@@ -528,7 +542,10 @@ class Pipeline:
                     Reason(
                         stage="circuit_breaker",
                         code="circuit_open",
-                        detail=f"{bv.scope} breaker {bv.key} is {bv.state}",
+                        detail=(
+                            f"{bv.scope} breaker "
+                            f"{bv.agent_id}{('|' + bv.target) if bv.target else ''} is {bv.state}"
+                        ),
                     )
                 )
                 decision = Decision(
@@ -743,10 +760,23 @@ class Pipeline:
         # itself and never close, and counting pre-identity denials would let a forged id trip another
         # agent's breaker.
         if self._breaker is not None:
-            if decision.outcome is Outcome.allow:
-                await self._breaker.record_success(action.agent_id, action.target)
-            else:
-                await self._breaker.record_failure(action.agent_id, action.target)
+            # Advisory telemetry, NEVER part of the verdict: the decision above is ALREADY audited, so
+            # a breaker-side failure (its own DB down, its audit append failing) must not escape into
+            # the PIPE-05 fail-safe — that would hand the PEP a different outcome than the one on the
+            # chain AND write a second, conflicting record for this action. Same discipline as the
+            # advisory semantic interpreter.
+            try:
+                if decision.outcome in _BREAKER_FAILURES:
+                    await self._breaker.record_failure(action.agent_id, action.target)
+                else:
+                    await self._breaker.record_success(action.agent_id, action.target)
+            except Exception as exc:
+                logging.getLogger(__name__).warning(
+                    "circuit-breaker signal dropped for action %s: %s: %s",
+                    action.id,
+                    type(exc).__name__,
+                    exc,
+                )
         return decision
 
     def _apply_exception_transform(

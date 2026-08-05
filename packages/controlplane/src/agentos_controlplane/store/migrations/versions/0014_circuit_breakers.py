@@ -4,8 +4,10 @@ Revision ID: 0014_circuit_breakers
 Revises: 0013_resource_limits
 Create Date: 2026-08-04
 
-Slice 9d: the breaker state the pipeline's stage-1f gate reads. `key` is an agent_id (agent scope) or
-"agent_id|target" (tool scope). Only TRANSITIONS are persisted — the rolling-window failure counters
+Slice 9d: the breaker state the pipeline's stage-1f gate reads. A breaker is identified by the
+COMPOSITE PK (scope, agent_id, target), with target="" for the agent scope — never a concatenated
+"agent_id|target" key, because both parts are free-form and may contain the separator, which let one
+breaker alias another's row. Only TRANSITIONS are persisted — the rolling-window failure counters
 live in memory, because a window is a recent-history view, not durable state; only the tripped state
 must survive a restart, so a restart cannot silently un-trip a breaker.
 
@@ -35,8 +37,9 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.create_table(
         "circuit_breaker_state",
-        sa.Column("key", sa.String(length=511), primary_key=True),
-        sa.Column("scope", sa.String(length=16), nullable=False),
+        sa.Column("scope", sa.String(length=16), primary_key=True),
+        sa.Column("agent_id", sa.String(length=255), primary_key=True),
+        sa.Column("target", sa.String(length=255), primary_key=True),
         sa.Column("state", sa.String(length=16), nullable=False),
         sa.Column("opened_at", sa.Float(), nullable=True),
         sa.Column("trip_count", sa.Integer(), nullable=False, server_default="0"),

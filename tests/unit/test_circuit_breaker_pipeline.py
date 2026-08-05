@@ -13,23 +13,39 @@ The two correctness traps this file exists to nail down:
 2. **No cross-agent DoS.** Nothing is ever recorded against an UNVERIFIED agent_id, so a forged id
    cannot trip somebody else's breaker.
 
-The PEP half (Task 4) reports governed EXECUTION failures, which the PDP cannot see — but skips the
-`GovernanceDenied` family, because the PDP already counted those.
+3. **Recovery is always reachable.** The failure set (`_BREAKER_FAILURES`) and the close set are exact
+   complements: any outcome that does NOT trip a closed breaker MUST close a half-open one. Scoring a
+   human-ratified `temporary_exception` or a proceed-with-review `governance_review` as a violation
+   while only `allow` could close turned an approval-shaped workload into permanent self-containment.
+4. **Breaker signals are advisory telemetry.** The decision is already audited when they are recorded,
+   so a breaker-side failure must neither rewrite the verdict nor append a SECOND record for the
+   action — the same discipline as the advisory semantic interpreter one stage earlier.
+
+The PEP half (Task 4) reports governed EXECUTION failures, which the PDP cannot see — including RUN-05
+budget breaches (raised at the execution site, AFTER the PDP recorded a permitted decision) — but skips
+governance blocks the PDP already counted.
 """
 
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import create_engine
 
 from agentos_contract import ActionType, AgentAction, Decision, Outcome, RiskFinding, SandboxResult
 from agentos_contract.policy_io import ConstitutionResult, MatchedPrinciple
+from agentos_controlplane.audit import AuditWriter
+from agentos_controlplane.circuit_breaker import CircuitBreakerStore
+from agentos_controlplane.store.engine import create_all, create_session_factory
 from agentos_pipeline.runner import Pipeline
 from agentos_sdk.enforce import (
     GovernanceDenied,
     GovernanceQuarantined,
+    GovernanceResourceExceeded,
+    ResourceLimits,
     governed_call,
 )
 
@@ -99,11 +115,14 @@ class FakeAuditWriter:
 
 
 class _BV:
-    """A structural BreakerVerdictProtocol (key + scope + state)."""
+    """A structural BreakerVerdictProtocol (scope + agent_id + target + state)."""
 
-    def __init__(self, key: str, scope: str = "agent", state: str = "open") -> None:
-        self.key = key
+    def __init__(
+        self, agent_id: str, target: str = "", scope: str = "agent", state: str = "open"
+    ) -> None:
         self.scope = scope
+        self.agent_id = agent_id
+        self.target = target
         self.state = state
 
 
@@ -183,7 +202,7 @@ def test_open_breaker_deny_is_audited_and_versioned() -> None:
 
 
 def test_tool_scoped_verdict_names_the_pair() -> None:
-    pipeline, *_ = _build(verdict=_BV("agent-1|http_get", scope="tool"))
+    pipeline, *_ = _build(verdict=_BV("agent-1", target="http_get", scope="tool"))
     decision = asyncio.run(pipeline.evaluate(_action()))
     assert decision.outcome is Outcome.deny
     assert "tool breaker agent-1|http_get" in decision.reasons[-1].detail
@@ -235,13 +254,110 @@ def test_a_policy_deny_records_exactly_one_failure() -> None:
     assert breaker.successes == []
 
 
-def test_a_non_allow_graduated_outcome_counts_as_a_failure() -> None:
-    """Anything short of `allow` on the graduated path is a violation signal — a sandboxed or
-    approval-gated action is exactly the escalating behavior a breaker should contain."""
-    pipeline, ident, pol, scorer, audit, breaker = _build(verdict=None, policy=Outcome.sandbox)
+@pytest.mark.parametrize("policy", [Outcome.sandbox, Outcome.require_approval])
+def test_a_BREAKER_FAILURE_outcome_counts_as_a_failure(policy: Outcome) -> None:
+    """The declared failure set: a sandboxed, consensus- or approval-gated action is exactly the
+    escalating behavior a breaker should contain."""
+    pipeline, ident, pol, scorer, audit, breaker = _build(verdict=None, policy=policy)
     decision = asyncio.run(pipeline.evaluate(_action()))
-    assert decision.outcome is Outcome.sandbox
+    assert decision.outcome is policy
     assert breaker.failures == [("agent-1", "http_get")]
+
+
+@pytest.mark.parametrize("policy", [Outcome.warn, Outcome.governance_review])
+def test_a_NON_failure_outcome_records_a_success_not_a_failure(policy: Outcome) -> None:
+    """`warn` and POL-14 `governance_review` PROCEED — they are not violations, and the two sets must
+    be exact complements or a half-open breaker has no way to close."""
+    pipeline, ident, pol, scorer, audit, breaker = _build(verdict=None, policy=policy)
+    decision = asyncio.run(pipeline.evaluate(_action()))
+    assert decision.outcome is policy
+    assert breaker.failures == []
+    assert breaker.successes == [("agent-1", "http_get")]
+
+
+# --- TRAP 3: recovery must be reachable --------------------------------------
+
+
+class StubExceptions:
+    """A POL-13 ExceptionLookup that ratifies every deny ref — the ONLY way to reach
+    `temporary_exception`, which is a HUMAN-RATIFIED allow that executes."""
+
+    def active_for(self, agent_id: str, refs: tuple[str, ...]) -> dict:
+        expiry = datetime.now(timezone.utc) + timedelta(hours=1)
+        return {r: expiry for r in refs}
+
+
+def _real_breaker(clock: list[float]) -> CircuitBreakerStore:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_all(engine)
+    sf = create_session_factory(engine)
+    return CircuitBreakerStore(
+        sf, AuditWriter(sf), failure_threshold=2, cooldown_s=30.0, now=lambda: clock[0]
+    )
+
+
+@pytest.mark.parametrize(
+    "policy,exceptions,expected",
+    [
+        (Outcome.warn, None, Outcome.warn),
+        (Outcome.governance_review, None, Outcome.governance_review),
+        (Outcome.deny, StubExceptions(), Outcome.temporary_exception),
+    ],
+)
+def test_a_non_failure_trial_CLOSES_a_half_open_breaker(policy, exceptions, expected) -> None:
+    """THE recovery invariant, over a REAL breaker: trip -> cooldown -> trial -> `closed`.
+
+    With the close set narrowed to `allow` alone, an agent whose steady-state outcome is anything
+    else (a `governance_review` obligation, a ratified `temporary_exception`, a `warn`) re-opened its
+    own breaker on every trial and stayed contained forever, with no API to clear it.
+    """
+    clock = [1000.0]
+    cb = _real_breaker(clock)
+    for _ in range(2):
+        asyncio.run(cb.record_failure("agent-1", "http_get"))
+    assert cb.status("agent-1", "http_get") is not None  # tripped and containing
+    clock[0] += 30.0  # cooldown elapsed -> ONE trial admitted
+
+    pipeline = Pipeline(
+        identity=FakeIdentityStage(ok=True),
+        policy=SpyPolicyEngine(policy),
+        scorers=[SpyScorer()],
+        audit=FakeAuditWriter(),
+        exceptions=exceptions,
+        breaker=cb,
+    )
+    decision = asyncio.run(pipeline.evaluate(_action()))
+    assert decision.outcome is expected
+    assert cb.list_open() == []  # the trial CLOSED it: recovery is reachable
+    assert cb.status("agent-1", "http_get") is None
+
+
+def test_a_raising_recorder_leaves_the_decision_AND_the_chain_untouched() -> None:
+    """Breaker signals are advisory telemetry recorded AFTER the decision is audited. A breaker-side
+    outage (its own DB down, its audit append failing) must not escape into the PIPE-05 fail-safe:
+    that would hand the PEP a different verdict than the one on the chain and write a SECOND record
+    for the same action — two conflicting records for one action is exactly the ambiguity the hash
+    chain exists to prevent."""
+
+    class ExplodingRecorder(StubBreaker):
+        async def record_failure(self, agent_id: str, target: str) -> None:
+            raise RuntimeError("breaker database down")
+
+        async def record_success(self, agent_id: str, target: str) -> None:
+            raise RuntimeError("breaker database down")
+
+    audit = FakeAuditWriter()
+    pipeline = Pipeline(
+        identity=FakeIdentityStage(ok=True),
+        policy=SpyPolicyEngine(Outcome.allow),
+        scorers=[SpyScorer()],
+        audit=audit,
+        breaker=ExplodingRecorder(None),
+    )
+    decision = asyncio.run(pipeline.evaluate(_action()))
+    assert decision.outcome is Outcome.allow  # the verdict that was audited is the one returned
+    assert not any(r.code.startswith("control_plane_failure") for r in decision.reasons)
+    assert len(audit.calls) == 1  # exactly ONE record for the action
 
 
 # --- TRAP 1: the feedback loop -----------------------------------------------
@@ -409,8 +525,9 @@ def test_a_governance_block_is_NOT_reported_as_an_execution_error() -> None:
 
 
 def test_a_quarantine_is_NOT_reported_as_an_execution_error() -> None:
-    """`GovernanceQuarantined` (and every other GovernanceDenied SUBCLASS) is a governance block,
-    not an execution error — the except-clause must cover the whole family."""
+    """`GovernanceQuarantined` is a governance block, not an execution error. NOTE it is raised at the
+    DECISION site (outside the reported run), so this pins the contract without exercising the
+    pass-through guard — the nested-block test below is what gives that guard teeth."""
     reporter = StubReporter()
 
     class StubSandbox:
@@ -431,6 +548,69 @@ def test_a_quarantine_is_NOT_reported_as_an_execution_error() -> None:
             )
         )
     assert reporter.failures == []
+
+
+def test_a_NESTED_governance_block_is_NOT_reported_as_an_execution_error() -> None:
+    """The no-double-count guard, with teeth: a handler that itself makes a governed call propagates a
+    `GovernanceDenied` from INSIDE the reported run — and the PDP that produced that deny already
+    counted it. Counting it again here would trip breakers twice as fast."""
+    reporter = StubReporter()
+
+    async def never_runs():
+        raise AssertionError("must not run")
+
+    async def calls_a_denied_action():
+        # The inner PDP denies; its own graduated-path recording already counted that.
+        await governed_call(AllowPipeline(Outcome.deny), _action(), never_runs)
+
+    with pytest.raises(GovernanceDenied):
+        asyncio.run(
+            governed_call(AllowPipeline(), _action(), calls_a_denied_action, reporter=reporter)
+        )
+    assert reporter.failures == []
+
+
+class StubGovernor:
+    """A RUN-05 seam with one fixed budget (mirroring tests/unit/test_resource_limits.py)."""
+
+    def __init__(self, limits: ResourceLimits) -> None:
+        self._limits = limits
+        self.breaches: list[str] = []
+
+    def limits_for(self, agent_id: str) -> ResourceLimits:
+        return self._limits
+
+    async def record_breach(self, action, decision, *, limit, budget, observed) -> None:
+        self.breaches.append(limit)
+
+
+@pytest.mark.parametrize(
+    "limits,run_body",
+    [
+        (ResourceLimits(wall_s=0.05), lambda: asyncio.sleep(5)),
+        (ResourceLimits(network="deny"), lambda: asyncio.sleep(0)),
+    ],
+    ids=["wall-budget-breach", "network-denied"],
+)
+def test_a_RESOURCE_BREACH_is_reported_as_an_execution_failure(limits, run_body) -> None:
+    """RUN-05 breaches are raised at the EXECUTION site, AFTER the PDP already recorded a PERMITTED
+    decision — so unlike a `deny` the PDP never counted them. Filtering them out with the rest of the
+    `GovernanceDenied` family scored an agent that blows its budget on EVERY call as perfectly
+    healthy, and it could never trip a breaker: the exact runaway a breaker exists to contain."""
+    reporter = StubReporter()
+    governor = StubGovernor(limits)
+
+    async def run():
+        await run_body()
+
+    with pytest.raises(GovernanceResourceExceeded):
+        asyncio.run(
+            governed_call(
+                AllowPipeline(), _action(), run, governor=governor, reporter=reporter
+            )
+        )
+    assert reporter.failures == [("agent-1", "http_get")]
+    assert len(governor.breaches) == 1  # audited as a breach too, exactly once
 
 
 def test_reporter_none_is_backward_compatible() -> None:

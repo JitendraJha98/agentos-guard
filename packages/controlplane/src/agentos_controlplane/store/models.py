@@ -429,7 +429,13 @@ class ResourceLimit(Base):
 
 
 class CircuitBreakerState(Base):
-    """RUN-06 — the DURABLE state of one breaker (`key` is an agent_id, or "agent_id|target").
+    """RUN-06 — the DURABLE state of one breaker, identified by the COMPOSITE PK
+    (scope, agent_id, target); `target` is "" for the agent scope.
+
+    Three columns rather than one concatenated `"agent_id|target"` key: both parts are free-form (an
+    agent registers its own id, a target is arbitrary) and may contain the separator, so a
+    single-string key let an attacker's breaker ALIAS a victim's — the tool pair (`a`, `http_get`)
+    and an agent literally named `a|http_get` collapsed onto the same row.
 
     Only TRANSITIONS are persisted; the rolling-window counters live in memory because a window is a
     recent-history view, not durable state. `opened_at` is epoch SECONDS (a float) rather than a
@@ -440,8 +446,9 @@ class CircuitBreakerState(Base):
 
     __tablename__ = "circuit_breaker_state"
 
-    key: Mapped[str] = mapped_column(String(511), primary_key=True)
-    scope: Mapped[str] = mapped_column(String(16), nullable=False)  # "agent" | "tool"
+    scope: Mapped[str] = mapped_column(String(16), primary_key=True)  # "agent" | "tool"
+    agent_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    target: Mapped[str] = mapped_column(String(255), primary_key=True, default="")
     state: Mapped[str] = mapped_column(String(16), nullable=False)  # "open" | "half_open" | "closed"
     opened_at: Mapped[float | None] = mapped_column(Float, nullable=True)
     trip_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
