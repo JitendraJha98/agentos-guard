@@ -4,11 +4,14 @@
 directly-executable outcomes AND to post-approval execution. The point of these tests is to pin the
 HONEST enforcement boundary rather than a marketing claim:
 
-  * `network` -> preventive: the handler is NEVER invoked, and only for egress-capable action types.
-  * `wall_s`  -> preventive but COOPERATIVE: an awaiting handler is cancelled (proved by a post-sleep
-    flag that never gets set); a sync CPU-bound handler could not be interrupted, and an aborted
-    handler is NOT rolled back.
+  * `network` -> preventive: the handler is NEVER invoked, and only for egress-capable action types
+    (including `delegation`, so egress cannot be bought by dispatching a sub-agent).
+  * `wall_s`  -> preventive ONLY when the cancellation lands: an awaiting handler is cancelled (proved
+    by a post-sleep flag that never gets set), but a blocking or cancel-swallowing handler runs to
+    completion and its overrun is then DETECTED AFTERWARDS (`preventive is False`) — never silently
+    returned. A handler's OWN `TimeoutError` is not a budget breach at all.
   * `memory_mb` -> DETECTED AT COMPLETION: the handler already ran. `preventive is False` says so.
+    The counters are process-global, so an OVERLAPPED window is unmeasurable and gets no verdict.
 
 Every violation is a `GovernanceDenied` subclass, so no existing catch site can mistake a budget
 breach for a successful result. An unwired (`governor=None`) or unlimited agent must take the
@@ -18,6 +21,8 @@ zero-overhead path: no `tracemalloc`, no `wait_for`.
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 import tracemalloc
 from uuid import uuid4
 
@@ -32,14 +37,16 @@ from agentos_sdk.enforce import (
 )
 
 
-def _action(type_: ActionType = ActionType.tool_call) -> AgentAction:
+def _action(type_: ActionType = ActionType.tool_call, agent_id: str = "budget-agent") -> AgentAction:
     payloads = {
         ActionType.tool_call: {"url": "https://api.example.com/x", "content": ""},
         ActionType.memory_access: {"operation": "write", "key": "k", "value": "v"},
         ActionType.mcp_call: {"server": "s", "tool": "t", "args": "{}"},
+        ActionType.model_invocation: {"model": "m", "prompt": "p"},
+        ActionType.delegation: {"to_agent": "child-agent", "task": "fetch a url"},
     }
     return AgentAction(
-        agent_id="budget-agent",
+        agent_id=agent_id,
         type=type_,
         target="http_get",
         payload=payloads[type_],
@@ -163,6 +170,89 @@ def test_a_handler_inside_its_wall_budget_returns_normally() -> None:
     assert governor.breaches == []
 
 
+def test_a_blocking_overrun_is_DETECTED_after_completion_not_returned() -> None:
+    """A sync handler never yields, so the cancellation can never land — but the overrun must not be
+    silent either. It is reported post-hoc with the REAL elapsed time, audited, and the result is
+    withheld; `preventive is False` says plainly that nothing was stopped."""
+    governor = _StubGovernor(ResourceLimits(wall_s=0.05))
+    completed = []
+
+    async def run():
+        time.sleep(0.3)  # blocking: the event loop cannot interrupt this
+        completed.append("side-effect")
+        return "result-that-must-not-reach-the-caller"
+
+    with pytest.raises(GovernanceResourceExceeded) as exc:
+        _call(governor, run)
+
+    assert exc.value.limit == "wall_s"
+    assert exc.value.preventive is False  # it ran to completion: detection, not prevention
+    assert exc.value.budget == 0.05 and exc.value.observed > 0.05
+    assert completed == ["side-effect"]  # the side effect DID happen — that is why we report it
+    assert len(governor.breaches) == 1
+    assert governor.breaches[0]["limit"] == "wall_s" and governor.breaches[0]["observed"] > 0.05
+    assert "detected after completion" in str(exc.value)
+
+
+def test_a_cancel_swallowing_handler_cannot_escape_the_wall_budget() -> None:
+    """Cooperative cancellation is escapable by design; the post-hoc check is what makes the budget
+    unbypassable. A handler that eats its CancelledError still loses its result."""
+    governor = _StubGovernor(ResourceLimits(wall_s=0.05))
+
+    async def run():
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            pass  # swallowed
+        return "result-after-swallowed-cancel"
+
+    with pytest.raises(GovernanceResourceExceeded) as exc:
+        _call(governor, run)
+
+    assert exc.value.limit == "wall_s" and exc.value.preventive is False
+    assert exc.value.observed > 0.05
+    assert len(governor.breaches) == 1
+
+
+# --- a handler's OWN TimeoutError is not a budget breach ----------------------
+
+
+@pytest.mark.parametrize("limits", [ResourceLimits(memory_mb=64.0), ResourceLimits()])
+def test_a_handlers_own_timeout_is_not_a_wall_breach_when_no_wall_budget_is_set(
+    limits: ResourceLimits,
+) -> None:
+    """A budgeted agent with NO wall budget: an upstream `TimeoutError` must propagate UNCHANGED.
+    Reclassifying it would fabricate a hash-covered `resource_limit_exceeded` for a budget that was
+    never set AND suppress the real failure, leaving the caller unable to recover."""
+    governor = _StubGovernor(limits)
+
+    async def run():
+        raise TimeoutError("upstream socket read timed out")
+
+    with pytest.raises(TimeoutError) as exc:
+        _call(governor, run)
+
+    assert not isinstance(exc.value, GovernanceDenied)  # not a governed block at all
+    assert "upstream socket read timed out" in str(exc.value)
+    assert governor.breaches == []  # nothing to audit: no budget was violated
+
+
+def test_a_handlers_own_timeout_inside_its_wall_budget_also_propagates() -> None:
+    """Even WITH a wall budget: the deadline is the only thing that makes a TimeoutError a breach, so
+    an upstream timeout that fires well inside the budget stays the handler's own failure."""
+    governor = _StubGovernor(ResourceLimits(wall_s=5.0))
+
+    async def run():
+        raise TimeoutError("upstream socket read timed out")
+
+    with pytest.raises(TimeoutError) as exc:
+        _call(governor, run)
+
+    assert not isinstance(exc.value, GovernanceDenied)
+    assert "upstream socket read timed out" in str(exc.value)
+    assert governor.breaches == []
+
+
 # --- network: preventive, egress types only ----------------------------------
 
 
@@ -183,7 +273,15 @@ def test_network_deny_never_invokes_an_egress_handler() -> None:
     assert len(governor.breaches) == 1 and governor.breaches[0]["limit"] == "network"
 
 
-@pytest.mark.parametrize("type_", [ActionType.tool_call, ActionType.mcp_call])
+@pytest.mark.parametrize(
+    "type_",
+    [
+        ActionType.tool_call,
+        ActionType.mcp_call,
+        ActionType.model_invocation,
+        ActionType.delegation,
+    ],
+)
 def test_network_deny_covers_every_egress_capable_type(type_: ActionType) -> None:
     governor = _StubGovernor(ResourceLimits(network="deny"))
     ran = []
@@ -194,6 +292,26 @@ def test_network_deny_covers_every_egress_capable_type(type_: ActionType) -> Non
     with pytest.raises(GovernanceResourceExceeded):
         _call(governor, run, action=_action(type_))
     assert ran == []
+
+
+def test_network_deny_cannot_be_escaped_by_delegating_to_a_sub_agent() -> None:
+    """The proxy escape. Budgets are NOT among the attributes a delegation inherits (TRST-04 passes
+    down trust, scope and ring — not resource limits), so a sub-agent would run under its OWN
+    unbudgeted `agent_id` and could egress freely. A parent forbidden to egress therefore may not
+    dispatch the delegation at all."""
+    governor = _StubGovernor(ResourceLimits(network="deny"))
+    dispatched = []
+
+    async def run():
+        dispatched.append("sub-agent")  # would have made its own tool/mcp/model calls
+        return "delegated"
+
+    with pytest.raises(GovernanceResourceExceeded) as exc:
+        _call(governor, run, action=_action(ActionType.delegation))
+
+    assert exc.value.limit == "network" and exc.value.preventive is True
+    assert dispatched == []  # no child was ever dispatched
+    assert len(governor.breaches) == 1 and governor.breaches[0]["limit"] == "network"
 
 
 def test_network_deny_does_not_block_a_non_egress_action() -> None:
@@ -297,6 +415,82 @@ def test_the_budget_is_charged_per_call_not_process_wide() -> None:
         assert exc.value.limit == "memory_mb" and exc.value.observed > 1.0
     finally:
         tracemalloc.stop()
+
+
+# --- memory_mb under CONCURRENCY: unmeasurable, never cross-attributed -------
+
+
+def _overlapping_pair(fat: _StubGovernor, thin: _StubGovernor, *, thin_raises: bool = False):
+    """Two governed calls whose measurement windows provably overlap: the fat handler allocates and
+    then parks on a gate that the thin handler opens, so the thin call runs entirely INSIDE the fat
+    call's window. `tracemalloc` counters are process-global, so nothing can tell them apart."""
+
+    async def main():
+        gate = asyncio.Event()
+
+        async def fat_run():
+            blob = b"x" * 8_000_000
+            await gate.wait()  # hold the window OPEN across the whole thin call
+            return len(blob)
+
+        async def thin_run():
+            gate.set()
+            if thin_raises:
+                raise RuntimeError("handler failure")  # the window must still close
+            return "thin-result"  # allocates nothing worth measuring
+
+        return await asyncio.gather(
+            governed_call(
+                _AllowPipeline(), _action(agent_id="fat-agent"), fat_run, governor=fat
+            ),
+            governed_call(
+                _AllowPipeline(), _action(agent_id="thin-agent"), thin_run, governor=thin
+            ),
+            return_exceptions=thin_raises,
+        )
+
+    return asyncio.run(main())
+
+
+def test_overlapping_calls_never_cross_attribute_memory(caplog) -> None:
+    """The verdict is REFUSED rather than guessed. Judging a process-global counter under concurrency
+    is wrong in both directions: it bills an innocent agent for another's allocation (a fabricated,
+    hash-chained accusation), and once the first window closes the later one reads (0, 0) and silently
+    passes a real breach. An overlapped window therefore says `unmeasurable` and audits nothing."""
+    fat = _StubGovernor(ResourceLimits(memory_mb=1.0))
+    thin = _StubGovernor(ResourceLimits(memory_mb=1.0))
+
+    with caplog.at_level(logging.WARNING):
+        results = _overlapping_pair(fat, thin)
+
+    assert results == [8_000_000, "thin-result"]
+    assert thin.breaches == []  # the innocent agent is NEVER billed for the other's 8 MB
+    assert fat.breaches == []  # and an unmeasurable window is not a breach either
+    assert caplog.text.count("unmeasurable") == 2  # both windows said so, out loud
+    assert "fat-agent" in caplog.text and "thin-agent" in caplog.text
+    assert not tracemalloc.is_tracing()  # only the outermost window started/stopped the tracer
+
+
+@pytest.mark.parametrize("thin_raises", [False, True])
+def test_an_overlap_does_not_disable_the_memory_budget_afterwards(thin_raises: bool) -> None:
+    """A leaked window counter would silently disable every LATER memory budget in the process — the
+    worst failure mode of the fix. Proved by breaching normally right after an overlap, including one
+    whose inner window unwound through an exception."""
+    _overlapping_pair(
+        _StubGovernor(ResourceLimits(memory_mb=1.0)),
+        _StubGovernor(ResourceLimits(memory_mb=1.0)),
+        thin_raises=thin_raises,
+    )
+
+    solo = _StubGovernor(ResourceLimits(memory_mb=1.0))
+
+    async def run():
+        return b"z" * 8_000_000
+
+    with pytest.raises(GovernanceResourceExceeded) as exc:
+        _call(solo, run)
+    assert exc.value.limit == "memory_mb" and exc.value.observed > 1.0
+    assert len(solo.breaches) == 1
 
 
 # --- the subclass contract ---------------------------------------------------

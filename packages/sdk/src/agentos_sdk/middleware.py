@@ -89,7 +89,9 @@ class GovernanceMiddleware(AgentMiddleware):
                 governor=self._governor,
             )
         except GovernanceDenied as denied:
-            # SHORT-CIRCUIT happened inside the core: handler was never called.
+            # The core refused: on a deny/quarantine/network budget the handler was
+            # never called; on a POST-HOC budget breach (memory, or a wall overrun that
+            # ran to completion) it did run and only its result is withheld.
             # `str(denied)` is the governed exception's OWN message, so a
             # GovernanceQuarantined reads as quarantined while a deny is unchanged.
             # `status="error"` is load-bearing, not cosmetic: this is the ONE surface

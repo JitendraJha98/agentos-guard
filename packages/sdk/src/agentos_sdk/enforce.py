@@ -25,8 +25,10 @@ Resource budgets (RUN-05, Slice 9c) wrap BOTH `await run()` sites through
 `_run_within_limits`, so a per-agent wall/memory/network budget applies to a
 directly-executable outcome AND to post-approval execution. The guarantees differ
 per dimension and are stated honestly on `GovernanceResourceExceeded.preventive`:
-network denial is preventive, wall cancellation is preventive-but-cooperative (and
-is not rollback), and the memory budget is DETECTED AT COMPLETION.
+network denial is preventive; a wall overrun is cancelled only when the handler is
+suspended at an await, and is otherwise DETECTED AFTER COMPLETION (never silently
+returned); the memory budget is detected at completion too, and is not evaluated at
+all when another governed call overlapped the measurement window.
 
 Review obligation survives escalation (D5): the review opens when the outcome is
 `governance_review` OR any fired principle's effect was — a risk-escalated floor
@@ -42,6 +44,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+import time
 import tracemalloc
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -104,7 +108,8 @@ class ResourceLimits:
     """RUN-05 per-agent execution budget. `None` on a field means NO limit for that dimension.
 
     Read the enforcement guarantees on `GovernanceResourceExceeded` before relying on these: they
-    differ per dimension, and only `network` (and `wall_s`, cooperatively) actually PREVENT the work.
+    differ per dimension, and only `network` reliably PREVENTS the work — a `wall_s` overrun is
+    prevented only when the cancellation can land, and is otherwise merely detected afterwards.
     """
 
     wall_s: float | None = None
@@ -167,14 +172,23 @@ class GovernanceResourceExceeded(GovernanceDenied):
     between what this stage stops and what it only notices:
 
     * `network` -> `preventive=True`. The handler is never invoked: no egress, nothing happened.
-    * `wall_s` -> `preventive=True`, but COOPERATIVELY. An awaiting handler is cancelled, so the
-      work after the await never runs. A synchronous CPU-bound handler that never yields to the
-      event loop CANNOT be interrupted in-process, and cancellation is NOT rollback — whatever the
-      handler had already applied before the cancel point stays applied.
+    * `wall_s` -> `preventive` VARIES per breach, and the flag reports which one happened:
+      - `True`  — the cancellation LANDED. That requires the handler to be suspended at an await when
+        the expired deadline is processed; the work after that await never runs. Cancellation is NOT
+        rollback: whatever the handler had already applied before the cancel point stays applied.
+      - `False` — the handler ran to COMPLETION despite the deadline, because it blocked the event
+        loop (synchronous CPU-bound work cannot be interrupted in-process) or swallowed its
+        `CancelledError`. The overrun is then detected afterwards, with `observed` = the real elapsed
+        seconds. The result is still withheld, but nothing was prevented.
+      A `TimeoutError` raised by the handler ITSELF (an upstream socket read, say) is never a breach:
+      it propagates unchanged, because only an expired deadline is a budget violation.
     * `memory_mb` -> `preventive=False`. The breach is detected at COMPLETION: the handler already
       ran and its side effect already happened. This reports and audits a budget violation and
       withholds the result; it does NOT prevent the allocation. It also measures the PEAK GROWTH in
-      Python allocations during the call (`tracemalloc`), not RSS.
+      Python allocations during the call (`tracemalloc`), not RSS. And because those counters are
+      PROCESS-GLOBAL, the budget is only evaluated when no other governed call overlapped this one:
+      an overlapped window is logged as unmeasurable and yields NO verdict (no breach, no result
+      withheld) rather than billing one agent for another's allocations.
 
     Kernel-enforced prevention needs a real boundary: the opt-in POSIX `setrlimit` path
     (`agentos_controlplane.posix_limits`), the gateway/sidecar (Phase 10), or K8s (Phase 14).
@@ -198,9 +212,21 @@ class GovernanceResourceExceeded(GovernanceDenied):
         self.preventive = preventive
 
 
-# Action types capable of leaving the process (egress). A per-agent network="deny" refuses these
-# BEFORE the handler runs. A memory access is process-local, so a network budget must not break it.
-_EGRESS_TYPES = frozenset({ActionType.tool_call, ActionType.mcp_call, ActionType.model_invocation})
+# Action types capable of leaving the process (egress), DIRECTLY or BY PROXY. A per-agent
+# network="deny" refuses these BEFORE the handler runs.
+#   * `delegation` is included: a sub-agent runs under its OWN agent_id, and resource budgets are not
+#     among the attributes a delegation inherits (TRST-04 passes down trust, scope and ring), so the
+#     child would be unbudgeted — dispatching one must not be a way to buy the egress the parent was
+#     denied.
+#   * `memory_access` is excluded: it is process-local, so a network budget must not break it.
+_EGRESS_TYPES = frozenset(
+    {
+        ActionType.tool_call,
+        ActionType.mcp_call,
+        ActionType.model_invocation,
+        ActionType.delegation,
+    }
+)
 
 # Outcomes that run the governed operation directly (no coordinator involvement).
 _EXECUTABLE = frozenset(
@@ -225,6 +251,35 @@ def _review_obliged(decision: Decision) -> bool:
     )
 
 
+# `tracemalloc`'s counters are PROCESS-GLOBAL, so two overlapping measurement windows cannot be told
+# apart: judging anyway bills one agent for another's allocations, and the first window's
+# `tracemalloc.stop()` makes a still-open one read (0, 0) and silently pass a real breach. These two
+# counters make an overlap DETECTABLE — `_active` is how many windows are open right now, `_opens` how
+# many have ever opened — so a window that was not alone for its whole duration declines to judge.
+# The lock keeps that true when governed calls run on event loops in different threads.
+_mem_lock = threading.Lock()
+_mem_active = 0
+_mem_opens = 0
+
+
+def _open_mem_window() -> tuple[bool, int]:
+    """Open a measurement window; returns (this window is the outermost, the open-count at entry)."""
+    global _mem_active, _mem_opens
+    with _mem_lock:
+        outermost = _mem_active == 0
+        _mem_active += 1
+        _mem_opens += 1
+        return outermost, _mem_opens
+
+
+def _close_mem_window(opens_at_entry: int) -> bool:
+    """Close it; returns whether no OTHER window opened while this one was open."""
+    global _mem_active
+    with _mem_lock:
+        _mem_active -= 1
+        return _mem_opens == opens_at_entry
+
+
 async def _run_within_limits(
     run: Callable[[], Awaitable[_T]],
     action: AgentAction,
@@ -233,7 +288,7 @@ async def _run_within_limits(
 ) -> _T:
     """RUN-05: apply the agent's execution budget around `run()`.
 
-    Unwired or unlimited agents take the ZERO-OVERHEAD path — no `tracemalloc`, no `wait_for` — so
+    Unwired or unlimited agents take the ZERO-OVERHEAD path — no `tracemalloc`, no timeout — so
     the default hot path is byte-for-byte the pre-9c `await run()`.
     """
     if governor is None:
@@ -251,29 +306,46 @@ async def _run_within_limits(
 
     track = limits.memory_mb is not None
     started_tracing = False
+    outermost = False
+    opens_at_entry = 0
     baseline = 0
     if track:
-        if not tracemalloc.is_tracing():
-            tracemalloc.start()
-            started_tracing = True
-        # `reset_peak()` sets the peak to the CURRENT traced size, not to zero — so the budget is
-        # charged against the GROWTH above this baseline. Measuring the absolute peak instead would
-        # bill every call for whatever the process was already holding, and a long-lived agent would
-        # start false-breaching on its first governed call after any large allocation.
-        tracemalloc.reset_peak()
-        baseline = tracemalloc.get_traced_memory()[0]
+        outermost, opens_at_entry = _open_mem_window()
+        # An inner window must not touch the tracer at all: `reset_peak()` would clobber the peak the
+        # outer window is still charging against, and its verdict is skipped anyway.
+        if outermost:
+            if not tracemalloc.is_tracing():
+                tracemalloc.start()
+                started_tracing = True
+            # `reset_peak()` sets the peak to the CURRENT traced size, not to zero — so the budget is
+            # charged against the GROWTH above this baseline. Measuring the absolute peak instead
+            # would bill every call for whatever the process was already holding, and a long-lived
+            # agent would start false-breaching on its first governed call after any big allocation.
+            tracemalloc.reset_peak()
+            baseline = tracemalloc.get_traced_memory()[0]
+    measurable = False
     peak_mb = 0.0
+    started = time.monotonic()
+    deadline: asyncio.Timeout | None = None
     try:
-        if limits.wall_s is not None:
-            result = await asyncio.wait_for(run(), timeout=limits.wall_s)
-        else:
+        if limits.wall_s is None:
             result = await run()
+        else:
+            # `asyncio.timeout` rather than `wait_for` because `expired()` says EXACTLY whether the
+            # deadline fired, which is the only thing that makes a TimeoutError a budget breach.
+            async with asyncio.timeout(limits.wall_s) as deadline:
+                result = await run()
     except (asyncio.TimeoutError, TimeoutError):
+        if deadline is None or not deadline.expired():
+            # The handler's OWN timeout (an upstream socket read, say). Reclassifying it would audit
+            # an evidence-grade breach of a budget that was never violated AND suppress the real
+            # failure, so it propagates untouched.
+            raise
         await governor.record_breach(
             action, decision, limit="wall_s", budget=limits.wall_s, observed=limits.wall_s
         )
-        # preventive=True but cooperative: the handler was cancelled at its await point, and
-        # anything it had already applied is NOT rolled back.
+        # preventive=True: the cancellation LANDED at the handler's await point. It is not rollback —
+        # anything applied before the cancel point stays applied.
         raise GovernanceResourceExceeded(
             decision,
             limit="wall_s",
@@ -283,13 +355,37 @@ async def _run_within_limits(
         ) from None
     finally:
         if track:
-            peak_mb = (tracemalloc.get_traced_memory()[1] - baseline) / (1024 * 1024)
+            # Always close the window, on every unwind path: a leaked counter would make every LATER
+            # call look overlapped and silently disable the memory budget process-wide.
+            alone = _close_mem_window(opens_at_entry)
+            measurable = outermost and alone
+            if measurable:
+                peak_mb = (tracemalloc.get_traced_memory()[1] - baseline) / (1024 * 1024)
             # Only stop what we started: a caller already profiling keeps its tracer, and a
             # governed process never silently acquires tracemalloc's overhead for good.
             if started_tracing:
                 tracemalloc.stop()
 
-    if limits.memory_mb is not None and peak_mb > limits.memory_mb:
+    elapsed = time.monotonic() - started
+    if limits.wall_s is not None and elapsed > limits.wall_s:
+        # The deadline passed yet the handler still completed — it blocked the loop or swallowed its
+        # CancelledError. preventive=False: post-hoc detection, the same honest treatment memory gets.
+        # Returning the result here would make the wall budget silently escapable.
+        await governor.record_breach(
+            action, decision, limit="wall_s", budget=limits.wall_s, observed=elapsed
+        )
+        raise GovernanceResourceExceeded(
+            decision, limit="wall_s", budget=limits.wall_s, observed=elapsed, preventive=False
+        )
+    if track and not measurable:
+        # Refuse to judge rather than guess: no breach, no withheld result — but never silent.
+        logging.getLogger(__name__).warning(
+            "memory budget unmeasurable for agent %s action %s: another governed call overlapped "
+            "this one and tracemalloc counters are process-global, so no verdict was reached",
+            action.agent_id,
+            action.id,
+        )
+    elif limits.memory_mb is not None and peak_mb > limits.memory_mb:
         await governor.record_breach(
             action, decision, limit="memory_mb", budget=limits.memory_mb, observed=peak_mb
         )

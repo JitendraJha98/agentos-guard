@@ -11,12 +11,15 @@ updating the cache only after the audit append would break exactly that on a TIG
 write raises: committed row, stale unbudgeted cache, a silently disabled control.
 
 What the stored budget actually GUARANTEES differs per dimension and is documented on the SDK's
-`GovernanceResourceExceeded`: `network` prevents (the handler never runs), `wall_s` cancels
-cooperatively (and is not rollback), and `memory_mb` is DETECTED AT COMPLETION. This module persists
+`GovernanceResourceExceeded`: `network` prevents (the handler never runs), a `wall_s` overrun is
+cancelled only when the cancellation can land and is otherwise DETECTED AFTER COMPLETION, and
+`memory_mb` is detected at completion (and skipped when governed calls overlap). This module persists
 and audits the budget; it does not upgrade those guarantees.
 """
 
 from __future__ import annotations
+
+import math
 
 from sqlalchemy import select
 
@@ -59,14 +62,23 @@ class ResourceGovernorStore:
         network: str = "allow",
         set_by: str,
     ) -> None:
+        """Assign `agent_id`'s budget. This REPLACES THE WHOLE BUDGET: every omitted dimension is
+        CLEARED, so `set_limits(a, wall_s=2.0, set_by=...)` after a wall+memory+deny assignment leaves
+        `memory_mb` NULL and `network` back at "allow" — tightening one dimension this way relaxes the
+        others. Pass every dimension you want enforced. The audit event records the whole replaced
+        budget, so the clearing is visible in the evidence.
+        """
         if network not in _NETWORK_MODES:
             raise ValueError(f"network must be one of {sorted(_NETWORK_MODES)}, got {network!r}")
-        # A non-positive budget is never a legitimate assignment: wall_s=0 would refuse every call
-        # and memory_mb=0 would flag every one — a typo must not become an outage.
-        if wall_s is not None and wall_s <= 0:
-            raise ValueError("wall_s must be > 0 when set")
-        if memory_mb is not None and memory_mb <= 0:
-            raise ValueError("memory_mb must be > 0 when set")
+        # A non-positive or non-finite budget is never a legitimate assignment: wall_s=0 would refuse
+        # every call, memory_mb=0 would flag every one, `inf` silently DISABLES the dimension, and
+        # `nan` both disables the comparison and makes the event loop's timer raise a bare ValueError
+        # (not a GovernanceDenied — it escapes every governed catch site). A typo must not become an
+        # outage or a silently disabled control.
+        if wall_s is not None and (not math.isfinite(wall_s) or wall_s <= 0):
+            raise ValueError("wall_s must be a finite number > 0 when set")
+        if memory_mb is not None and (not math.isfinite(memory_mb) or memory_mb <= 0):
+            raise ValueError("memory_mb must be a finite number > 0 when set")
         # DURABLE FIRST, then the cache IN THE SAME BREATH as the commit, then the audit append.
         with self._sf() as s:
             row = s.get(ResourceLimit, agent_id)

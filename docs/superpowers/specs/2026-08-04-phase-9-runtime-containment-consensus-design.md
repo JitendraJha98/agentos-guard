@@ -62,10 +62,15 @@ SDK shim can intercept and stub side-effectful tools; the gateway/sidecar (later
 network-level isolation."* So Phase 9 enforces what the PEP layer genuinely can, portably and
 deterministically:
 
-- **Wall/CPU budget** — a hard `asyncio.wait_for` timeout around the governed call; a breach aborts
-  the execution and audits `resource_limit_exceeded` (the action does not complete).
-- **Memory ceiling** — sampled with stdlib `tracemalloc` around the limited call; a breach aborts +
-  audits. Enabled only on the limited path (measurable overhead).
+- **Wall/CPU budget** — an `asyncio.timeout` deadline around the governed call. Cancellation lands
+  only while the handler is suspended at an await; a handler that blocks the loop or swallows its
+  `CancelledError` runs to completion, so the overrun is then DETECTED AFTERWARDS (elapsed time
+  compared to the budget). Either way `resource_limit_exceeded` is audited and the result is withheld,
+  and `preventive` states which of the two happened.
+- **Memory ceiling** — sampled with stdlib `tracemalloc` around the limited call; detected at
+  completion (the handler already ran) and audited. Enabled only on the limited path (measurable
+  overhead). The counters are process-global, so a window that OVERLAPPED another governed call is
+  unmeasurable and yields no verdict rather than cross-attributing an allocation.
 - **Network** — denied outright in sandbox mode (the PEP simply never calls the real handler); on the
   normal path egress remains governed by the constitution's allowlist principle.
 - **Opt-in hard OS path** — where `resource` is importable (POSIX), a subprocess runner applying

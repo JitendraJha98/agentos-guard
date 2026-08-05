@@ -114,6 +114,26 @@ def test_set_limits_updates_the_hot_path_and_audits(store, governor) -> None:
     assert verify_chain(store).ok
 
 
+def test_set_limits_REPLACES_the_whole_budget_clearing_omitted_dimensions(store, governor) -> None:
+    """The documented semantics, pinned: `set_limits` is a full replace, not a partial update. An
+    operator tightening `wall_s` alone therefore CLEARS `memory_mb` and returns `network` to "allow"
+    — in the table AND in the hot-path cache. Stated on `set_limits` so nobody discovers it by
+    accidentally relaxing two dimensions while tightening a third."""
+    asyncio.run(governor.set_limits("a", wall_s=1.0, memory_mb=64.0, network="deny", set_by="op"))
+
+    asyncio.run(governor.set_limits("a", wall_s=2.0, set_by="op2"))  # omits the other two
+
+    limits = governor.limits_for("a")
+    assert limits.wall_s == 2.0
+    assert limits.memory_mb is None  # CLEARED
+    assert limits.network == "allow"  # back to the permissive default
+    with store() as s:
+        row = s.get(ResourceLimit, "a")
+    assert row.wall_s == 2.0 and row.memory_mb is None and row.network == "allow"
+    # ... and the audit event records the whole replaced budget, so the clearing is evident.
+    assert _events(store, "resource_limit_set")[-1]["memory_mb"] is None
+
+
 def test_set_limits_is_idempotent_on_an_existing_row(store, governor) -> None:
     """A second assignment UPDATES the row rather than colliding on the primary key."""
     asyncio.run(governor.set_limits("a", wall_s=1.0, set_by="op"))
@@ -158,6 +178,17 @@ def test_a_fresh_store_reloads_the_limits(store) -> None:
         {"wall_s": -1},
         {"memory_mb": 0},
         {"memory_mb": -1},
+        # Non-finite budgets are the nastiest typo: `nan <= 0` is False, so they slip past a bare
+        # positivity guard and then either SILENTLY DISABLE the dimension (`peak > nan` is never
+        # true, `elapsed > inf` is never true) or crash the event loop (`wall_s=nan` ->
+        # "cannot convert float NaN to integer" from the timer, which is not a GovernanceDenied and
+        # so escapes every governed catch site). A typo must not become an outage.
+        {"wall_s": float("nan")},
+        {"wall_s": float("inf")},
+        {"wall_s": float("-inf")},
+        {"memory_mb": float("nan")},
+        {"memory_mb": float("inf")},
+        {"memory_mb": float("-inf")},
     ],
 )
 def test_invalid_budgets_are_rejected_and_change_nothing(store, governor, kwargs) -> None:
