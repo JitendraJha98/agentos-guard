@@ -133,8 +133,14 @@ class ResourceGovernor(Protocol):
 class GovernanceDenied(Exception):
     """Raised when a governed action may not run — the governed exception (D-03).
 
-    Carries the `Decision` so the fired reasons / evidence_ref are available to the
-    caller. The action that triggered it was NOT executed (no side effect / no egress).
+    Carries the `Decision` so the fired reasons / evidence_ref are available to the caller.
+
+    Base-class guarantee: **the result is always withheld** from the caller. For this class itself and
+    for `GovernanceQuarantined`, nothing ran either — no side effect, no egress. The one exception is
+    `GovernanceResourceExceeded` with `preventive=False` (a RUN-05 budget detected at completion): the
+    handler HAD already run, and its side effect stands. Callers that need to distinguish "nothing
+    happened" from "it happened but is over budget" must check `preventive`; callers that simply treat
+    every `GovernanceDenied` as "no usable result" stay correct.
     """
 
     def __init__(self, decision: Decision) -> None:
@@ -251,33 +257,49 @@ def _review_obliged(decision: Decision) -> bool:
     )
 
 
-# `tracemalloc`'s counters are PROCESS-GLOBAL, so two overlapping measurement windows cannot be told
-# apart: judging anyway bills one agent for another's allocations, and the first window's
-# `tracemalloc.stop()` makes a still-open one read (0, 0) and silently pass a real breach. These two
-# counters make an overlap DETECTABLE — `_active` is how many windows are open right now, `_opens` how
-# many have ever opened — so a window that was not alone for its whole duration declines to judge.
-# The lock keeps that true when governed calls run on event loops in different threads.
-_mem_lock = threading.Lock()
-_mem_active = 0
-_mem_opens = 0
+# `tracemalloc`'s counters are PROCESS-GLOBAL, so a memory verdict is only sound when this execution
+# was the ONLY governed execution running for its whole duration. Judging anyway bills one agent for
+# another's allocations — a fabricated, hash-chained accusation against an agent that allocated
+# nothing — and a concurrent window's `tracemalloc.stop()` can make a still-open one read (0, 0) and
+# silently pass a real breach.
+#
+# EVERY governed execution registers here, not just memory-budgeted ones: an unbudgeted call (or one
+# budgeted only on wall/network) allocates just the same, so counting only memory-budgeted windows
+# would leave exactly that overlap invisible. `_exec_active` is how many are open right now,
+# `_exec_opens` how many have ever opened; together they make any overlap DETECTABLE, and an
+# unattributable window declines to judge instead of accusing. The lock keeps that true when governed
+# calls run on event loops in different threads.
+#
+# Honest scope: this bounds FALSE accusations from concurrent GOVERNED work. Arbitrary non-governed
+# allocation elsewhere in the process is still invisible to `tracemalloc`'s process-global counters, so
+# the in-process memory budget is best-effort by nature — sound, kernel-enforced memory limits are the
+# capability-gated `RLIMIT_AS` path (`agentos_controlplane.posix_limits`) and the gateway/K8s layer.
+_exec_lock = threading.Lock()
+_exec_active = 0
+_exec_opens = 0
 
 
-def _open_mem_window() -> tuple[bool, int]:
-    """Open a measurement window; returns (this window is the outermost, the open-count at entry)."""
-    global _mem_active, _mem_opens
-    with _mem_lock:
-        outermost = _mem_active == 0
-        _mem_active += 1
-        _mem_opens += 1
-        return outermost, _mem_opens
+def _open_exec_window() -> tuple[bool, int]:
+    """Register a governed execution; returns (nothing else was open at entry, the open-count now)."""
+    global _exec_active, _exec_opens
+    with _exec_lock:
+        outermost = _exec_active == 0
+        _exec_active += 1
+        _exec_opens += 1
+        return outermost, _exec_opens
 
 
-def _close_mem_window(opens_at_entry: int) -> bool:
-    """Close it; returns whether no OTHER window opened while this one was open."""
-    global _mem_active
-    with _mem_lock:
-        _mem_active -= 1
-        return _mem_opens == opens_at_entry
+def _close_exec_window() -> None:
+    global _exec_active
+    with _exec_lock:
+        _exec_active -= 1
+
+
+def _exclusive_since(opens_at_entry: int) -> bool:
+    """True when NO other governed execution opened since this one began AND none is still open —
+    i.e. this window had the process's governed activity to itself, so a peak IS attributable."""
+    with _exec_lock:
+        return _exec_opens == opens_at_entry and _exec_active == 1
 
 
 async def _run_within_limits(
@@ -288,9 +310,32 @@ async def _run_within_limits(
 ) -> _T:
     """RUN-05: apply the agent's execution budget around `run()`.
 
-    Unwired or unlimited agents take the ZERO-OVERHEAD path — no `tracemalloc`, no timeout — so
-    the default hot path is byte-for-byte the pre-9c `await run()`.
+    Unwired or unlimited agents take the ZERO-OVERHEAD path — no `tracemalloc`, no timeout, just the
+    pre-9c `await run()` plus the overlap bookkeeping every governed execution owes its peers (a lock
+    and two integer increments; see `_open_exec_window` for why the unbudgeted path must register too).
     """
+    # EVERY execution registers, budgeted or not: `tracemalloc` is process-global, so an unbudgeted
+    # (or wall-only) call running concurrently would otherwise be invisible and its allocations would
+    # be charged to an innocent memory-budgeted agent.
+    outermost, opens_at_entry = _open_exec_window()
+    try:
+        return await _run_within_limits_inner(
+            run, action, decision, governor, outermost, opens_at_entry
+        )
+    finally:
+        _close_exec_window()
+
+
+async def _run_within_limits_inner(
+    run: Callable[[], Awaitable[_T]],
+    action: AgentAction,
+    decision: Decision,
+    governor: ResourceGovernor | None,
+    outermost: bool,
+    opens_at_entry: int,
+) -> _T:
+    """The budget logic itself. Split out so the overlap window is opened and closed on EVERY path
+    (including the zero-overhead early returns) without duplicating a try/finally per branch."""
     if governor is None:
         return await run()
     limits = governor.limits_for(action.agent_id)
@@ -306,11 +351,8 @@ async def _run_within_limits(
 
     track = limits.memory_mb is not None
     started_tracing = False
-    outermost = False
-    opens_at_entry = 0
     baseline = 0
     if track:
-        outermost, opens_at_entry = _open_mem_window()
         # An inner window must not touch the tracer at all: `reset_peak()` would clobber the peak the
         # outer window is still charging against, and its verdict is skipped anyway.
         if outermost:
@@ -355,10 +397,11 @@ async def _run_within_limits(
         ) from None
     finally:
         if track:
-            # Always close the window, on every unwind path: a leaked counter would make every LATER
-            # call look overlapped and silently disable the memory budget process-wide.
-            alone = _close_mem_window(opens_at_entry)
-            measurable = outermost and alone
+            # Judge ONLY if this execution had the process's governed activity to itself for its whole
+            # duration — nothing else open at entry (`outermost`) and nothing else opened or still open
+            # now. Otherwise the peak is unattributable and we decline to judge rather than accuse.
+            # (The window itself is closed by the caller's finally, on every unwind path.)
+            measurable = outermost and _exclusive_since(opens_at_entry)
             if measurable:
                 peak_mb = (tracemalloc.get_traced_memory()[1] - baseline) / (1024 * 1024)
             # Only stop what we started: a caller already profiling keeps its tracer, and a

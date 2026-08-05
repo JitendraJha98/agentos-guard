@@ -471,6 +471,39 @@ def test_overlapping_calls_never_cross_attribute_memory(caplog) -> None:
     assert not tracemalloc.is_tracing()  # only the outermost window started/stopped the tracer
 
 
+@pytest.mark.parametrize(
+    "co_runner_limits",
+    [
+        pytest.param(ResourceLimits(wall_s=30.0), id="co-runner-budgeted-but-not-on-memory"),
+        pytest.param(None, id="co-runner-has-no-limits-row-at-all"),
+    ],
+)
+def test_a_non_memory_budgeted_co_runner_cannot_frame_an_innocent_agent(
+    co_runner_limits, caplog
+) -> None:
+    """The regression that matters: a concurrent execution allocates just as much whether or not IT is
+    memory-budgeted, so the overlap window must register EVERY governed execution.
+
+    Registering only memory-budgeted windows left exactly this shape invisible — the co-runner's 8 MB
+    was charged to an innocent agent that allocated nothing, producing a hash-chained
+    `resource_limit_exceeded` accusation for a breach that never happened. Here the allocating
+    co-runner is budgeted on wall only, or has no row at all; the innocent memory-budgeted agent must
+    still be judged `unmeasurable`, never billed.
+    """
+    allocator = _StubGovernor(co_runner_limits)  # allocates 8 MB, NOT memory-budgeted
+    innocent = _StubGovernor(ResourceLimits(memory_mb=1.0))  # allocates nothing
+
+    with caplog.at_level(logging.WARNING):
+        results = _overlapping_pair(allocator, innocent)
+
+    assert results == [8_000_000, "thin-result"]
+    assert innocent.breaches == []  # never billed for the co-runner's allocation
+    assert allocator.breaches == []  # and the unbudgeted co-runner is not billed either
+    # The overlap was DETECTED (declined), not merely missed by luck.
+    assert "unmeasurable" in caplog.text and "thin-agent" in caplog.text
+    assert not tracemalloc.is_tracing()  # the tracer is always handed back
+
+
 @pytest.mark.parametrize("thin_raises", [False, True])
 def test_an_overlap_does_not_disable_the_memory_budget_afterwards(thin_raises: bool) -> None:
     """A leaked window counter would silently disable every LATER memory budget in the process — the
