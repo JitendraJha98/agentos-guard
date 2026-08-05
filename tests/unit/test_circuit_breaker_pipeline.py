@@ -22,9 +22,16 @@ from __future__ import annotations
 import asyncio
 from uuid import UUID, uuid4
 
-from agentos_contract import ActionType, AgentAction, Outcome, RiskFinding
+import pytest
+
+from agentos_contract import ActionType, AgentAction, Decision, Outcome, RiskFinding, SandboxResult
 from agentos_contract.policy_io import ConstitutionResult, MatchedPrinciple
 from agentos_pipeline.runner import Pipeline
+from agentos_sdk.enforce import (
+    GovernanceDenied,
+    GovernanceQuarantined,
+    governed_call,
+)
 
 
 # --- fakes (mirroring tests/unit/test_privilege_pipeline.py) -----------------
@@ -337,3 +344,98 @@ def test_a_fail_safe_records_NOTHING() -> None:
     decision = asyncio.run(pipeline.evaluate(_action()))
     assert decision.reasons[0].code.startswith("control_plane_failure")
     assert breaker.signals == []
+
+
+# --- Task 4: the PEP reports EXECUTION failures ------------------------------
+
+
+class StubReporter:
+    """A structural CircuitReporter."""
+
+    def __init__(self) -> None:
+        self.failures: list[tuple[str, str]] = []
+
+    async def record_failure(self, agent_id: str, target: str) -> None:
+        self.failures.append((agent_id, target))
+
+
+class AllowPipeline:
+    """A minimal PipelineProtocol that always allows — the PEP path is what is under test."""
+
+    def __init__(self, outcome: Outcome = Outcome.allow) -> None:
+        self._outcome = outcome
+
+    async def evaluate(self, action: AgentAction) -> Decision:
+        return Decision(action_id=action.id, outcome=self._outcome)
+
+
+def test_a_raising_handler_is_reported_as_an_execution_failure() -> None:
+    reporter = StubReporter()
+    action = _action()
+
+    async def boom():
+        raise RuntimeError("upstream 500")
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(governed_call(AllowPipeline(), action, boom, reporter=reporter))
+    assert reporter.failures == [("agent-1", "http_get")]
+
+
+def test_a_successful_handler_reports_nothing_at_the_pep() -> None:
+    """Success is the PDP's job (the graduated path already recorded it) — reporting here too would
+    double-count and could close a breaker on one action."""
+    reporter = StubReporter()
+
+    async def ok():
+        return "fine"
+
+    assert asyncio.run(governed_call(AllowPipeline(), _action(), ok, reporter=reporter)) == "fine"
+    assert reporter.failures == []
+
+
+def test_a_governance_block_is_NOT_reported_as_an_execution_error() -> None:
+    """No double-counting: a `deny` was ALREADY counted by the PDP's graduated-path recording, so
+    the PEP must not count it a second time — that would trip every breaker twice as fast."""
+    reporter = StubReporter()
+
+    async def never_runs():
+        raise AssertionError("must not run")
+
+    with pytest.raises(GovernanceDenied):
+        asyncio.run(
+            governed_call(AllowPipeline(Outcome.deny), _action(), never_runs, reporter=reporter)
+        )
+    assert reporter.failures == []
+
+
+def test_a_quarantine_is_NOT_reported_as_an_execution_error() -> None:
+    """`GovernanceQuarantined` (and every other GovernanceDenied SUBCLASS) is a governance block,
+    not an execution error — the except-clause must cover the whole family."""
+    reporter = StubReporter()
+
+    class StubSandbox:
+        async def run(self, action: AgentAction, decision: Decision) -> SandboxResult:
+            return SandboxResult(quarantined=True, run_id="run-1", detail="quarantined")
+
+    async def never_runs():
+        raise AssertionError("must not run")
+
+    with pytest.raises(GovernanceQuarantined):
+        asyncio.run(
+            governed_call(
+                AllowPipeline(Outcome.sandbox),
+                _action(),
+                never_runs,
+                sandbox=StubSandbox(),
+                reporter=reporter,
+            )
+        )
+    assert reporter.failures == []
+
+
+def test_reporter_none_is_backward_compatible() -> None:
+    async def boom():
+        raise RuntimeError("upstream 500")
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(governed_call(AllowPipeline(), _action(), boom))

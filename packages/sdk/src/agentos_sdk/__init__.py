@@ -16,6 +16,7 @@ from agentos_sdk.coverage import (
 )
 from agentos_sdk.enforce import (
     ApprovalCoordinator,
+    CircuitReporter,
     GovernanceDenied,
     GovernanceQuarantined,
     GovernanceResourceExceeded,
@@ -80,6 +81,8 @@ __all__ = [
     "ResourceLimits",
     "ResourceGovernor",
     "GovernanceResourceExceeded",
+    # RUN-06 breaker signal sink for EXECUTION errors (violations are counted by the PDP)
+    "CircuitReporter",
     # interception coverage (INT-06)
     "covers",
     "covered_types",

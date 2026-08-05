@@ -30,6 +30,12 @@ suspended at an await, and is otherwise DETECTED AFTER COMPLETION (never silentl
 returned); the memory budget is detected at completion too, and is not evaluated at
 all when another governed call overlapped the measurement window.
 
+Circuit-breaker signals (RUN-06, Slice 9d) ride the same two run sites through
+`_run_reported`: a governed execution that RAISES is an error the PDP cannot see,
+so it is reported to the `CircuitReporter` seam. Governance blocks are explicitly
+NOT reported — the PDP's graduated path already counted those, and counting them
+here too would trip every breaker at twice the intended rate.
+
 Review obligation survives escalation (D5): the review opens when the outcome is
 `governance_review` OR any fired principle's effect was — a risk-escalated floor
 keeps its review.
@@ -128,6 +134,17 @@ class ResourceGovernor(Protocol):
     async def record_breach(
         self, action: AgentAction, decision: Decision, *, limit: str, budget: float, observed: float
     ) -> None: ...
+
+
+class CircuitReporter(Protocol):
+    """RUN-06 seam (PEP side): report a governed EXECUTION failure, which the PDP cannot observe.
+
+    The concrete reporter is `agentos_controlplane.circuit_breaker.CircuitBreakerStore`. Only
+    FAILURES are reported here: success is the PDP's job (its graduated path already recorded it),
+    and reporting it twice could close a breaker on the strength of one action.
+    """
+
+    async def record_failure(self, agent_id: str, target: str) -> None: ...
 
 
 class GovernanceDenied(Exception):
@@ -444,6 +461,26 @@ async def _run_within_limits_inner(
     return result
 
 
+async def _run_reported(
+    run: Callable[[], Awaitable[_T]],
+    action: AgentAction,
+    decision: Decision,
+    governor: ResourceGovernor | None,
+    reporter: CircuitReporter | None,
+) -> _T:
+    """RUN-06: a governed execution that RAISES is an error signal for the breaker. Governance blocks
+    (GovernanceDenied and its subclasses) are NOT execution errors — they are already counted by the
+    PDP's graduated-path recording, so double-counting them would trip breakers twice as fast."""
+    try:
+        return await _run_within_limits(run, action, decision, governor)
+    except GovernanceDenied:
+        raise
+    except Exception:
+        if reporter is not None:
+            await reporter.record_failure(action.agent_id, action.target)
+        raise
+
+
 async def governed_call(
     pipeline: PipelineProtocol,
     action: AgentAction,
@@ -453,6 +490,7 @@ async def governed_call(
     dispatcher: SideEffectDispatcher | None = None,
     sandbox: SandboxRunner | None = None,
     governor: ResourceGovernor | None = None,
+    reporter: CircuitReporter | None = None,
 ) -> _T:
     """Evaluate `action` and enforce the outcome map; `run` executes only when
     the map says so (after the approval resolves, for blocking outcomes).
@@ -479,7 +517,7 @@ async def governed_call(
             )
     outcome = decision.outcome
     if outcome in _EXECUTABLE:
-        return await _run_within_limits(run, action, decision, governor)
+        return await _run_reported(run, action, decision, governor, reporter)
     if outcome is Outcome.deny:
         raise GovernanceDenied(decision)
     if outcome is Outcome.sandbox:
@@ -505,5 +543,5 @@ async def governed_call(
     if not approved:
         raise GovernanceDenied(decision)
     # RUN-05 applies to the POST-APPROVAL run site too — otherwise requesting approval would be a
-    # trivial way to buy an unbudgeted execution.
-    return await _run_within_limits(run, action, decision, governor)
+    # trivial way to buy an unbudgeted execution. RUN-06 reporting wraps it for the same reason.
+    return await _run_reported(run, action, decision, governor, reporter)
