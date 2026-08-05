@@ -455,3 +455,24 @@ class CircuitBreakerState(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class EmergencyShutdown(Base):
+    """RUN-07 — an append-only record of one fleet-wide emergency stop.
+
+    The `kill_switch` table holds only CURRENT state (it is upserted), so incident HISTORY lives
+    here: who declared the stop, when, why, and when it was resumed. The free-text `justification`
+    lives in this table ONLY — the audit event carries short identifiers + this row's id, so a
+    secret-bearing justification can never trip the AUD-04 gate and block an emergency stop.
+    """
+
+    __tablename__ = "emergency_shutdown"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    justification: Mapped[str] = mapped_column(Text, nullable=False)
+    declared_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    declared_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    resumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resumed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)

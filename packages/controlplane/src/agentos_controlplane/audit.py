@@ -124,6 +124,10 @@ EVENT_KINDS = frozenset(
         # RUN-06 (Slice 9d): automatic breaker transitions. Short identifiers + counts only.
         "circuit_tripped",
         "circuit_reset",
+        # RUN-07 (Slice 9e): fleet-wide emergency stop + explicit resume. Short identifiers + the
+        # incident id only — the free-text justification stays in the emergency_shutdown TABLE.
+        "emergency_shutdown",
+        "emergency_resume",
     }
 )
 
