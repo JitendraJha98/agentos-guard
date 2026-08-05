@@ -163,6 +163,25 @@ class PrivilegeLookup(Protocol):
     ) -> "PrivilegeVerdictProtocol | None": ...
 
 
+class BreakerVerdictProtocol(Protocol):
+    """RUN-06: what a refusing breaker reports."""
+
+    key: str
+    scope: str
+    state: str
+
+
+class CircuitBreakerLookup(Protocol):
+    """RUN-06 seam (CircuitBreakerStore satisfies it). `status` MUST be in-memory (per-action hot
+    path); `record_failure` / `record_success` feed the rolling window."""
+
+    def status(self, agent_id: str, target: str) -> "BreakerVerdictProtocol | None": ...
+
+    async def record_failure(self, agent_id: str, target: str) -> None: ...
+
+    async def record_success(self, agent_id: str, target: str) -> None: ...
+
+
 class CardVerifierProtocol(Protocol):
     """The injected SEC-10/ASI07 seam (control-plane AgentCardVerifier satisfies it).
 
@@ -213,6 +232,7 @@ class Pipeline:
         mcp_quarantine: "McpQuarantineLookup | None" = None,
         intent_classifier: "IntentSimilarityClassifier | None" = None,
         privilege: "PrivilegeLookup | None" = None,
+        breaker: "CircuitBreakerLookup | None" = None,
     ) -> None:
         self._identity = identity
         self._policy = policy
@@ -255,6 +275,9 @@ class Pipeline:
         # RUN-04: the privilege-ring lookup (in-memory, hot-path). None default: stage 1e never
         # runs and behavior is unchanged (backward compat).
         self._privilege = privilege
+        # RUN-06: the circuit-breaker lookup (in-memory, hot-path) AND the signal sink. None
+        # default: stage 1f never runs, nothing is recorded, and behavior is unchanged.
+        self._breaker = breaker
         # RUN-04 x TRST-04: when BOTH are wired the ring must be chain-capped like trust, or a
         # ring-0 principal reaches a gated target through a ring-3 delegate. Auto-wired here so
         # that cannot depend on the operator remembering a second seam.
@@ -491,6 +514,34 @@ class Pipeline:
                 await self._append_with_redaction_fallback(action, decision)
                 return decision  # TERMINAL
 
+        # Stage 1f — Circuit breaker (RUN-06): an agent (or agent+tool pair) that crossed its
+        # violation/error threshold is denied while OPEN. Placed AFTER identity so the breaker keys on
+        # a VERIFIED agent — counting unverified actions would let an attacker trip someone else's
+        # breaker by forging their id. The kill switch (stage 0, OPERATOR intent) is deliberately
+        # checked earlier than this AUTOMATIC trip, and each uses a distinct reason code so audit
+        # forensics can tell them apart. Lookup is in-memory (no per-action DB read).
+        if self._breaker is not None:
+            bv = self._breaker.status(action.agent_id, action.target)
+            if bv is not None:
+                floor_box[0] = Outcome.deny  # an open breaker may NEVER relax
+                reasons.append(
+                    Reason(
+                        stage="circuit_breaker",
+                        code="circuit_open",
+                        detail=f"{bv.scope} breaker {bv.key} is {bv.state}",
+                    )
+                )
+                decision = Decision(
+                    action_id=action.id,
+                    outcome=Outcome.deny,
+                    trust_score=trust,
+                    reasons=reasons,
+                    constitution_version=self._policy.constitution_version,
+                    policy_version=self._policy.policy_version,
+                )
+                await self._append_with_redaction_fallback(action, decision)
+                return decision  # TERMINAL
+
         # Stage 2 — Enrichment (SEC-12/D6): deterministic, pure CPU, pre-policy.
         enrichment = enrich(action)
 
@@ -686,6 +737,16 @@ class Pipeline:
         )
         # SYNC audit write on the hot path (AUD-01); sets evidence_ref before returning.
         await self._append_with_redaction_fallback(action, decision)
+        # RUN-06: feed the breaker from the GRADUATED path only. Every short-circuit deny above
+        # (kill switch, identity, delegation, inter-agent auth, MCP quarantine, privilege, breaker) is
+        # deliberately EXCLUDED: counting the breaker's own denials would make an open breaker feed
+        # itself and never close, and counting pre-identity denials would let a forged id trip another
+        # agent's breaker.
+        if self._breaker is not None:
+            if decision.outcome is Outcome.allow:
+                await self._breaker.record_success(action.agent_id, action.target)
+            else:
+                await self._breaker.record_failure(action.agent_id, action.target)
         return decision
 
     def _apply_exception_transform(
