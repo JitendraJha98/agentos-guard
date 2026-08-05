@@ -121,6 +121,9 @@ EVENT_KINDS = frozenset(
         # here can never block a breach from being recorded.
         "resource_limit_set",
         "resource_limit_exceeded",
+        # RUN-06 (Slice 9d): automatic breaker transitions. Short identifiers + counts only.
+        "circuit_tripped",
+        "circuit_reset",
     }
 )
 

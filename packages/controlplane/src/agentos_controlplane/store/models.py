@@ -426,3 +426,25 @@ class ResourceLimit(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class CircuitBreakerState(Base):
+    """RUN-06 — the DURABLE state of one breaker (`key` is an agent_id, or "agent_id|target").
+
+    Only TRANSITIONS are persisted; the rolling-window counters live in memory because a window is a
+    recent-history view, not durable state. `opened_at` is epoch SECONDS (a float) rather than a
+    DateTime: cooldown arithmetic is the only thing it is used for, and a plain epoch avoids
+    naive/aware conversion bugs across the SQLite dev / Postgres target split. Human-readable history
+    lives on the audit chain.
+    """
+
+    __tablename__ = "circuit_breaker_state"
+
+    key: Mapped[str] = mapped_column(String(511), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(16), nullable=False)  # "agent" | "tool"
+    state: Mapped[str] = mapped_column(String(16), nullable=False)  # "open" | "half_open" | "closed"
+    opened_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    trip_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
