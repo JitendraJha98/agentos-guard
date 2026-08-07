@@ -85,7 +85,12 @@ class KillSwitchStore:
             s.commit()
         self._emergency = True  # distinguishes an emergency stop from a routine fleet kill
         # The fleet flag itself (in-memory first, then durable, then audited) — the RUN-02 path.
-        await self._set(_FLEET, "emergency", set_by, text)
+        # The flag's `reason` is a SHORT IDENTIFIER, never the justification: the pipeline's stage-0
+        # deny copies `kv.reason` into the DECISION record, so free text here would land in a
+        # hash-covered audit body — a secret-bearing justification would then trip the AUD-04 gate
+        # and downgrade the deny to `control_plane_failure_fail_closed`, losing `emergency_killed`.
+        # The justification stays in the emergency_shutdown table; the id points at it.
+        await self._set(_FLEET, "emergency", set_by, f"emergency shutdown (incident {incident_id})")
         # Short identifiers + the incident id only; the justification text stays in the table.
         await self._audit.append_event(
             "emergency_shutdown",

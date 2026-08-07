@@ -99,6 +99,11 @@ def test_shutdown_persists_justification_in_the_table_only(ks: KillSwitchStore, 
     assert "justification" not in event
     assert "incident 42" not in canonical_json(event).decode("utf-8")
 
+    # The FLAG's reason is a short identifier pointing at the incident, NOT the justification: the
+    # pipeline's stage-0 deny copies it into the hash-covered DECISION body, so free text there
+    # could trip the AUD-04 gate and downgrade the deny away from `emergency_killed`.
+    assert ks.status("a").reason == f"emergency shutdown (incident {incident_id})"
+
 
 @pytest.mark.parametrize("bad", ["", "   ", "\t\n"])
 def test_missing_justification_is_rejected_and_nothing_is_halted(

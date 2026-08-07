@@ -149,7 +149,10 @@ def build_dashboard_router(
     @router.get("/dashboard/kill", response_class=HTMLResponse)
     def kill_page(request: Request, _: bool = Depends(require_session)):
         active = kill_store.list_active() if kill_store is not None else []
-        return _TEMPLATES.TemplateResponse(request, "kill.html", {"active": active})
+        incident = kill_store.active_incident() if kill_store is not None else None
+        return _TEMPLATES.TemplateResponse(
+            request, "kill.html", {"active": active, "active_incident": incident}
+        )
 
     @router.post("/dashboard/kill/agent")
     async def kill_agent(
@@ -185,6 +188,24 @@ def build_dashboard_router(
         set_by: str = Form("operator"),
     ):
         await kill_store.clear_fleet(set_by=set_by)
+        return RedirectResponse("/dashboard/kill", status_code=303)
+
+    # --- RUN-07: emergency shutdown + explicit resume ----------------------
+    @router.post("/dashboard/kill/emergency-shutdown")
+    async def emergency_shutdown(
+        _: bool = Depends(require_session),
+        justification: str = Form(...),  # REQUIRED: a missing field is a 422 before the store
+        set_by: str = Form("operator"),
+    ):
+        await kill_store.emergency_shutdown(justification=justification, set_by=set_by)
+        return RedirectResponse("/dashboard/kill", status_code=303)
+
+    @router.post("/dashboard/kill/emergency-resume")
+    async def emergency_resume(
+        _: bool = Depends(require_session),
+        set_by: str = Form("operator"),
+    ):
+        await kill_store.resume_fleet(set_by=set_by)
         return RedirectResponse("/dashboard/kill", status_code=303)
 
     return router

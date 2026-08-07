@@ -50,6 +50,17 @@ class ClearRequest(BaseModel):
     set_by: str = Field(max_length=128)
 
 
+class EmergencyShutdownRequest(BaseModel):
+    """RUN-07 — a fleet emergency stop. Unlike KillRequest's optional `reason`, the justification is
+    REQUIRED: `min_length=1` makes an empty one a 422 at the boundary (whitespace-only survives it
+    and is refused by the store, also as a 422)."""
+
+    model_config = {"extra": "forbid"}
+
+    set_by: str = Field(max_length=128)  # bounded operator input -> 422
+    justification: str = Field(min_length=1, max_length=2000)
+
+
 def _approval_json(row: ApprovalRequest) -> dict:
     return {
         "id": str(row.id),
@@ -141,6 +152,23 @@ def build_kill_router(kill_store: KillSwitchStore) -> APIRouter:
     async def clear_fleet(body: ClearRequest) -> dict:
         await kill_store.clear_fleet(set_by=body.set_by)
         return {"target": "*", "scope": "fleet", "active": False}
+
+    # RUN-07: the emergency stop rides the SAME fleet flag (so the pipeline halts every agent with
+    # no new hot-path code) but requires a justification and records a resumable incident.
+    @router.post("/kill/emergency-shutdown")
+    async def emergency_shutdown(body: EmergencyShutdownRequest) -> dict:
+        try:
+            incident_id = await kill_store.emergency_shutdown(
+                justification=body.justification, set_by=body.set_by
+            )
+        except ValueError as exc:  # whitespace-only survives min_length -> still a 422
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        return {"incident_id": incident_id, "scope": "fleet", "active": True}
+
+    @router.post("/kill/emergency-resume")
+    async def emergency_resume(body: ClearRequest) -> dict:
+        await kill_store.resume_fleet(set_by=body.set_by)
+        return {"scope": "fleet", "active": False}
 
     return router
 
