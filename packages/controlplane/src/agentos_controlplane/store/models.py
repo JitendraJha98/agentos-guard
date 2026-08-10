@@ -476,3 +476,49 @@ class EmergencyShutdown(Base):
     )
     resumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     resumed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class ConsensusRound(Base):
+    """POL-09 — one consensus round for one action: how many voters were asked, how many
+    approved, the quorum required, and whether it was reached.
+
+    Counts, not opinions: the round is the durable answer to "was this action allowed to
+    proceed, and on whose agreement" — the per-voter verdicts hang off it in
+    `consensus_vote`. `reached` is the enforcement-relevant bit; a round short of quorum
+    means the action was denied.
+    """
+
+    __tablename__ = "consensus_round"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    action_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    voters: Mapped[int] = mapped_column(Integer, nullable=False)
+    approvals: Mapped[int] = mapped_column(Integer, nullable=False)
+    quorum: Mapped[int] = mapped_column(Integer, nullable=False)
+    reached: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ConsensusVote(Base):
+    """POL-09 — one voter's verdict in a round.
+
+    `error` records a voter that RAISED or TIMED OUT, which counts as a NO-VOTE
+    (fail-closed): `approved` is False and the exception type / "timeout" is kept here so a
+    silent quorum failure is distinguishable from a deliberate rejection. It is a short
+    type name, never the voter's message — the free text would be attacker-influenceable
+    and the audit event body carries identifiers + counts only.
+    """
+
+    __tablename__ = "consensus_vote"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    round_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    voter: Mapped[str] = mapped_column(String(255), nullable=False)
+    approved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    error: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

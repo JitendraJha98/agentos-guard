@@ -128,6 +128,11 @@ EVENT_KINDS = frozenset(
         # incident id only — the free-text justification stays in the emergency_shutdown TABLE.
         "emergency_shutdown",
         "emergency_resume",
+        # POL-09 (Slice 9f): per-voter verdicts + the round resolution. Short identifiers +
+        # counts only — voter rationale (if any) stays in the consensus_vote TABLE, so the
+        # 4d secret-gate here can never block a consensus round from being recorded.
+        "consensus_vote",
+        "consensus_resolved",
     }
 )
 
