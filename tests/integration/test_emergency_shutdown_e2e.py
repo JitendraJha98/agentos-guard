@@ -214,6 +214,60 @@ def test_dashboard_shutdown_halts_and_shows_the_incident_banner(wired: Wired) ->
     assert wired.kill_store.status(UNSEEN_AGENT) is None
 
 
+def test_dashboard_whitespace_justification_is_not_a_500(wired: Wired) -> None:
+    """The operator emergency surface must never 500 during an incident: the store's ValueError is
+    translated at the dashboard route exactly as it is at the JSON API."""
+    wired.login()
+    browser = TestClient(wired.browser.app, follow_redirects=False, raise_server_exceptions=False)
+    browser.cookies = wired.browser.cookies
+    resp = browser.post("/dashboard/kill/emergency-shutdown", data={"justification": "   "})
+    assert resp.status_code == 422  # not 500
+    assert wired.kill_store.status(AGENT_ID) is None
+    assert wired.kill_store.active_incident() is None
+
+
+def test_routine_fleet_clear_cannot_lift_an_emergency(wired: Wired) -> None:
+    """One click on the shipped RUN-02 'clear fleet' button must not be a second, unjustified way
+    out of an emergency stop — the API 409s and the dashboard never renders that button."""
+    wired.client.post(
+        "/kill/emergency-shutdown", json={"set_by": "op", "justification": "incident 42"}
+    )
+    resp = wired.client.post("/kill/fleet/clear", json={"set_by": "someone"})
+    assert resp.status_code == 409
+    assert wired.evaluate(UNSEEN_AGENT, wired.unseen_token).reasons[0].code == "emergency_killed"
+    assert wired.kill_store.active_incident() is not None
+
+    wired.login()
+    page = wired.browser.get("/dashboard/kill")
+    assert "EMERGENCY SHUTDOWN ACTIVE" in page.text
+    assert "clear fleet" not in page.text  # the emergency row offers RESUME, not a routine clear
+    assert "/dashboard/kill/emergency-resume" in page.text
+
+
+def test_over_long_justification_still_halts_via_the_api(wired: Wired) -> None:
+    """An emergency stop is never vetoed by the LENGTH of its own justification."""
+    resp = wired.client.post(
+        "/kill/emergency-shutdown", json={"set_by": "op", "justification": "x" * 5000}
+    )
+    assert resp.status_code == 200
+    assert wired.evaluate(UNSEEN_AGENT, wired.unseen_token).reasons[0].code == "emergency_killed"
+    with wired.store() as s:
+        assert len(s.scalar(select(EmergencyShutdown)).justification) == 2000
+
+
+def test_secret_shaped_set_by_is_422_and_halts_nothing(wired: Wired) -> None:
+    """A secret-shaped operator id used to halt the fleet and then 500 with ZERO audit records.
+    It must now fail loudly BEFORE anything is halted."""
+    resp = wired.client.post(
+        "/kill/emergency-shutdown",
+        json={"set_by": "AKIAIOSFODNN7EXAMPLE", "justification": "halt"},
+    )
+    assert resp.status_code == 422
+    assert wired.evaluate(AGENT_ID, wired.token).outcome is Outcome.allow
+    assert wired.kill_store.active_incident() is None
+    assert _events(wired.store, "emergency_shutdown") == []
+
+
 def test_unauthenticated_dashboard_shutdown_redirects_and_halts_nothing(wired: Wired) -> None:
     resp = wired.browser.post(  # NO login
         "/dashboard/kill/emergency-shutdown", data={"justification": "incident 42"}

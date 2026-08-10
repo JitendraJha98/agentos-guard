@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy import create_engine, select
 
 from agentos_controlplane.audit import AuditWriter, canonical_json
-from agentos_controlplane.killswitch import KillSwitchStore
+from agentos_controlplane.killswitch import EmergencyActiveError, KillSwitchStore
 from agentos_controlplane.store.engine import create_all, create_session_factory
 from agentos_controlplane.store.models import AuditRecord, EmergencyShutdown
 
@@ -79,7 +79,9 @@ def test_both_event_kinds_are_registered(store) -> None:
 def test_shutdown_halts_every_agent_with_emergency_scope(ks: KillSwitchStore) -> None:
     """The halt is the RUN-02 fleet flag, so even an agent never seen before is denied — but the
     scope is `emergency`, which the pipeline's f"{scope}_killed" renders as emergency_killed."""
-    incident_id = asyncio.run(ks.emergency_shutdown(justification="incident 42", set_by="op"))
+    incident_id = asyncio.run(
+        ks.emergency_shutdown(justification="incident 42", set_by="op")
+    ).incident_id
     assert incident_id
     status = ks.status("an-agent-never-seen-before")
     assert status is not None and status.scope == "emergency"
@@ -87,7 +89,9 @@ def test_shutdown_halts_every_agent_with_emergency_scope(ks: KillSwitchStore) ->
 
 
 def test_shutdown_persists_justification_in_the_table_only(ks: KillSwitchStore, store) -> None:
-    incident_id = asyncio.run(ks.emergency_shutdown(justification="incident 42", set_by="op"))
+    incident_id = asyncio.run(
+        ks.emergency_shutdown(justification="incident 42", set_by="op")
+    ).incident_id
     with store() as s:
         row = s.scalar(select(EmergencyShutdown))
     assert str(row.id) == incident_id
@@ -121,7 +125,9 @@ def test_missing_justification_is_rejected_and_nothing_is_halted(
 
 
 def test_resume_closes_the_incident_and_restores_service(ks: KillSwitchStore, store) -> None:
-    incident_id = asyncio.run(ks.emergency_shutdown(justification="incident 42", set_by="op"))
+    incident_id = asyncio.run(
+        ks.emergency_shutdown(justification="incident 42", set_by="op")
+    ).incident_id
     asyncio.run(ks.resume_fleet(set_by="op2"))
     assert ks.status("a") is None  # service restored
     assert ks.active_incident() is None  # incident closed
@@ -159,7 +165,9 @@ def test_secret_bearing_justification_still_shuts_down_and_never_reaches_audit(
 ) -> None:
     """The whole point of table-only free text: a hostile string must never be able to BLOCK an
     emergency stop by tripping the AUD-04 secret gate."""
-    incident_id = asyncio.run(ks.emergency_shutdown(justification=CANARY, set_by="op"))
+    incident_id = asyncio.run(
+        ks.emergency_shutdown(justification=CANARY, set_by="op")
+    ).incident_id
     assert ks.status("a").scope == "emergency"  # the stop SUCCEEDED
     with store() as s:
         assert s.scalar(select(EmergencyShutdown)).justification == CANARY  # table keeps it
@@ -175,3 +183,149 @@ def test_chain_stays_verifiable_across_shutdown_and_resume(ks: KillSwitchStore, 
     assert verify_chain(store).ok
     asyncio.run(ks.resume_fleet(set_by="op"))
     assert verify_chain(store).ok
+
+
+# --- Slice 9e review fixes ------------------------------------------------------
+
+
+def test_routine_clear_fleet_cannot_lift_an_emergency(ks: KillSwitchStore, store) -> None:
+    """The routine RUN-02 clear path must NOT be a second, unjustified way out of an emergency:
+    it is refused while an incident is open, so the emergency state and the incident row can never
+    diverge (which is what used to let a later routine fleet kill report `emergency`)."""
+    incident_id = asyncio.run(
+        ks.emergency_shutdown(justification="incident 42", set_by="op")
+    ).incident_id
+
+    with pytest.raises(EmergencyActiveError):
+        asyncio.run(ks.clear_fleet(set_by="someone"))
+
+    assert ks.status("a").scope == "emergency"  # still halted — nothing was lifted
+    assert ks.active_incident() == incident_id  # incident still open
+    assert KillSwitchStore(store, AuditWriter(store)).status("a").scope == "emergency"
+
+    # Only the explicit resume gets out, and then the routine paths work normally again.
+    asyncio.run(ks.resume_fleet(set_by="op2"))
+    assert ks.active_incident() is None
+    asyncio.run(ks.kill_fleet(set_by="op", reason="routine"))
+    assert ks.status("a").scope == "fleet"  # NOT a sticky `emergency`
+    assert KillSwitchStore(store, AuditWriter(store)).status("a").scope == "fleet"
+
+
+def test_routine_fleet_kill_is_refused_while_an_incident_is_open(ks: KillSwitchStore) -> None:
+    """A routine fleet kill must not overwrite (and thereby downgrade) a live emergency halt."""
+    asyncio.run(ks.emergency_shutdown(justification="incident 42", set_by="op"))
+    with pytest.raises(EmergencyActiveError):
+        asyncio.run(ks.kill_fleet(set_by="op", reason="routine"))
+    assert ks.status("a").scope == "emergency"
+
+
+def test_list_active_reports_the_emergency_scope_for_the_fleet_row(ks: KillSwitchStore) -> None:
+    """The dashboard renders a 'clear fleet' button off this scope — it must not offer the routine
+    clear for an emergency row."""
+    asyncio.run(ks.emergency_shutdown(justification="incident 42", set_by="op"))
+    assert [k["scope"] for k in ks.list_active() if k["target"] == "*"] == ["emergency"]
+    asyncio.run(ks.resume_fleet(set_by="op"))
+    asyncio.run(ks.kill_fleet(set_by="op", reason="routine"))
+    assert [k["scope"] for k in ks.list_active() if k["target"] == "*"] == ["fleet"]
+
+
+def test_open_incident_alone_reasserts_the_halt_on_restart(store) -> None:
+    """The incident table is AUTHORITATIVE for containment: if the two tables diverge (a crash
+    between the two commits), a restart must come up HALTED, not running."""
+    with store() as s:  # an open incident, and NO kill_switch row — the divergence
+        s.add(EmergencyShutdown(justification="incident 42", declared_by="op"))
+        s.commit()
+    ks = KillSwitchStore(store, AuditWriter(store))
+    status = ks.status("any-agent")
+    assert status is not None and status.scope == "emergency"
+    assert ks.active_incident() is not None
+
+
+def test_over_long_justification_still_halts_and_is_truncated(ks: KillSwitchStore, store) -> None:
+    """A last-resort control must never refuse to fire over input FORMATTING: an operator pasting a
+    stack trace still halts the fleet; only the stored tail is dropped."""
+    long_text = "x" * 5000
+    incident_id = asyncio.run(
+        ks.emergency_shutdown(justification=long_text, set_by="op")
+    ).incident_id
+    assert ks.status("a").scope == "emergency"  # the stop FIRED
+    with store() as s:
+        row = s.scalar(select(EmergencyShutdown))
+    assert str(row.id) == incident_id
+    assert row.justification == "x" * 2000  # head kept, tail dropped
+
+
+def test_a_second_declaration_while_one_is_open_is_refused(ks: KillSwitchStore, store) -> None:
+    """Single-incident model: a second declaration is a 409, so resume can never un-halt the fleet
+    while another operator's incident is still open."""
+    first = asyncio.run(
+        ks.emergency_shutdown(justification="incident A", set_by="alice")
+    ).incident_id
+    with pytest.raises(EmergencyActiveError):
+        asyncio.run(ks.emergency_shutdown(justification="incident B", set_by="bob"))
+    assert ks.active_incident() == first
+    assert ks.status("a").scope == "emergency"
+    with store() as s:
+        assert len(s.scalars(select(EmergencyShutdown)).all()) == 1
+
+
+def test_resume_closes_every_open_incident_before_un_halting(ks: KillSwitchStore, store) -> None:
+    """Defence in depth for pre-existing/legacy rows: the fleet must never come back while ANY
+    declared incident is still open, so resume closes them all."""
+    asyncio.run(ks.emergency_shutdown(justification="incident A", set_by="alice"))
+    with store() as s:  # a second open row smuggled in past the single-incident guard
+        s.add(EmergencyShutdown(justification="incident B", declared_by="bob"))
+        s.commit()
+
+    asyncio.run(ks.resume_fleet(set_by="alice"))
+    assert ks.status("a") is None
+    assert ks.active_incident() is None  # NO incident left open while the fleet runs
+    with store() as s:
+        rows = s.scalars(select(EmergencyShutdown)).all()
+    assert all(r.resumed_at is not None and r.resumed_by == "alice" for r in rows)
+    assert KillSwitchStore(store, AuditWriter(store)).status("a") is None
+
+
+def test_secret_shaped_set_by_is_refused_before_anything_is_halted(
+    ks: KillSwitchStore, store
+) -> None:
+    """`set_by` rides verbatim into two hash-covered audit bodies, so a secret there would trip the
+    AUD-04 gate MID-flight and leave the fleet halted but entirely unaudited. Reject it first."""
+    with pytest.raises(ValueError):
+        asyncio.run(ks.emergency_shutdown(justification="halt", set_by="AKIAIOSFODNN7EXAMPLE"))
+    assert ks.status("a") is None  # nothing halted
+    assert ks.active_incident() is None
+    with store() as s:
+        assert s.scalar(select(EmergencyShutdown)) is None
+    assert _events(store, "emergency_shutdown") == []
+
+
+def test_shutdown_halts_even_when_the_incident_insert_fails(ks: KillSwitchStore) -> None:
+    """Containment FIRST: a DB blip on the durable record must not block the stop."""
+
+    def boom():
+        raise RuntimeError("db down")
+
+    ks._sf = boom
+    result = asyncio.run(ks.emergency_shutdown(justification="incident 42", set_by="op"))
+    assert ks.status("a").scope == "emergency"  # HALTED anyway
+    assert result.incident_id and result.degraded  # reported as degraded, not raised
+
+
+def test_shutdown_reports_degraded_when_the_audit_append_fails(ks: KillSwitchStore) -> None:
+    """`halted but unaudited` must be distinguishable from `not halted at all` — the operator gets
+    the incident id plus a degraded marker instead of a bare exception they would retry."""
+
+    async def boom(*_a, **_k):
+        raise RuntimeError("audit down")
+
+    ks._audit.append_event = boom
+    result = asyncio.run(ks.emergency_shutdown(justification="incident 42", set_by="op"))
+    assert ks.status("a").scope == "emergency"
+    assert result.incident_id == ks.active_incident()
+    assert "audit" in result.degraded
+
+
+def test_a_clean_shutdown_reports_no_degradation(ks: KillSwitchStore) -> None:
+    result = asyncio.run(ks.emergency_shutdown(justification="incident 42", set_by="op"))
+    assert result.degraded == ()

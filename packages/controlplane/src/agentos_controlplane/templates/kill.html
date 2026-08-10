@@ -18,7 +18,11 @@ halted; resume is explicit.</p>
       <td>{{ k.scope }}</td>
       <td>{{ k.reason }}</td>
       <td>
-        {% if k.scope == "fleet" %}
+        {% if k.scope == "emergency" %}
+        <form method="post" action="/dashboard/kill/emergency-resume" style="display:inline">
+          <button type="submit">resume fleet</button>
+        </form>
+        {% elif k.scope == "fleet" %}
         <form method="post" action="/dashboard/kill/fleet/clear" style="display:inline">
           <button type="submit">clear fleet</button>
         </form>

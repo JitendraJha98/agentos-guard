@@ -15,13 +15,13 @@ import secrets
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, FastAPI, Form, Request
+from fastapi import APIRouter, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from agentos_controlplane.approvals import ApprovalStore
 from agentos_controlplane.inventory import InventoryStore
-from agentos_controlplane.killswitch import KillSwitchStore
+from agentos_controlplane.killswitch import EmergencyActiveError, KillSwitchStore
 
 _TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 _COOKIE = "agentos_session"
@@ -177,35 +177,52 @@ def build_dashboard_router(
     async def kill_fleet(
         _: bool = Depends(require_session),
         reason: str = Form(""),
-        set_by: str = Form("operator"),
+        set_by: str = Form("operator", max_length=128),
     ):
-        await kill_store.kill_fleet(set_by=set_by, reason=reason)
+        try:
+            await kill_store.kill_fleet(set_by=set_by, reason=reason)
+        except EmergencyActiveError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         return RedirectResponse("/dashboard/kill", status_code=303)
 
     @router.post("/dashboard/kill/fleet/clear")
     async def clear_fleet(
         _: bool = Depends(require_session),
-        set_by: str = Form("operator"),
+        set_by: str = Form("operator", max_length=128),
     ):
-        await kill_store.clear_fleet(set_by=set_by)
+        try:
+            await kill_store.clear_fleet(set_by=set_by)
+        except EmergencyActiveError as exc:  # the routine clear cannot lift an emergency halt
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         return RedirectResponse("/dashboard/kill", status_code=303)
 
     # --- RUN-07: emergency shutdown + explicit resume ----------------------
+    # Both routes mirror the JSON API's translations: a 500 on the operator emergency surface
+    # during an incident is the wrong failure mode (the HTML `required` attribute does not block a
+    # whitespace-only justification).
     @router.post("/dashboard/kill/emergency-shutdown")
     async def emergency_shutdown(
         _: bool = Depends(require_session),
         justification: str = Form(...),  # REQUIRED: a missing field is a 422 before the store
-        set_by: str = Form("operator"),
+        set_by: str = Form("operator", max_length=128),
     ):
-        await kill_store.emergency_shutdown(justification=justification, set_by=set_by)
+        try:
+            await kill_store.emergency_shutdown(justification=justification, set_by=set_by)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        except EmergencyActiveError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         return RedirectResponse("/dashboard/kill", status_code=303)
 
     @router.post("/dashboard/kill/emergency-resume")
     async def emergency_resume(
         _: bool = Depends(require_session),
-        set_by: str = Form("operator"),
+        set_by: str = Form("operator", max_length=128),
     ):
-        await kill_store.resume_fleet(set_by=set_by)
+        try:
+            await kill_store.resume_fleet(set_by=set_by)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
         return RedirectResponse("/dashboard/kill", status_code=303)
 
     return router

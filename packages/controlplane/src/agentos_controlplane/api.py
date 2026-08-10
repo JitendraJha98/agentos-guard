@@ -20,7 +20,7 @@ from agentos_controlplane.approvals import AlreadyResolvedError, ApprovalStore
 from agentos_controlplane.auth import make_require_token, resolve_api_token
 from agentos_controlplane.circuit_breaker import CircuitBreakerStore
 from agentos_controlplane.inventory import InventoryStore
-from agentos_controlplane.killswitch import KillSwitchStore
+from agentos_controlplane.killswitch import EmergencyActiveError, KillSwitchStore
 from agentos_controlplane.registry import Registry
 from agentos_controlplane.resources import ConstitutionError, ResourceStore, VersionConflict
 from agentos_controlplane.supply_chain import KnownBad, SupplyChainChecker
@@ -53,12 +53,17 @@ class ClearRequest(BaseModel):
 class EmergencyShutdownRequest(BaseModel):
     """RUN-07 — a fleet emergency stop. Unlike KillRequest's optional `reason`, the justification is
     REQUIRED: `min_length=1` makes an empty one a 422 at the boundary (whitespace-only survives it
-    and is refused by the store, also as a 422)."""
+    and is refused by the store, also as a 422).
+
+    There is deliberately NO `max_length` on the justification: a last-resort control must never
+    refuse to fire because its own explanation was too long (an incident responder pasting a stack
+    trace or detector dump). The store truncates what it persists instead.
+    """
 
     model_config = {"extra": "forbid"}
 
     set_by: str = Field(max_length=128)  # bounded operator input -> 422
-    justification: str = Field(min_length=1, max_length=2000)
+    justification: str = Field(min_length=1)
 
 
 def _approval_json(row: ApprovalRequest) -> dict:
@@ -145,12 +150,18 @@ def build_kill_router(kill_store: KillSwitchStore) -> APIRouter:
 
     @router.post("/kill/fleet")
     async def kill_fleet(body: KillRequest) -> dict:
-        await kill_store.kill_fleet(set_by=body.set_by, reason=body.reason or "")
+        try:
+            await kill_store.kill_fleet(set_by=body.set_by, reason=body.reason or "")
+        except EmergencyActiveError as exc:  # never relabel a live emergency halt as routine
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         return {"target": "*", "scope": "fleet", "active": True}
 
     @router.post("/kill/fleet/clear")
     async def clear_fleet(body: ClearRequest) -> dict:
-        await kill_store.clear_fleet(set_by=body.set_by)
+        try:
+            await kill_store.clear_fleet(set_by=body.set_by)
+        except EmergencyActiveError as exc:  # the routine clear is not a way out of an emergency
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         return {"target": "*", "scope": "fleet", "active": False}
 
     # RUN-07: the emergency stop rides the SAME fleet flag (so the pipeline halts every agent with
@@ -158,16 +169,28 @@ def build_kill_router(kill_store: KillSwitchStore) -> APIRouter:
     @router.post("/kill/emergency-shutdown")
     async def emergency_shutdown(body: EmergencyShutdownRequest) -> dict:
         try:
-            incident_id = await kill_store.emergency_shutdown(
+            result = await kill_store.emergency_shutdown(
                 justification=body.justification, set_by=body.set_by
             )
-        except ValueError as exc:  # whitespace-only survives min_length -> still a 422
+        except ValueError as exc:  # whitespace-only / secret-shaped set_by -> 422, halts nothing
             raise HTTPException(status_code=422, detail=str(exc)) from None
-        return {"incident_id": incident_id, "scope": "fleet", "active": True}
+        except EmergencyActiveError as exc:  # one open incident at a time
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        # `degraded` names durability/audit steps that failed while the fleet WAS halted, so the
+        # operator can always tell a halted-but-degraded stop from one that never fired.
+        return {
+            "incident_id": result.incident_id,
+            "scope": "fleet",
+            "active": True,
+            "degraded": list(result.degraded),
+        }
 
     @router.post("/kill/emergency-resume")
     async def emergency_resume(body: ClearRequest) -> dict:
-        await kill_store.resume_fleet(set_by=body.set_by)
+        try:
+            await kill_store.resume_fleet(set_by=body.set_by)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
         return {"scope": "fleet", "active": False}
 
     return router
