@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: phase_in_progress
-stopped_at: 2026-07-17 — Phases 7 AND 8 COMPLETE (4/4 + 8/8 slices, committed to development). AGT re-verification debt cleared. Phase 6's OSS-01 (first tagged PyPI release) is the sole remaining open item across Phases 6-8; Phase 9 not started.
-last_updated: 2026-07-17
-last_activity: 2026-07-17
+stopped_at: 2026-08-11 — Phase 9 COMPLETE (6/6 slices) on branch phase-9-runtime-containment-consensus, pending PR into development. Every graduated outcome now has real enforcement (the sandbox/require_consensus approval substitution is retired). Phase 6's OSS-01 (first tagged PyPI release) remains the sole open item across Phases 6-9; Phase 10 not started.
+last_updated: 2026-08-11
+last_activity: 2026-08-11
 progress:
   total_phases: 14
-  completed_phases: 7
-  total_plans: 43
-  completed_plans: 43
-  percent: 54
+  completed_phases: 8
+  total_plans: 49
+  completed_plans: 49
+  percent: 61
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-01)
 
 **Core value:** Every agent action is intercepted at runtime and returned an explainable, graduated decision grounded in policy + a human-readable constitution, with tamper-evident audit evidence — making unsafe agent behavior structurally impossible rather than merely unlikely.
-**Current focus:** Phase 9 — Runtime Containment & Consensus (not started)
+**Current focus:** Phase 10 — Gateway PEP, Second Adapter & Live Graph (not started). Phase 9 complete, pending PR.
 
 ## Current Position
 
-Phase: 9 (Phases 7 AND 8 complete 2026-07-17)
-Plan: Phase 8 delivered as 8 slices covering all 11 requirements — 8a SEC-04/05, 8b SEC-11, 8c SEC-09, 8d SEC-10, 8e ABOM-01/02, 8f SEC-06/08, 8g SEC-07, 8h SEC-14. Committed directly to `development` (user-chosen delivery mode).
-Status: Phases 1–5, 7, 8 complete; Phase 6 ~5/6 (OSS-01 first PyPI release the sole open item). Phase 9 not started.
-Last activity: 2026-07-17
+Phase: 9 COMPLETE (2026-08-11) — branch `phase-9-runtime-containment-consensus`, pending PR into `development`
+Plan: Phase 9 delivered as 6 slices covering all 6 requirements — 9a RUN-03 sandbox/quarantine, 9b RUN-04 privilege rings, 9c RUN-05 resource isolation, 9d RUN-06 circuit breakers, 9e RUN-07 emergency shutdown, 9f POL-09 2-of-3 consensus. Built via the superpowers workflow (spec -> per-slice plan -> subagent implement + two-stage adversarial review + fix + re-review).
+Status: Phases 1–5, 7, 8, 9 complete; Phase 6 ~5/6 (OSS-01 first PyPI release the sole open item). Phase 10 not started.
+Last activity: 2026-08-11
 
-Progress: [███████████·] 7/14 phases fully done (1–5, 7, 8) + Phase 6 ~5/6
+Progress: [████████████] 8/14 phases fully done (1–5, 7, 8, 9) + Phase 6 ~5/6
 
 ## Performance Metrics
 
