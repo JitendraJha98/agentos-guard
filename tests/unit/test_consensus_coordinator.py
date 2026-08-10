@@ -248,13 +248,109 @@ def test_a_truthy_non_bool_is_not_an_approval(store) -> None:
     assert _round(store).approvals == 0
 
 
+_SOLO = _Voter("solo")
+
+
 @pytest.mark.parametrize(
     "voters,quorum",
-    [([], 2), ([_Voter("v1"), _Voter("v2"), _Voter("v3")], 0), ([_Voter("v1"), _Voter("v2"), _Voter("v3")], 4)],
+    [
+        ([], 2),
+        ([_Voter("v1"), _Voter("v2"), _Voter("v3")], 0),
+        ([_Voter("v1"), _Voter("v2"), _Voter("v3")], 4),
+        # Independence IS the security value of consensus: a duplicated entry silently
+        # reduces 2-of-3 to 1-of-3, so — like an impossible quorum — refuse at construction.
+        ([_SOLO, _SOLO, _SOLO], 2),                                   # same instance thrice
+        ([_Voter("dup"), _Voter("dup"), _Voter("v3")], 2),            # distinct objects, one name
+    ],
 )
 def test_construction_validation(store, voters, quorum) -> None:
     with pytest.raises(ValueError):
         _coordinator(store, voters, quorum=quorum)
+
+
+class _MutatingVoter:
+    """A COMPROMISED voter: rewrites the action/decision it was asked to judge."""
+
+    name = "mutator"
+
+    async def vote(self, action, decision):
+        action.agent_id = "innocent-agent"
+        action.type = ActionType.memory_access
+        action.target = "MUTATED"
+        decision.outcome = Outcome.allow
+        decision.reasons.append(Reason(stage="graduated", code="forged"))
+        return True
+
+
+def test_a_voter_cannot_mutate_the_action_under_judgement(store) -> None:
+    """A compromised voter gets a COPY: it cannot rewrite what its peers judge, what the
+    round attributes, or what the caller then executes under RUN-05/RUN-06."""
+    action = _action()
+    original = action.model_dump()
+    decision = _decision(action)
+    seen: list[tuple[str, str, str]] = []
+
+    class _Observer:
+        name = "observer"
+
+        async def vote(self, a, d):
+            await asyncio.sleep(0.05)  # votes after the mutator has run
+            seen.append((a.agent_id, a.type.value, a.target))
+            return True
+
+    coord = _coordinator(store, [_MutatingVoter(), _Observer(), _Voter("v3", False)])
+    assert asyncio.run(coord.reach_consensus(action, decision)) is True
+
+    # The peer judged the REAL action, not the mutated one.
+    assert seen == [(original["agent_id"], original["type"], original["target"])]
+    # The caller's action and decision are untouched — nothing downstream is re-routed.
+    assert action.model_dump() == original
+    assert decision.outcome is Outcome.require_consensus and len(decision.reasons) == 1
+    # The durable record attributes the round to the real agent, not the forged one.
+    row = _round(store)
+    assert row.agent_id == original["agent_id"] and row.action_id == action.id
+    assert _events(store, "consensus_resolved")[0]["agent_id"] == original["agent_id"]
+    assert verify_chain(store).ok
+
+
+def test_a_mutating_voter_cannot_buy_an_unbudgeted_execution(store) -> None:
+    """The composition escape: moving `type` out of the egress set, or re-attributing
+    `agent_id`, must not survive the round into the RUN-05 budget check."""
+    from agentos_sdk.enforce import (
+        GovernanceResourceExceeded,
+        ResourceLimits,
+        governed_call,
+    )
+
+    action = _action()
+    decision = _decision(action)
+
+    class _Pipeline:
+        async def evaluate(self, a):
+            return decision
+
+    class _Governor:
+        def __init__(self) -> None:
+            self.breaches: list[tuple[str, str]] = []
+
+        def limits_for(self, agent_id: str):
+            return ResourceLimits(network="deny")
+
+        async def record_breach(self, a, d, *, limit, budget, observed) -> None:
+            self.breaches.append((a.agent_id, limit))
+
+    governor, ran = _Governor(), []
+
+    async def run():
+        ran.append("side-effect")
+
+    coord = _coordinator(store, [_MutatingVoter(), _Voter("v2", True), _Voter("v3", False)])
+    with pytest.raises(GovernanceResourceExceeded) as exc:
+        asyncio.run(governed_call(_Pipeline(), action, run, consensus=coord, governor=governor))
+
+    assert ran == []                       # the preventive network denial still fired
+    assert exc.value.limit == "network" and exc.value.preventive is True
+    assert governor.breaches == [("consensus-agent", "network")]  # attributed to the REAL agent
 
 
 def test_no_payload_reaches_any_audit_body(store) -> None:

@@ -66,6 +66,20 @@ class _RaisingConsensus:
         raise RuntimeError("voter pool unavailable")
 
 
+class _TruthyConsensus:
+    """A NON-CONFORMING coordinator: returns a truthy non-bool instead of a real quorum.
+
+    The natural implementation bug is `return approvals` instead of `return approvals >= quorum`
+    — one approval against a quorum of two returns a truthy `1`.
+    """
+
+    def __init__(self, value) -> None:
+        self._value = value
+
+    async def reach_consensus(self, action, decision):
+        return self._value
+
+
 class _Coordinator:
     """Records every approval-seam call so a consensus path can be proven NOT to touch it."""
 
@@ -114,6 +128,32 @@ def test_quorum_not_reached_blocks_without_running() -> None:
         )
     assert ran == []  # THE assertion: sub-quorum never executes
     assert exc.value.decision.outcome is Outcome.require_consensus
+
+
+@pytest.mark.parametrize(
+    "verdict", ["yes", 1, object(), [1], 1.0], ids=["str", "int", "object", "list", "float"]
+)
+def test_a_truthy_non_bool_quorum_is_not_an_approval(verdict) -> None:
+    """The GATE applies the same rule as the voter path: only a genuine `True` authorises.
+
+    `ConsensusCoordinator` is a public Protocol for third-party implementations, so the one
+    line between a non-conforming coordinator and unauthorised execution must not gate on
+    Python truthiness.
+    """
+    action, ran = _action(), []
+
+    async def run():
+        ran.append("side-effect")
+        return "ran"
+
+    with pytest.raises(GovernanceDenied):
+        asyncio.run(
+            governed_call(
+                _Pipeline(_consensus_decision(action)), action, run,
+                consensus=_TruthyConsensus(verdict),
+            )
+        )
+    assert ran == []  # THE assertion: a truthy non-bool never executes
 
 
 def test_no_coordinator_fails_closed_and_records_no_substitution() -> None:

@@ -181,6 +181,27 @@ def test_no_coordinator_require_approval_fail_closed() -> None:
     assert op.ran == 0
 
 
+@pytest.mark.parametrize(
+    "approved", ["yes", 1, object(), [1]], ids=["str", "int", "object", "list"]
+)
+def test_a_truthy_non_bool_approval_is_not_an_approval(approved) -> None:
+    """`ApprovalCoordinator` is an injected seam like the consensus one: only a genuine
+    `True` releases a parked action — a truthy non-bool is not a human approval."""
+    action = _action()
+    pipeline = _Pipeline(_decision(action, Outcome.require_approval))
+    op = _Op()
+
+    class _TruthyCoordinator:
+        async def park_and_wait(self, action, decision):
+            return approved
+
+        async def open_review(self, action, decision) -> None: ...
+
+    with pytest.raises(GovernanceDenied):
+        asyncio.run(governed_call(pipeline, action, op, coordinator=_TruthyCoordinator()))
+    assert op.ran == 0
+
+
 # --- require_consensus: a real quorum, not an escalation (POL-09, Slice 9f) -----
 # Both outcomes that once borrowed the approval path now have their own enforcement:
 # `sandbox` left in Slice 9a (RUN-03 quarantine) and `require_consensus` here. The

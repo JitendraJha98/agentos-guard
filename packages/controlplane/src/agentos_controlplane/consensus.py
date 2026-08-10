@@ -9,7 +9,11 @@ the handler runs only if this returns True. Everything about that return is fail
   is silence;
 * only a genuine boolean `True` is an approval. A truthy non-bool (`"yes"`, `1`, an object)
   is recorded as a rejection, so a mis-implemented voter cannot smuggle an action past the
-  quorum on Python's truthiness rules.
+  quorum on Python's truthiness rules — the same rule the SDK gate applies to this class's
+  own return value;
+* voters must be DISTINCT (refused at construction) and are handed read-only COPIES of the
+  action and decision, so a compromised voter can neither fill the quorum by itself nor
+  rewrite what its peers judge, what the round attributes, or what then executes.
 
 The round and every vote are persisted; each vote plus the resolution is audited with short
 identifiers + counts only, so the AUD-04 secret gate on `append_event` can never refuse — and
@@ -48,6 +52,14 @@ class StoreConsensusCoordinator:
             raise ValueError("consensus requires at least one voter")
         if quorum < 1 or quorum > len(voters):
             raise ValueError(f"quorum must be between 1 and {len(voters)}, got {quorum}")
+        # INDEPENDENCE is the security value of consensus: a duplicated entry silently reduces
+        # 2-of-3 to 1-of-3 while the audit still shows three votes. Same class of configuration
+        # bug as an impossible quorum — refuse at construction, not per action.
+        if len({id(v) for v in voters}) != len(voters):
+            raise ValueError("the same voter instance was supplied more than once")
+        names = [v.name for v in voters]
+        if len(set(names)) != len(names):
+            raise ValueError(f"voter names must be distinct, got {names}")
         self._session_factory = session_factory
         self._audit = audit
         self._voters = voters
@@ -57,8 +69,13 @@ class StoreConsensusCoordinator:
     async def _one_vote(self, voter, action, decision) -> tuple[str, bool, str | None]:
         """One voter's verdict, never raising: every failure mode becomes a NO-VOTE."""
         try:
+            # A COPY per voter: consensus exists for the case where a voter is compromised or
+            # disagrees, so no voter may rewrite the action its peers judge, the attribution the
+            # round records, or the action the caller then executes under RUN-05/RUN-06. The
+            # coordinator persists and audits from its own untouched `action`.
             verdict = await asyncio.wait_for(
-                voter.vote(action, decision), timeout=self._timeout_s
+                voter.vote(action.model_copy(deep=True), decision.model_copy(deep=True)),
+                timeout=self._timeout_s,
             )
             # `is True`, not truthiness: only an explicit boolean approval counts.
             return (voter.name, verdict is True, None)

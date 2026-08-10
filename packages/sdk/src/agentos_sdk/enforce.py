@@ -122,8 +122,9 @@ class ConsensusCoordinator(Protocol):
 
     The concrete coordinator is `agentos_controlplane.consensus.StoreConsensusCoordinator`,
     which asks the voters concurrently with a per-voter timeout, persists the round + per-vote
-    verdicts, and audits each vote plus the resolution. A False return denies the action;
-    application-level voting is the scope here — protocol-level BFT is POL-12 (Phase 13).
+    verdicts, and audits each vote plus the resolution. ONLY a genuine `True` authorises the
+    action — anything else, truthy or not, denies it; application-level voting is the scope
+    here — protocol-level BFT is POL-12 (Phase 13).
     """
 
     async def reach_consensus(self, action: AgentAction, decision: Decision) -> bool: ...
@@ -578,7 +579,10 @@ async def governed_call(
         # denies, because only agreement may let the action through.
         if consensus is None:
             raise GovernanceDenied(decision)
-        if not await consensus.reach_consensus(action, decision):
+        # `is not True`, not falsiness: the coordinator is an INJECTED seam and a public
+        # Protocol, so the gate applies the same rule the voter path does — a truthy non-bool
+        # (the `return approvals` instead of `return approvals >= quorum` bug) is not a quorum.
+        if await consensus.reach_consensus(action, decision) is not True:
             raise GovernanceDenied(decision)  # quorum not reached
         # The SAME execution helper as every other run site: consensus approval buys the
         # action a run, not an exemption from RUN-05 budgets or RUN-06 error reporting.
@@ -587,7 +591,7 @@ async def governed_call(
     if coordinator is None:
         raise GovernanceDenied(decision)  # fail-closed: nothing can block-await
     approved = await coordinator.park_and_wait(action, decision)
-    if not approved:
+    if approved is not True:  # same rule as the consensus gate: only a genuine True releases
         raise GovernanceDenied(decision)
     # RUN-05 applies to the POST-APPROVAL run site too — otherwise requesting approval would be a
     # trivial way to buy an unbudgeted execution. RUN-06 reporting wraps it for the same reason.
