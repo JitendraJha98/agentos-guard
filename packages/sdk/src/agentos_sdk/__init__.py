@@ -17,6 +17,8 @@ from agentos_sdk.coverage import (
 from agentos_sdk.enforce import (
     ApprovalCoordinator,
     CircuitReporter,
+    ConsensusCoordinator,
+    ConsensusVoter,
     GovernanceDenied,
     GovernanceQuarantined,
     GovernanceResourceExceeded,
@@ -83,6 +85,9 @@ __all__ = [
     "GovernanceResourceExceeded",
     # RUN-06 breaker signal sink for EXECUTION errors (violations are counted by the PDP)
     "CircuitReporter",
+    # POL-09 consensus: `require_consensus` executes only on a quorum of independent voters
+    "ConsensusVoter",
+    "ConsensusCoordinator",
     # interception coverage (INT-06)
     "covers",
     "covered_types",

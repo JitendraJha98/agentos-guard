@@ -5,9 +5,10 @@ MCP, and delegation boundaries have no middleware hook, so the SDK governs them 
 thin async wrappers. Each one normalizes the operation into the same `AgentAction`
 and delegates to the ONE enforcement core (`governed_call`) with the same injected
 coordinator/dispatcher/sandbox seams as the middleware hooks — the full outcome map
-applies: executable outcomes run the wrapped operation, blocking outcomes park-and-await
+applies: executable outcomes run the wrapped operation, `require_approval` parks-and-awaits
 via the coordinator (fail-closed without one), a `sandbox` outcome quarantines via the
-sandbox runner (RUN-03; fail-closed without one), and deny raises `GovernanceDenied`
+sandbox runner (RUN-03; fail-closed without one), `require_consensus` needs a quorum from
+the consensus coordinator (POL-09; fail-closed without one), and deny raises `GovernanceDenied`
 WITHOUT executing it (no side effect: no memory write, no MCP egress, no sub-agent
 dispatch).
 
@@ -26,6 +27,7 @@ from agentos_contract import PipelineProtocol
 from agentos_sdk.enforce import (
     ApprovalCoordinator,
     CircuitReporter,
+    ConsensusCoordinator,
     ResourceGovernor,
     SandboxRunner,
     SideEffectDispatcher,
@@ -53,6 +55,7 @@ async def governed_memory_access(
     coordinator: ApprovalCoordinator | None = None,
     dispatcher: SideEffectDispatcher | None = None,
     sandbox: SandboxRunner | None = None,
+    consensus: ConsensusCoordinator | None = None,
     governor: ResourceGovernor | None = None,
     reporter: CircuitReporter | None = None,
 ) -> _T:
@@ -68,7 +71,7 @@ async def governed_memory_access(
     return await governed_call(
         pipeline, action, run,
         coordinator=coordinator, dispatcher=dispatcher, sandbox=sandbox,
-        governor=governor, reporter=reporter,
+        consensus=consensus, governor=governor, reporter=reporter,
     )
 
 
@@ -85,6 +88,7 @@ async def governed_mcp_call(
     coordinator: ApprovalCoordinator | None = None,
     dispatcher: SideEffectDispatcher | None = None,
     sandbox: SandboxRunner | None = None,
+    consensus: ConsensusCoordinator | None = None,
     governor: ResourceGovernor | None = None,
     reporter: CircuitReporter | None = None,
 ) -> _T:
@@ -96,7 +100,7 @@ async def governed_mcp_call(
     return await governed_call(
         pipeline, action, run,
         coordinator=coordinator, dispatcher=dispatcher, sandbox=sandbox,
-        governor=governor, reporter=reporter,
+        consensus=consensus, governor=governor, reporter=reporter,
     )
 
 
@@ -112,6 +116,7 @@ async def governed_delegation(
     coordinator: ApprovalCoordinator | None = None,
     dispatcher: SideEffectDispatcher | None = None,
     sandbox: SandboxRunner | None = None,
+    consensus: ConsensusCoordinator | None = None,
     governor: ResourceGovernor | None = None,
     reporter: CircuitReporter | None = None,
 ) -> _T:
@@ -124,5 +129,5 @@ async def governed_delegation(
     return await governed_call(
         pipeline, action, run,
         coordinator=coordinator, dispatcher=dispatcher, sandbox=sandbox,
-        governor=governor, reporter=reporter,
+        consensus=consensus, governor=governor, reporter=reporter,
     )

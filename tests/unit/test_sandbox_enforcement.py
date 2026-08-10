@@ -7,8 +7,8 @@ every existing `except GovernanceDenied` site already treats it as a non-executi
 and a caller can never mistake a quarantine for a successful result.
 
 Fail-closed is preserved: no runner wired -> plain `GovernanceDenied` with nothing
-executed and NO `enforcement_substitution` recorded (the substitution belongs to
-`require_consensus` only until Slice 9f).
+executed and NO `enforcement_substitution` recorded (Slice 9f retired the substitution
+set entirely — `require_consensus`, its last member, now needs a real quorum).
 """
 
 from __future__ import annotations
@@ -167,8 +167,9 @@ def test_sandbox_runner_failure_propagates_without_running_the_handler() -> None
     assert ran == []
 
 
-def test_sandbox_is_not_in_the_substitution_set() -> None:
-    """RUN-03 is real: only `require_consensus` still borrows the approval path (Slice 9f)."""
-    from agentos_sdk.enforce import _SUBSTITUTED_TO_APPROVAL
+def test_the_substitution_set_is_gone_entirely() -> None:
+    """RUN-03 removed `sandbox` from it in 9a; POL-09 removed `require_consensus` — its last
+    member — in 9f, so the set itself is retired and NO outcome borrows the approval path."""
+    import agentos_sdk.enforce as enforce
 
-    assert _SUBSTITUTED_TO_APPROVAL == frozenset({Outcome.require_consensus})
+    assert not hasattr(enforce, "_SUBSTITUTED_TO_APPROVAL")

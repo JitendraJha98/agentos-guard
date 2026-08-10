@@ -38,6 +38,7 @@ from agentos_contract import PipelineProtocol
 from agentos_sdk.enforce import (
     ApprovalCoordinator,
     CircuitReporter,
+    ConsensusCoordinator,
     GovernanceDenied,
     ResourceGovernor,
     SandboxRunner,
@@ -53,9 +54,9 @@ class GovernanceMiddleware(AgentMiddleware):
     Two native LangChain hooks are governed here: tool calls (INT-01) and model
     invocations (INT-02). Memory, MCP, and delegation are not LangChain middleware
     hooks — they are governed by the SDK wrappers in `agentos_sdk.wrappers`, sharing
-    the same enforcement core. Without a `coordinator`, blocking outcomes
-    (require_approval / require_consensus) fail CLOSED; without a `sandbox` runner,
-    so does the `sandbox` outcome (RUN-03).
+    the same enforcement core. Without a `coordinator`, `require_approval` fails
+    CLOSED; without a `sandbox` runner, so does the `sandbox` outcome (RUN-03);
+    without a `consensus` coordinator, so does `require_consensus` (POL-09).
     """
 
     def __init__(
@@ -66,6 +67,7 @@ class GovernanceMiddleware(AgentMiddleware):
         coordinator: ApprovalCoordinator | None = None,
         dispatcher: SideEffectDispatcher | None = None,
         sandbox: SandboxRunner | None = None,
+        consensus: ConsensusCoordinator | None = None,
         governor: ResourceGovernor | None = None,
         reporter: CircuitReporter | None = None,
     ) -> None:
@@ -74,6 +76,7 @@ class GovernanceMiddleware(AgentMiddleware):
         self._coordinator = coordinator
         self._dispatcher = dispatcher
         self._sandbox = sandbox
+        self._consensus = consensus  # POL-09 quorum seam (None = require_consensus fails closed)
         self._governor = governor  # RUN-05 per-agent execution budgets (None = unbudgeted)
         self._reporter = reporter  # RUN-06 breaker signal sink for EXECUTION errors (None = off)
 
@@ -89,6 +92,7 @@ class GovernanceMiddleware(AgentMiddleware):
                 coordinator=self._coordinator,
                 dispatcher=self._dispatcher,
                 sandbox=self._sandbox,
+                consensus=self._consensus,
                 governor=self._governor,
                 reporter=self._reporter,
             )
@@ -122,6 +126,7 @@ class GovernanceMiddleware(AgentMiddleware):
                 coordinator=self._coordinator,
                 dispatcher=self._dispatcher,
                 sandbox=self._sandbox,
+                consensus=self._consensus,
                 governor=self._governor,
                 reporter=self._reporter,
             )

@@ -16,9 +16,9 @@ The outcome-enforcement map (replaces the interim `should_execute`, retired):
     sandbox                    -> quarantine via the SandboxRunner seam (RUN-03):
                                   `run` is NEVER awaited -> GovernanceQuarantined;
                                   no runner -> GovernanceDenied (fail-closed)
-    require_consensus          -> escalate to the approval path until POL-09
-                                  (Slice 9f), audited as `enforcement_substitution`;
-                                  no coordinator -> GovernanceDenied
+    require_consensus          -> 2-of-3 consensus via the ConsensusCoordinator
+                                  seam (POL-09): `run` executes only on a QUORUM;
+                                  no coordinator -> GovernanceDenied (fail-closed)
     deny                       -> GovernanceDenied
 
 Resource budgets (RUN-05, Slice 9c) wrap BOTH `await run()` sites through
@@ -43,7 +43,9 @@ keeps its review.
 The collaborators are structural Protocols (no control-plane import): the
 concrete coordinator is `agentos_controlplane.coordinator.StoreApprovalCoordinator`,
 the concrete sandbox runner is `agentos_controlplane.sandbox.QuarantineSandbox`,
-the concrete dispatcher arrives with PIPE-09 dispatch.
+the concrete consensus coordinator is
+`agentos_controlplane.consensus.StoreConsensusCoordinator`, the concrete
+dispatcher arrives with PIPE-09 dispatch.
 """
 
 from __future__ import annotations
@@ -101,6 +103,30 @@ class SandboxRunner(Protocol):
     """
 
     async def run(self, action: AgentAction, decision: Decision) -> SandboxResult: ...
+
+
+class ConsensusVoter(Protocol):
+    """POL-09 — one independent voter. `name` identifies it in the audit trail.
+
+    A voter that raises or times out counts as a NO-VOTE (fail-closed) — it never counts as
+    approval, and neither does a truthy non-boolean: only a genuine `True` approves.
+    """
+
+    name: str
+
+    async def vote(self, action: AgentAction, decision: Decision) -> bool: ...
+
+
+class ConsensusCoordinator(Protocol):
+    """POL-09 seam: collect votes and report whether QUORUM was reached.
+
+    The concrete coordinator is `agentos_controlplane.consensus.StoreConsensusCoordinator`,
+    which asks the voters concurrently with a per-voter timeout, persists the round + per-vote
+    verdicts, and audits each vote plus the resolution. A False return denies the action;
+    application-level voting is the scope here — protocol-level BFT is POL-12 (Phase 13).
+    """
+
+    async def reach_consensus(self, action: AgentAction, decision: Decision) -> bool: ...
 
 
 class SideEffectDispatcher(Protocol):
@@ -260,10 +286,12 @@ _EGRESS_TYPES = frozenset(
 _EXECUTABLE = frozenset(
     {Outcome.allow, Outcome.warn, Outcome.temporary_exception, Outcome.governance_review}
 )
-# Outcomes whose dedicated enforcement is not realized until POL-09 (Slice 9f):
-# substituted with the approval path, audited as such. `sandbox` LEFT this set in
-# Slice 9a — RUN-03 containment is real now (see the `Outcome.sandbox` route below).
-_SUBSTITUTED_TO_APPROVAL = frozenset({Outcome.require_consensus})
+# The interim `_SUBSTITUTED_TO_APPROVAL` escalation set is RETIRED (Slice 9f): `sandbox` left
+# it in 9a for real RUN-03 containment and `require_consensus` — its last member — now routes
+# to the ConsensusCoordinator seam below, so every outcome has its own enforcement. The
+# `ApprovalCoordinator.record_substitution` seam and the `enforcement_substitution` audit kind
+# are DELIBERATELY kept: chains written before this slice contain those records, and the
+# verifier must still accept the kind.
 
 
 def _review_obliged(decision: Decision) -> bool:
@@ -503,6 +531,7 @@ async def governed_call(
     coordinator: ApprovalCoordinator | None = None,
     dispatcher: SideEffectDispatcher | None = None,
     sandbox: SandboxRunner | None = None,
+    consensus: ConsensusCoordinator | None = None,
     governor: ResourceGovernor | None = None,
     reporter: CircuitReporter | None = None,
 ) -> _T:
@@ -542,17 +571,21 @@ async def governed_call(
             raise GovernanceDenied(decision)
         result = await sandbox.run(action, decision)
         raise GovernanceQuarantined(decision, result)
-    # Blocking outcomes from here: require_approval natively; require_consensus
-    # escalated onto the same path (audited substitution) until Slice 9f.
+    if outcome is Outcome.require_consensus:
+        # POL-09: 2-of-3 agent agreement. No coordinator wired -> fail closed, exactly like a
+        # blocking outcome without an approval coordinator: `run` is never awaited. Anything
+        # short of quorum — including a voter that errored, timed out, or stayed silent —
+        # denies, because only agreement may let the action through.
+        if consensus is None:
+            raise GovernanceDenied(decision)
+        if not await consensus.reach_consensus(action, decision):
+            raise GovernanceDenied(decision)  # quorum not reached
+        # The SAME execution helper as every other run site: consensus approval buys the
+        # action a run, not an exemption from RUN-05 budgets or RUN-06 error reporting.
+        return await _run_reported(run, action, decision, governor, reporter)
+    # The one remaining blocking outcome: require_approval (POL-07).
     if coordinator is None:
         raise GovernanceDenied(decision)  # fail-closed: nothing can block-await
-    if outcome in _SUBSTITUTED_TO_APPROVAL:
-        await coordinator.record_substitution(
-            action,
-            decision,
-            requested=outcome.value,
-            substituted=Outcome.require_approval.value,
-        )
     approved = await coordinator.park_and_wait(action, decision)
     if not approved:
         raise GovernanceDenied(decision)

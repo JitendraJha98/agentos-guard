@@ -8,8 +8,8 @@
 | require_approval           | park + block-await; no coordinator -> GovernanceDenied     |
 | sandbox                    | quarantined via SandboxRunner (RUN-03) — see               |
 |                            | test_sandbox_enforcement.py; no runner -> GovernanceDenied |
-| require_consensus          | escalate to the approval path (audited substitution)       |
-|                            | until Slice 9f; no coordinator -> GovernanceDenied         |
+| require_consensus          | 2-of-3 quorum via ConsensusCoordinator (POL-09) — see      |
+|                            | test_consensus_enforcement.py; no coordinator -> Denied    |
 | deny                       | GovernanceDenied                                           |
 
 PDP decides, PEP blocks: the blocking lives HERE (the SDK enforcement core) via
@@ -181,38 +181,51 @@ def test_no_coordinator_require_approval_fail_closed() -> None:
     assert op.ran == 0
 
 
-# --- require_consensus: substituted escalation (until POL-09, Slice 9f) ---------
-# `sandbox` LEFT this set in Slice 9a: RUN-03 quarantines it instead — its own
-# enforcement tests live in tests/unit/test_sandbox_enforcement.py.
+# --- require_consensus: a real quorum, not an escalation (POL-09, Slice 9f) -----
+# Both outcomes that once borrowed the approval path now have their own enforcement:
+# `sandbox` left in Slice 9a (RUN-03 quarantine) and `require_consensus` here. The
+# substitution set is retired; the detailed consensus tests live in
+# tests/unit/test_consensus_enforcement.py.
 
 
 @pytest.mark.parametrize("outcome", [Outcome.require_consensus])
-def test_unrealized_outcomes_escalate_to_approval_path(approvals, store, outcome) -> None:
+def test_consensus_outcomes_never_borrow_the_approval_path(approvals, store, outcome) -> None:
+    """A quorum executes the action WITHOUT parking a human approval and WITHOUT an
+    `enforcement_substitution` — the interim escalation is gone."""
+
+    class _Consensus:
+        async def reach_consensus(self, action, decision) -> bool:
+            return True
+
     action = _action()
     pipeline = _Pipeline(_decision(action, outcome))
     coord = _coordinator(approvals)
     op = _Op()
 
-    async def scenario():
-        resolver = asyncio.create_task(_resolve_when_parked(approvals, approved=True))
-        result = await governed_call(pipeline, action, op, coordinator=coord)
-        await resolver
-        return result
-
-    assert asyncio.run(scenario()) == "ran" and op.ran == 1
-    subs = _events(store, "enforcement_substitution")
-    assert len(subs) == 1
-    assert subs[0]["requested"] == outcome.value
-    assert subs[0]["substituted"] == "require_approval"
+    result = asyncio.run(
+        governed_call(pipeline, action, op, coordinator=coord, consensus=_Consensus())
+    )
+    assert result == "ran" and op.ran == 1
+    assert _events(store, "enforcement_substitution") == []  # no escalation was recorded
+    assert approvals.list_requests() == []                   # and nothing was parked
 
 
 @pytest.mark.parametrize("outcome", [Outcome.require_consensus])
-def test_unrealized_outcomes_without_coordinator_blocked(outcome) -> None:
+def test_consensus_outcomes_without_a_consensus_coordinator_blocked(
+    approvals, store, outcome
+) -> None:
+    """Fail-closed: an APPROVAL coordinator is not a stand-in for a consensus one —
+    without the consensus seam the action is denied, unparked and unsubstituted."""
     action = _action()
     op = _Op()
+    coord = _coordinator(approvals)
     with pytest.raises(GovernanceDenied):
-        asyncio.run(governed_call(_Pipeline(_decision(action, outcome)), action, op))
+        asyncio.run(
+            governed_call(_Pipeline(_decision(action, outcome)), action, op, coordinator=coord)
+        )
     assert op.ran == 0
+    assert _events(store, "enforcement_substitution") == []
+    assert approvals.list_requests() == []
 
 
 def test_sandbox_does_not_record_a_substitution(approvals, store) -> None:
@@ -435,3 +448,15 @@ def test_should_execute_is_retired() -> None:
     import agentos_sdk.enforce as enforce
 
     assert not hasattr(enforce, "should_execute")
+
+
+def test_substitution_set_is_retired() -> None:
+    """POL-09 emptied it: every outcome now has its own enforcement, so the escalation set
+    and its branch are gone. `record_substitution` and the `enforcement_substitution` event
+    kind SURVIVE — chains written before this slice contain those records."""
+    import agentos_sdk.enforce as enforce
+    from agentos_controlplane.audit import EVENT_KINDS
+
+    assert not hasattr(enforce, "_SUBSTITUTED_TO_APPROVAL")
+    assert hasattr(enforce.ApprovalCoordinator, "record_substitution")
+    assert "enforcement_substitution" in EVENT_KINDS
