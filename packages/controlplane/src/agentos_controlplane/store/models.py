@@ -190,6 +190,30 @@ class KillSwitch(Base):
     )
 
 
+class SandboxRun(Base):
+    """RUN-03 — one quarantined (sandboxed) execution.
+
+    The REAL handler never ran; this row IS the observation record. `detail` is a short,
+    REDACTED summary — never the raw payload. It lives HERE and not in the audit-event
+    body (which carries short identifiers only) so the AUD-04 secret gate on
+    `append_event` can never refuse — and thereby block — a containment event, exactly
+    the discipline `KillSwitch.reason` follows.
+    """
+
+    __tablename__ = "sandbox_run"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    action_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    action_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    target: Mapped[str] = mapped_column(Text, nullable=False)
+    quarantined: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class ChainCheckpoint(Base):
     """AUD-05 — an external anchor binding the chain head {seq, record_hash} to an unforgeable proof.
 
@@ -345,5 +369,156 @@ class InventoryComponent(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AgentPrivilege(Base):
+    """RUN-04 — the capability tier (privilege ring) an agent HOLDS. Higher = more privileged;
+    absent means ring 0 (least privileged)."""
+
+    __tablename__ = "agent_privilege"
+
+    agent_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    ring: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    set_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class TargetPrivilege(Base):
+    """RUN-04 — the ring a sensitive TARGET (tool / memory key / MCP tool / model) REQUIRES.
+
+    Registered-sensitivity model: only rows present here are gated. An unregistered target is
+    ring 0 (ungated by this stage) and remains governed by the constitution floor — so adding this
+    stage cannot silently break an existing deployment.
+    """
+
+    __tablename__ = "target_privilege"
+
+    target: Mapped[str] = mapped_column(String(255), primary_key=True)
+    required_ring: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    set_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ResourceLimit(Base):
+    """RUN-05 — the per-agent execution budget enforced at the PEP. NULL on a numeric column means
+    NO limit for that dimension; an absent row means the agent is unbudgeted (the zero-overhead
+    default path in `agentos_sdk.enforce._run_within_limits`).
+
+    What each dimension actually guarantees differs, and the SDK's `GovernanceResourceExceeded`
+    documents it: `network` prevents (the handler never runs), `wall_s` cancels cooperatively, and
+    `memory_mb` is detected at COMPLETION. This table stores the budget, not a promise of kernel
+    enforcement — that is the opt-in `posix_limits` path and the Phase-10/14 boundaries.
+    """
+
+    __tablename__ = "resource_limit"
+
+    agent_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    wall_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    memory_mb: Mapped[float | None] = mapped_column(Float, nullable=True)
+    network: Mapped[str] = mapped_column(String(16), nullable=False, default="allow")
+    set_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CircuitBreakerState(Base):
+    """RUN-06 — the DURABLE state of one breaker, identified by the COMPOSITE PK
+    (scope, agent_id, target); `target` is "" for the agent scope.
+
+    Three columns rather than one concatenated `"agent_id|target"` key: both parts are free-form (an
+    agent registers its own id, a target is arbitrary) and may contain the separator, so a
+    single-string key let an attacker's breaker ALIAS a victim's — the tool pair (`a`, `http_get`)
+    and an agent literally named `a|http_get` collapsed onto the same row.
+
+    Only TRANSITIONS are persisted; the rolling-window counters live in memory because a window is a
+    recent-history view, not durable state. `opened_at` is epoch SECONDS (a float) rather than a
+    DateTime: cooldown arithmetic is the only thing it is used for, and a plain epoch avoids
+    naive/aware conversion bugs across the SQLite dev / Postgres target split. Human-readable history
+    lives on the audit chain.
+    """
+
+    __tablename__ = "circuit_breaker_state"
+
+    scope: Mapped[str] = mapped_column(String(16), primary_key=True)  # "agent" | "tool"
+    agent_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    target: Mapped[str] = mapped_column(String(255), primary_key=True, default="")
+    state: Mapped[str] = mapped_column(String(16), nullable=False)  # "open" | "half_open" | "closed"
+    opened_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    trip_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class EmergencyShutdown(Base):
+    """RUN-07 — an append-only record of one fleet-wide emergency stop.
+
+    The `kill_switch` table holds only CURRENT state (it is upserted), so incident HISTORY lives
+    here: who declared the stop, when, why, and when it was resumed. The free-text `justification`
+    lives in this table ONLY — the audit event carries short identifiers + this row's id, so a
+    secret-bearing justification can never trip the AUD-04 gate and block an emergency stop.
+    """
+
+    __tablename__ = "emergency_shutdown"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    justification: Mapped[str] = mapped_column(Text, nullable=False)
+    declared_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    declared_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    resumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resumed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class ConsensusRound(Base):
+    """POL-09 — one consensus round for one action: how many voters were asked, how many
+    approved, the quorum required, and whether it was reached.
+
+    Counts, not opinions: the round is the durable answer to "was this action allowed to
+    proceed, and on whose agreement" — the per-voter verdicts hang off it in
+    `consensus_vote`. `reached` is the enforcement-relevant bit; a round short of quorum
+    means the action was denied.
+    """
+
+    __tablename__ = "consensus_round"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    action_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    voters: Mapped[int] = mapped_column(Integer, nullable=False)
+    approvals: Mapped[int] = mapped_column(Integer, nullable=False)
+    quorum: Mapped[int] = mapped_column(Integer, nullable=False)
+    reached: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ConsensusVote(Base):
+    """POL-09 — one voter's verdict in a round.
+
+    `error` records a voter that RAISED or TIMED OUT, which counts as a NO-VOTE
+    (fail-closed): `approved` is False and the exception type / "timeout" is kept here so a
+    silent quorum failure is distinguishable from a deliberate rejection. It is a short
+    type name, never the voter's message — the free text would be attacker-influenceable
+    and the audit event body carries identifiers + counts only.
+    """
+
+    __tablename__ = "consensus_vote"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    round_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    voter: Mapped[str] = mapped_column(String(255), nullable=False)
+    approved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    error: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

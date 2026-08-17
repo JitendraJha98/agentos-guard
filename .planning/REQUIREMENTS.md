@@ -43,7 +43,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **POL-06** [P0]: The graduated-response stage maps {policy, risk, trust} to one outcome in {allow, warn, sandbox, require_consensus, require_approval, deny} with policy-driven thresholds
 - [x] **POL-07** [P0]: A `require_approval` outcome parks an `ApprovalRequest` with full action context, fired principles, and risk/trust scores; the action blocks until resolved or times out to a safe default
 - [x] **POL-08** [P0]: Every `Decision` records the exact Constitution/Policy version that evaluated the action
-- [ ] **POL-09** [P1]: A `require_consensus` outcome requires 2-of-3 agent agreement before the action proceeds
+- [x] **POL-09** [P1]: A `require_consensus` outcome requires 2-of-3 agent agreement before the action proceeds
 - [ ] **POL-10** [P2]: Agents or the self-play trainer can propose Constitution amendments; humans review and ratify; the Constitution is versioned like a legal document
 - [ ] **POL-11** [P2]: A conflict-resolution engine computes transitive permissions across delegation chains and flags emergent capability conflicts
 - [ ] **POL-12** [P2]: BFT consensus backs multi-agent agreement for `require_consensus` at scale
@@ -71,11 +71,11 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 - [x] **RUN-01** [P0]: An operator can kill-switch a single agent, immediately halting its actions
 - [x] **RUN-02** [P0]: An operator can kill-switch the entire fleet immediately
-- [ ] **RUN-03** [P1]: A `sandbox` outcome runs the action in an isolated context with quarantined or reversible side effects
-- [ ] **RUN-04** [P1]: Privilege rings gate sensitive tools behind higher capability tiers per agent
-- [ ] **RUN-05** [P1]: Resource isolation enforces CPU/memory/network limits per agent execution
-- [ ] **RUN-06** [P1]: Circuit breakers auto-trip an agent/tool after a threshold of violations or errors
-- [ ] **RUN-07** [P1]: Emergency shutdown stops the fleet with an audit-logged justification
+- [x] **RUN-03** [P1]: A `sandbox` outcome runs the action in an isolated context with quarantined or reversible side effects
+- [x] **RUN-04** [P1]: Privilege rings gate sensitive tools behind higher capability tiers per agent
+- [x] **RUN-05** [P1]: Resource isolation enforces CPU/memory/network limits per agent execution
+- [x] **RUN-06** [P1]: Circuit breakers auto-trip an agent/tool after a threshold of violations or errors
+- [x] **RUN-07** [P1]: Emergency shutdown stops the fleet with an audit-logged justification
 
 ### Identity
 
@@ -246,7 +246,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | POL-06 | Phase 1 | Complete |
 | POL-07 | Phase 3 | Complete |
 | POL-08 | Phase 3 | Complete |
-| POL-09 | Phase 9 | Pending |
+| POL-09 | Phase 9 | Complete |
 | POL-10 | Phase 13 | Pending |
 | POL-11 | Phase 13 | Pending |
 | POL-12 | Phase 13 | Pending |
@@ -268,11 +268,11 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | SEC-14 | Phase 8 | Complete |
 | RUN-01 | Phase 4 | Complete |
 | RUN-02 | Phase 4 | Complete |
-| RUN-03 | Phase 9 | Pending |
-| RUN-04 | Phase 9 | Pending |
-| RUN-05 | Phase 9 | Pending |
-| RUN-06 | Phase 9 | Pending |
-| RUN-07 | Phase 9 | Pending |
+| RUN-03 | Phase 9 | Complete |
+| RUN-04 | Phase 9 | Complete |
+| RUN-05 | Phase 9 | Complete |
+| RUN-06 | Phase 9 | Complete |
+| RUN-07 | Phase 9 | Complete |
 | IDN-01 | Phase 1 | Complete |
 | IDN-02 | Phase 1 | Complete |
 | IDN-03 | Phase 7 | Complete |

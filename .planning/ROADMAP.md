@@ -30,7 +30,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [~] **Phase 6: Observability, Compliance & Red-Team Gate** - OTel spans/metrics, OWASP/NIST/EU-minimal compliance mapping, and the pytest-native red-team layer that statistically gates CI (closes Phase 0). Slices 6a–6e + OSS-02 merged (PR #16 → development); **OSS-01 (first tagged PyPI release) remains** before Phase 0 fully closes
 - [x] **Phase 7: Trust, Reputation & Identity Hardening** - Longitudinal reputation, bounded delegation trust chains, agent certificates, and reconciliation loops (completed 2026-07-17)
 - [x] **Phase 8: Full Security Engine & MCP Gateway** - Data-exfil, secret-leakage, tool-poisoning, supply-chain, plus the ASI05/06/07 gap detectors and an MCP security gateway (completed 2026-07-17)
-- [ ] **Phase 9: Runtime Containment & Consensus** - Sandbox execution, privilege rings, resource isolation, circuit breakers, emergency shutdown, and 2-of-3 multi-agent consensus
+- [x] **Phase 9: Runtime Containment & Consensus** - Sandbox execution, privilege rings, resource isolation, circuit breakers, emergency shutdown, and 2-of-3 multi-agent consensus
 - [ ] **Phase 10: Gateway PEP, Second Adapter & Live Graph** - Framework-agnostic gateway PEP, a second framework adapter, framework/shadow/rogue discovery, and the live agent graph
 - [ ] **Phase 11: Merkle Audit, Economics, ABOM & Compliance Export** - Merkle DAG audit upgrade, cost/budget governance, Agent Bill of Materials, and one-click EU AI Act + SOC 2 evidence export
 - [ ] **Phase 12: Continuous Adversarial Validation & Rich Dashboard** - Attack-success-rate tracking, scheduled continuous validation, multi-step campaigns, health monitoring, and the rich SLO/graph/attack dashboard
@@ -187,7 +187,13 @@ still dated 2026-06-10); do it before Phase 7 planning.
   2. Resource isolation enforces CPU/memory/network limits per agent execution, and circuit breakers auto-trip an agent/tool after a threshold of violations or errors.
   3. Emergency shutdown stops the fleet with an audit-logged justification.
   4. A `require_consensus` outcome requires 2-of-3 agent agreement (application-level voting) before the action proceeds.
-**Plans**: TBD
+**Plans**: 6 slices (superpowers workflow; spec `docs/superpowers/specs/2026-08-04-phase-9-runtime-containment-consensus-design.md`)
+- [x] 9a — sandboxed execution + quarantined side effects (RUN-03): the SandboxRunner seam replaces the interim approval substitution; the handler is never invoked, the run is persisted + audited, and the result surfaces as GovernanceQuarantined so quarantine can never be mistaken for success
+- [x] 9b — privilege rings (RUN-04): stage-1e gate on a VERIFIED agent, registered-sensitivity model, rings capped by the delegation chain (no borrowing privilege across a delegation edge)
+- [x] 9c — resource isolation (RUN-05): per-agent wall/memory/network budgets at both run sites, with the preventive-vs-detected distinction stated honestly, plus a capability-gated POSIX setrlimit path
+- [x] 9d — circuit breakers (RUN-06): rolling-window trip per agent and per (agent,target), cooldown/half-open recovery, graduated-path-only signals (no feedback loop, no cross-agent trip)
+- [x] 9e — emergency shutdown (RUN-07): fleet stop with a MANDATORY justification that can never veto the stop, an append-only incident record, and resume as the only exit
+- [x] 9f — 2-of-3 consensus (POL-09): the ConsensusCoordinator seam retires the last substitution; only a genuine True from a voter approves, and error/timeout/silence deny
 
 ### Phase 10: Gateway PEP, Second Adapter & Live Graph
 **Goal**: Break the single-framework, SDK-only ceiling — a framework-agnostic gateway PEP, a second framework adapter, framework/shadow/rogue discovery, and a materialized live agent graph behind the same pipeline contract.
@@ -261,7 +267,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 6. Observability, Compliance & Red-Team Gate | 5/6 | In progress (6a–6e + OSS-02 done; OSS-01 first release pending) | - |
 | 7. Trust, Reputation & Identity Hardening | 4/4 | Complete    | 2026-07-17 |
 | 8. Full Security Engine & MCP Gateway | 8/8 | Complete    | 2026-07-17 |
-| 9. Runtime Containment & Consensus | 0/TBD | Not started | - |
+| 9. Runtime Containment & Consensus | 6/6 | Complete    | 2026-08-11 |
 | 10. Gateway PEP, Second Adapter & Live Graph | 0/TBD | Not started | - |
 | 11. Merkle Audit, Economics, ABOM & Compliance Export | 0/TBD | Not started | - |
 | 12. Continuous Adversarial Validation & Rich Dashboard | 0/TBD | Not started | - |

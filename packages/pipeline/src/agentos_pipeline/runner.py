@@ -36,6 +36,7 @@ class names) instead of importing the control plane's RedactionError type.
 
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime, timezone
 from typing import Mapping, Protocol, Sequence
@@ -61,6 +62,7 @@ from agentos_contract.policy_io import (
 
 from agentos_pipeline.delegation import (
     WILDCARD,
+    Authority,
     DelegationDenied,
     DelegationResolver,
 )
@@ -142,6 +144,58 @@ class McpQuarantineLookup(Protocol):
     def is_quarantined(self, server: str, tool: str) -> bool: ...
 
 
+class PrivilegeVerdictProtocol(Protocol):
+    """RUN-04: what a refused privilege check reports."""
+
+    target: str
+    required: int
+    held: int
+
+
+class PrivilegeLookup(Protocol):
+    """RUN-04 seam (PrivilegeRingStore satisfies it). `check` returns None when permitted, a verdict
+    when refused; `held_ring` overrides the agent's own tier with the delegation-chain minimum.
+    `ring_for` is what the delegation resolver caps over. MUST be in-memory (per action, hot path)."""
+
+    def ring_for(self, agent_id: str) -> int: ...
+
+    def check(
+        self, agent_id: str, target: str, *, held_ring: int | None = None
+    ) -> "PrivilegeVerdictProtocol | None": ...
+
+
+class BreakerVerdictProtocol(Protocol):
+    """RUN-06: what a refusing breaker reports. The breaker is identified by (scope, agent_id, target)
+    — three fields, never a concatenated key, so no breaker's identity can alias another's."""
+
+    scope: str
+    agent_id: str
+    target: str   # "" for the agent scope
+    state: str
+
+
+# RUN-06: the outcomes that count as a breaker VIOLATION, written down as a set. Every other outcome
+# records a SUCCESS, so the two sets are exact COMPLEMENTS — the invariant recovery depends on: any
+# outcome that does not trip a closed breaker must be able to close a half-open one. `warn`,
+# POL-14 `governance_review` (proceeds, reviewed asynchronously) and POL-13 `temporary_exception` (a
+# HUMAN-RATIFIED allow that executes) are deliberately NOT violations: counting them while only
+# `allow` could close turned an approval-shaped workload into permanent self-inflicted containment.
+_BREAKER_FAILURES = frozenset(
+    {Outcome.deny, Outcome.sandbox, Outcome.require_consensus, Outcome.require_approval}
+)
+
+
+class CircuitBreakerLookup(Protocol):
+    """RUN-06 seam (CircuitBreakerStore satisfies it). `status` MUST be in-memory (per-action hot
+    path); `record_failure` / `record_success` feed the rolling window."""
+
+    def status(self, agent_id: str, target: str) -> "BreakerVerdictProtocol | None": ...
+
+    async def record_failure(self, agent_id: str, target: str) -> None: ...
+
+    async def record_success(self, agent_id: str, target: str) -> None: ...
+
+
 class CardVerifierProtocol(Protocol):
     """The injected SEC-10/ASI07 seam (control-plane AgentCardVerifier satisfies it).
 
@@ -191,6 +245,8 @@ class Pipeline:
         card_verifier: "CardVerifierProtocol | None" = None,
         mcp_quarantine: "McpQuarantineLookup | None" = None,
         intent_classifier: "IntentSimilarityClassifier | None" = None,
+        privilege: "PrivilegeLookup | None" = None,
+        breaker: "CircuitBreakerLookup | None" = None,
     ) -> None:
         self._identity = identity
         self._policy = policy
@@ -230,6 +286,17 @@ class Pipeline:
         # SEC-14: the embedding-similarity intent classifier. None default: runs never;
         # when wired it runs ONLY on an action the deterministic tagger left untagged.
         self._intent_classifier = intent_classifier
+        # RUN-04: the privilege-ring lookup (in-memory, hot-path). None default: stage 1e never
+        # runs and behavior is unchanged (backward compat).
+        self._privilege = privilege
+        # RUN-06: the circuit-breaker lookup (in-memory, hot-path) AND the signal sink. None
+        # default: stage 1f never runs, nothing is recorded, and behavior is unchanged.
+        self._breaker = breaker
+        # RUN-04 x TRST-04: when BOTH are wired the ring must be chain-capped like trust, or a
+        # ring-0 principal reaches a gated target through a ring-3 delegate. Auto-wired here so
+        # that cannot depend on the operator remembering a second seam.
+        if self._delegation is not None and self._privilege is not None:
+            self._delegation.use_ring_lookup(self._privilege)
 
     async def evaluate(self, action: AgentAction) -> Decision:
         # OBS-02: ensure an app-level correlation id exists (the SDK sets it across a
@@ -336,6 +403,7 @@ class Pipeline:
         # agent must never reach the ledger) and BEFORE policy (the effective trust it
         # yields is what graduated response must consume). None default: unwired
         # deployments behave exactly as before.
+        authority: Authority | None = None
         if self._delegation is not None:
             try:
                 authority = self._delegation.resolve(action, trust)
@@ -410,6 +478,74 @@ class Pipeline:
                         stage="mcp_gateway",
                         code="mcp_tool_quarantined",
                         detail=f"MCP tool {server}/{tool} is quarantined by the security gateway",
+                    )
+                )
+                decision = Decision(
+                    action_id=action.id,
+                    outcome=Outcome.deny,
+                    trust_score=trust,
+                    reasons=reasons,
+                    constitution_version=self._policy.constitution_version,
+                    policy_version=self._policy.policy_version,
+                )
+                await self._append_with_redaction_fallback(action, decision)
+                return decision  # TERMINAL
+
+        # Stage 1e — Privilege rings (RUN-04): a sensitive target requires a capability tier; an
+        # agent holding a lower ring is denied before the action runs. Placed AFTER identity so the
+        # ring is keyed on a VERIFIED agent_id (an unverified caller never consumes ring state), and
+        # AFTER 1b so the resolved authority's chain-capped ring is available. The lookup is
+        # in-memory (no per-action DB read).
+        # None default: unwired deployments skip the check. Only REGISTERED targets are gated, so an
+        # unregistered tool is unaffected and still governed by the constitution floor.
+        if self._privilege is not None:
+            # The held ring is the delegation-chain MINIMUM (TRST-04 shape), never the acting
+            # agent's own tier: otherwise a ring-0 principal borrows a ring-3 delegate's privilege
+            # in one hop — the same laundering the trust budget forbids. None (no delegation wired,
+            # or no ring lookup) -> the store keys on the agent's own ring, exactly as before.
+            held_ring = authority.ring if authority is not None else None
+            pv = self._privilege.check(action.agent_id, action.target, held_ring=held_ring)
+            if pv is not None:
+                floor_box[0] = Outcome.deny  # insufficient privilege may NEVER relax
+                detail = (
+                    f"target {pv.target} requires privilege ring {pv.required}; "
+                    f"agent holds {pv.held}"
+                )
+                if held_ring is not None and authority is not None and authority.depth > 0:
+                    # Name the cap: a delegate refused below its OWN tier is otherwise baffling.
+                    detail += f" (chain-capped over a delegation of depth {authority.depth})"
+                reasons.append(
+                    Reason(stage="privilege", code="insufficient_ring", detail=detail)
+                )
+                decision = Decision(
+                    action_id=action.id,
+                    outcome=Outcome.deny,
+                    trust_score=trust,
+                    reasons=reasons,
+                    constitution_version=self._policy.constitution_version,
+                    policy_version=self._policy.policy_version,
+                )
+                await self._append_with_redaction_fallback(action, decision)
+                return decision  # TERMINAL
+
+        # Stage 1f — Circuit breaker (RUN-06): an agent (or agent+tool pair) that crossed its
+        # violation/error threshold is denied while OPEN. Placed AFTER identity so the breaker keys on
+        # a VERIFIED agent — counting unverified actions would let an attacker trip someone else's
+        # breaker by forging their id. The kill switch (stage 0, OPERATOR intent) is deliberately
+        # checked earlier than this AUTOMATIC trip, and each uses a distinct reason code so audit
+        # forensics can tell them apart. Lookup is in-memory (no per-action DB read).
+        if self._breaker is not None:
+            bv = self._breaker.status(action.agent_id, action.target)
+            if bv is not None:
+                floor_box[0] = Outcome.deny  # an open breaker may NEVER relax
+                reasons.append(
+                    Reason(
+                        stage="circuit_breaker",
+                        code="circuit_open",
+                        detail=(
+                            f"{bv.scope} breaker "
+                            f"{bv.agent_id}{('|' + bv.target) if bv.target else ''} is {bv.state}"
+                        ),
                     )
                 )
                 decision = Decision(
@@ -618,6 +754,29 @@ class Pipeline:
         )
         # SYNC audit write on the hot path (AUD-01); sets evidence_ref before returning.
         await self._append_with_redaction_fallback(action, decision)
+        # RUN-06: feed the breaker from the GRADUATED path only. Every short-circuit deny above
+        # (kill switch, identity, delegation, inter-agent auth, MCP quarantine, privilege, breaker) is
+        # deliberately EXCLUDED: counting the breaker's own denials would make an open breaker feed
+        # itself and never close, and counting pre-identity denials would let a forged id trip another
+        # agent's breaker.
+        if self._breaker is not None:
+            # Advisory telemetry, NEVER part of the verdict: the decision above is ALREADY audited, so
+            # a breaker-side failure (its own DB down, its audit append failing) must not escape into
+            # the PIPE-05 fail-safe — that would hand the PEP a different outcome than the one on the
+            # chain AND write a second, conflicting record for this action. Same discipline as the
+            # advisory semantic interpreter.
+            try:
+                if decision.outcome in _BREAKER_FAILURES:
+                    await self._breaker.record_failure(action.agent_id, action.target)
+                else:
+                    await self._breaker.record_success(action.agent_id, action.target)
+            except Exception as exc:
+                logging.getLogger(__name__).warning(
+                    "circuit-breaker signal dropped for action %s: %s: %s",
+                    action.id,
+                    type(exc).__name__,
+                    exc,
+                )
         return decision
 
     def _apply_exception_transform(

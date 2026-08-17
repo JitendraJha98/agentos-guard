@@ -10,6 +10,7 @@ store, not here, so every writer is audited identically.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
@@ -17,8 +18,9 @@ from pydantic import BaseModel, Field
 
 from agentos_controlplane.approvals import AlreadyResolvedError, ApprovalStore
 from agentos_controlplane.auth import make_require_token, resolve_api_token
+from agentos_controlplane.circuit_breaker import CircuitBreakerStore
 from agentos_controlplane.inventory import InventoryStore
-from agentos_controlplane.killswitch import KillSwitchStore
+from agentos_controlplane.killswitch import EmergencyActiveError, KillSwitchStore
 from agentos_controlplane.registry import Registry
 from agentos_controlplane.resources import ConstitutionError, ResourceStore, VersionConflict
 from agentos_controlplane.supply_chain import KnownBad, SupplyChainChecker
@@ -46,6 +48,22 @@ class ClearRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
     set_by: str = Field(max_length=128)
+
+
+class EmergencyShutdownRequest(BaseModel):
+    """RUN-07 — a fleet emergency stop. Unlike KillRequest's optional `reason`, the justification is
+    REQUIRED: `min_length=1` makes an empty one a 422 at the boundary (whitespace-only survives it
+    and is refused by the store, also as a 422).
+
+    There is deliberately NO `max_length` on the justification: a last-resort control must never
+    refuse to fire because its own explanation was too long (an incident responder pasting a stack
+    trace or detector dump). The store truncates what it persists instead.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    set_by: str = Field(max_length=128)  # bounded operator input -> 422
+    justification: str = Field(min_length=1)
 
 
 def _approval_json(row: ApprovalRequest) -> dict:
@@ -132,13 +150,80 @@ def build_kill_router(kill_store: KillSwitchStore) -> APIRouter:
 
     @router.post("/kill/fleet")
     async def kill_fleet(body: KillRequest) -> dict:
-        await kill_store.kill_fleet(set_by=body.set_by, reason=body.reason or "")
+        try:
+            await kill_store.kill_fleet(set_by=body.set_by, reason=body.reason or "")
+        except EmergencyActiveError as exc:  # never relabel a live emergency halt as routine
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         return {"target": "*", "scope": "fleet", "active": True}
 
     @router.post("/kill/fleet/clear")
     async def clear_fleet(body: ClearRequest) -> dict:
-        await kill_store.clear_fleet(set_by=body.set_by)
+        try:
+            await kill_store.clear_fleet(set_by=body.set_by)
+        except EmergencyActiveError as exc:  # the routine clear is not a way out of an emergency
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         return {"target": "*", "scope": "fleet", "active": False}
+
+    # RUN-07: the emergency stop rides the SAME fleet flag (so the pipeline halts every agent with
+    # no new hot-path code) but requires a justification and records a resumable incident.
+    @router.post("/kill/emergency-shutdown")
+    async def emergency_shutdown(body: EmergencyShutdownRequest) -> dict:
+        try:
+            result = await kill_store.emergency_shutdown(
+                justification=body.justification, set_by=body.set_by
+            )
+        except ValueError as exc:  # whitespace-only / secret-shaped set_by -> 422, halts nothing
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        except EmergencyActiveError as exc:  # one open incident at a time
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        # `degraded` names durability/audit steps that failed while the fleet WAS halted, so the
+        # operator can always tell a halted-but-degraded stop from one that never fired.
+        return {
+            "incident_id": result.incident_id,
+            "scope": "fleet",
+            "active": True,
+            "degraded": list(result.degraded),
+        }
+
+    @router.post("/kill/emergency-resume")
+    async def emergency_resume(body: ClearRequest) -> dict:
+        try:
+            await kill_store.resume_fleet(set_by=body.set_by)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        return {"scope": "fleet", "active": False}
+
+    return router
+
+
+class CircuitResetRequest(BaseModel):
+    """RUN-06 — the breaker an operator is clearing, named STRUCTURALLY. `scope` is explicit (never
+    inferred from punctuation in the id) and `target` is required for the tool scope only."""
+
+    model_config = {"extra": "forbid"}
+
+    scope: Literal["agent", "tool"]
+    agent_id: str = Field(max_length=255)
+    target: str = Field(default="", max_length=255)
+    set_by: str = Field(max_length=128)  # bounded operator input -> 422
+
+
+def build_circuit_router(breaker: CircuitBreakerStore) -> APIRouter:
+    """RUN-06 — the operator escape hatch: an automatic trip must be VISIBLE and CLEARABLE, exactly
+    like the kill switch. Without it a stuck breaker (an agent whose steady-state outcome keeps
+    re-opening it) could only be cleared by a code-level call, and a restart deliberately reloads the
+    OPEN state."""
+    router = APIRouter()
+
+    @router.get("/circuit")
+    def list_open_breakers() -> list[dict]:
+        return breaker.list_open()
+
+    @router.post("/circuit/reset")
+    async def reset_breaker(body: CircuitResetRequest) -> dict:
+        await breaker.reset(body.scope, body.agent_id, body.target, set_by=body.set_by)
+        return {"scope": body.scope, "agent_id": body.agent_id, "target": body.target,
+                "state": "closed"}
 
     return router
 
@@ -318,6 +403,7 @@ def create_app(
     kill_store: KillSwitchStore | None = None,
     resource_store: ResourceStore | None = None,
     inventory_store: InventoryStore | None = None,
+    breaker_store: CircuitBreakerStore | None = None,
     api_token: str | None = None,
     registry: Registry | None = None,
     session_factory=None,
@@ -340,6 +426,10 @@ def create_app(
     # routes are not wired (GET /inventory -> 404), keeping existing create_app callers working.
     if inventory_store is not None:
         app.include_router(build_inventory_router(inventory_store), dependencies=guard)
+    # RUN-06: the breaker router rides the same gate; absent a breaker_store the /circuit routes are
+    # not wired (GET /circuit -> 404), keeping existing create_app callers working.
+    if breaker_store is not None:
+        app.include_router(build_circuit_router(breaker_store), dependencies=guard)
     # SDK-02: self-registration rides the same gate; absent a registry the /agents routes are not
     # wired (POST /agents/{id}/register -> 404), keeping existing create_app callers working.
     if registry is not None:

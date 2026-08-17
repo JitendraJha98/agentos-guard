@@ -16,7 +16,16 @@ from agentos_sdk.coverage import (
 )
 from agentos_sdk.enforce import (
     ApprovalCoordinator,
+    CircuitReporter,
+    ConsensusCoordinator,
+    ConsensusVoter,
     GovernanceDenied,
+    GovernanceQuarantined,
+    GovernanceResourceExceeded,
+    ResourceGovernor,
+    ResourceLimits,
+    SandboxResult,
+    SandboxRunner,
     SideEffectDispatcher,
     format_reasons,
     governed_call,
@@ -65,6 +74,20 @@ __all__ = [
     "format_reasons",
     "ApprovalCoordinator",
     "SideEffectDispatcher",
+    # RUN-03 containment seam: a `sandbox` outcome quarantines instead of executing
+    "SandboxRunner",
+    "SandboxResult",
+    "GovernanceQuarantined",
+    # RUN-05 resource budgets: wall/memory/network per agent, at both run sites.
+    # `GovernanceResourceExceeded.preventive` distinguishes a BLOCK from a post-hoc DETECTION.
+    "ResourceLimits",
+    "ResourceGovernor",
+    "GovernanceResourceExceeded",
+    # RUN-06 breaker signal sink for EXECUTION errors (violations are counted by the PDP)
+    "CircuitReporter",
+    # POL-09 consensus: `require_consensus` executes only on a quorum of independent voters
+    "ConsensusVoter",
+    "ConsensusCoordinator",
     # interception coverage (INT-06)
     "covers",
     "covered_types",

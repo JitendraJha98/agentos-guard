@@ -1,5 +1,13 @@
 {% extends "base.html" %}
 {% block body %}
+{% if active_incident %}
+<p><strong>EMERGENCY SHUTDOWN ACTIVE</strong> — incident {{ active_incident }}. The whole fleet is
+halted; resume is explicit.</p>
+<form method="post" action="/dashboard/kill/emergency-resume">
+  <button type="submit">resume fleet</button>
+</form>
+{% endif %}
+
 <h2>active kill switches</h2>
 <table border="1">
   <thead><tr><th>target</th><th>scope</th><th>reason</th><th>clear</th></tr></thead>
@@ -10,7 +18,11 @@
       <td>{{ k.scope }}</td>
       <td>{{ k.reason }}</td>
       <td>
-        {% if k.scope == "fleet" %}
+        {% if k.scope == "emergency" %}
+        <form method="post" action="/dashboard/kill/emergency-resume" style="display:inline">
+          <button type="submit">resume fleet</button>
+        </form>
+        {% elif k.scope == "fleet" %}
         <form method="post" action="/dashboard/kill/fleet/clear" style="display:inline">
           <button type="submit">clear fleet</button>
         </form>
@@ -39,5 +51,13 @@
 <form method="post" action="/dashboard/kill/fleet">
   <label>reason: <input type="text" name="reason"></label>
   <button type="submit">kill fleet</button>
+</form>
+
+<h2>emergency shutdown</h2>
+<form method="post" action="/dashboard/kill/emergency-shutdown">
+  <label>justification (required):
+    <textarea name="justification" rows="2" required></textarea>
+  </label>
+  <button type="submit">emergency shutdown</button>
 </form>
 {% endblock %}

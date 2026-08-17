@@ -33,6 +33,20 @@ which this module treats as a hard `DelegationDenied` rather than a silent
 no-op: a delegation that grants nothing is an escalation attempt or a
 misconfiguration, and both deserve to be seen.
 
+## The privilege ring is a chain MINIMUM (RUN-04)
+
+    effective_ring(child) = min(parent_ring, child_ring)
+
+Same shape as the trust budget, same attack: A is ring 0 (internet-facing,
+injectable), B is ring 3, and A asks B to call a ring-3 target. Keying the RUN-04
+gate on the acting agent's own tier would allow it — privilege borrowed across a
+delegation edge, the escalation the trust cap already forbids for trust. No decay
+applies (rings are discrete tiers, not a budget), and there is no promotion: a
+high-ring parent never lifts a low-ring child.
+
+`ring is None` means "rings are not in play" (no ring lookup wired), and the
+pipeline then falls back to the agent's own ring — so RUN-04 stays additive.
+
 Pure CPU, no I/O, no clock — the same hot-path discipline as `sequence.py`.
 """
 
@@ -61,21 +75,27 @@ class DelegationDenied(Exception):
 class Authority:
     """The effective authority in force at one point in a delegation chain.
 
-    `trust` and `scope` are the EFFECTIVE values (already intersected/decayed),
-    not the agent's own standing — an agent's own trust is an input to
-    `delegate`, never a property of a resolved link.
+    `trust`, `scope` and `ring` are the EFFECTIVE values (already
+    intersected/decayed/capped), not the agent's own standing — an agent's own
+    trust is an input to `delegate`, never a property of a resolved link.
+
+    `ring` (RUN-04) is the minimum privilege ring over the chain, or None when no
+    ring lookup is wired.
     """
 
     agent_id: str
     trust: float
     scope: frozenset[str] = ALL
     depth: int = 0
+    ring: int | None = None
 
     def __post_init__(self) -> None:
         if not (0.0 <= self.trust <= 1.0):
             raise ValueError(f"trust must be in [0,1], got {self.trust}")
         if self.depth < 0:
             raise ValueError(f"depth must be >= 0, got {self.depth}")
+        if self.ring is not None and self.ring < 0:
+            raise ValueError(f"ring must be >= 0, got {self.ring}")
 
     def permits(self, capability: str) -> bool:
         return permits(self.scope, capability)
@@ -101,12 +121,22 @@ def intersect_scope(parent: frozenset[str], child: frozenset[str]) -> frozenset[
     return parent & child
 
 
+def cap_ring(parent: int | None, child: int | None) -> int | None:
+    """The delegated privilege ring: the chain MINIMUM (RUN-04). None == not in play (identity)."""
+    if parent is None:
+        return child
+    if child is None:
+        return parent
+    return min(parent, child)
+
+
 def delegate(
     parent: Authority,
     child_id: str,
     *,
     child_trust: float,
     child_scope: frozenset[str] = ALL,
+    child_ring: int | None = None,
     decay: float = DEFAULT_DECAY,
     max_depth: int = DEFAULT_MAX_DEPTH,
 ) -> Authority:
@@ -142,6 +172,7 @@ def delegate(
         trust=min(child_trust, parent.trust * decay),
         scope=scope,
         depth=depth,
+        ring=cap_ring(parent.ring, child_ring),
     )
 
 
@@ -186,12 +217,19 @@ class ScopeLookup(Protocol):
     def scope_for(self, agent_id: str) -> frozenset[str]: ...
 
 
+class RingLookup(Protocol):
+    """The injected per-agent privilege-ring seam (the control-plane PrivilegeRingStore satisfies
+    it). Structural, and IN-MEMORY: `resolve` runs on the hot path."""
+
+    def ring_for(self, agent_id: str) -> int: ...
+
+
 class DelegationResolver:
     """Resolves the authority in force for an action, following its lineage (TRST-04).
 
     An action with no `parent_action_id` is a chain ROOT and acts with its own
-    trust and scope. An action WITH one inherits through `delegate()`, so its
-    authority is capped by the delegator's.
+    trust, scope and privilege ring. An action WITH one inherits through
+    `delegate()`, so its authority is capped by the delegator's.
 
     ## Unknown lineage fails closed
 
@@ -216,15 +254,25 @@ class DelegationResolver:
         scope_lookup: ScopeLookup,
         *,
         ledger: DelegationLedger | None = None,
+        ring_lookup: RingLookup | None = None,
         decay: float = DEFAULT_DECAY,
         max_depth: int = DEFAULT_MAX_DEPTH,
         allow_unknown_lineage: bool = False,
     ) -> None:
         self._scope = scope_lookup
         self._ledger = ledger or DelegationLedger()
+        # RUN-04: None == rings not in play, and the resolved authority carries ring=None. The
+        # Pipeline auto-adopts its privilege store here when both seams are wired, so a deployment
+        # cannot end up with an UNCAPPED ring by forgetting a second wiring step.
+        self._rings = ring_lookup
         self._decay = decay
         self._max_depth = max_depth
         self._allow_unknown_lineage = allow_unknown_lineage
+
+    def use_ring_lookup(self, ring_lookup: RingLookup) -> None:
+        """Adopt `ring_lookup` unless one was injected explicitly (which always wins)."""
+        if self._rings is None:
+            self._rings = ring_lookup
 
     def resolve(self, action: AgentAction, own_trust: float) -> Authority:
         """The authority `action` acts with. Raises `DelegationDenied` to block it.
@@ -233,12 +281,13 @@ class DelegationResolver:
         delegated FROM it inherit this link rather than a root.
         """
         own_scope = self._scope.scope_for(action.agent_id)
+        own_ring = self._rings.ring_for(action.agent_id) if self._rings is not None else None
         parent_id = action.context.parent_action_id
         parent = self._ledger.authority_for(str(parent_id) if parent_id else None)
 
         if parent_id is None:
             authority = Authority(
-                agent_id=action.agent_id, trust=own_trust, scope=own_scope, depth=0
+                agent_id=action.agent_id, trust=own_trust, scope=own_scope, depth=0, ring=own_ring
             )
         elif parent is None:
             if not self._allow_unknown_lineage:
@@ -247,7 +296,7 @@ class DelegationResolver:
                     f"ledger, so {action.agent_id!r} cannot be bounded by its delegator"
                 )
             authority = Authority(
-                agent_id=action.agent_id, trust=own_trust, scope=own_scope, depth=0
+                agent_id=action.agent_id, trust=own_trust, scope=own_scope, depth=0, ring=own_ring
             )
         else:
             authority = delegate(
@@ -255,6 +304,7 @@ class DelegationResolver:
                 action.agent_id,
                 child_trust=own_trust,
                 child_scope=own_scope,
+                child_ring=own_ring,
                 decay=self._decay,
                 max_depth=self._max_depth,
             )

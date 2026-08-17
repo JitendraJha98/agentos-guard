@@ -1,0 +1,20 @@
+# The CONSENSUS test constitution (Slice 9f) — owned by the test suite.
+#
+# One principle whose effect is `require_consensus`, so the POL-09 e2e can drive the
+# real pipeline to that outcome deterministically instead of tuning risk thresholds
+# (the graduated stage never emits `require_consensus` on its own — it is a policy
+# floor). Deliberately minimal: no egress principle, so the probe's ONLY floor is the
+# consensus one and any wrong outcome is attributable to this file alone.
+schema_version: 1
+name: agentos-guard-test-consensus
+graduated:
+  default: {sandbox_at: 0.4, deny_at: 0.7, trust_harden_at: 0.2}
+principles:
+  - id: "9.1"
+    title: Outbound posts need multi-agent agreement
+    statement: An agent may only perform an outbound post when other agents agree it is safe.
+    applies_to: [tool_call]
+    effect: require_consensus
+    when: {field: target, op: eq, value: http_post}
+    remediation:
+      - Obtain agreement from the consensus voters, or use a non-posting alternative.

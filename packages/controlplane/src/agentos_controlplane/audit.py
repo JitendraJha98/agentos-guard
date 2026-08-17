@@ -109,6 +109,30 @@ EVENT_KINDS = frozenset(
         # the kill_switch TABLE, so the 4d secret-gate here can never block a kill.
         "kill_switch_set",
         "kill_switch_cleared",
+        # RUN-03 (Slice 9a): a quarantined sandbox run. Short identifiers only — the
+        # redacted detail lives in the sandbox_run TABLE, so the 4d secret-gate here
+        # can never block containment.
+        "sandbox_executed",
+        # RUN-04 (Slice 9b): an administrative privilege-ring assignment (agent tier or target
+        # requirement). Short identifiers only; the per-action deny is audited as a DECISION record.
+        "privilege_ring_set",
+        # RUN-05 (Slice 9c): the administrative budget assignment, and a per-execution budget
+        # breach. Short identifiers + numbers only — no target, no payload — so the 4d secret-gate
+        # here can never block a breach from being recorded.
+        "resource_limit_set",
+        "resource_limit_exceeded",
+        # RUN-06 (Slice 9d): automatic breaker transitions. Short identifiers + counts only.
+        "circuit_tripped",
+        "circuit_reset",
+        # RUN-07 (Slice 9e): fleet-wide emergency stop + explicit resume. Short identifiers + the
+        # incident id only — the free-text justification stays in the emergency_shutdown TABLE.
+        "emergency_shutdown",
+        "emergency_resume",
+        # POL-09 (Slice 9f): per-voter verdicts + the round resolution. Short identifiers +
+        # counts only — voter rationale (if any) stays in the consensus_vote TABLE, so the
+        # 4d secret-gate here can never block a consensus round from being recorded.
+        "consensus_vote",
+        "consensus_resolved",
     }
 )
 

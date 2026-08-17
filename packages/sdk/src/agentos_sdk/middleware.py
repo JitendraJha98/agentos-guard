@@ -12,7 +12,8 @@ posture cannot diverge across enforcement sites (Slice 6b unification).
 Block surfacing is the only hook-specific part: a wrapper raises GovernanceDenied;
 a LangChain hook must NOT raise into the agent loop, so each hook catches the
 governed exception and surfaces the block as its native message type (ToolMessage
-for tools, AIMessage for model calls) carrying the fired reasons. Either way the
+for tools — with `status="error"`, so a block/quarantine is never structurally a
+success — and AIMessage for model calls) carrying the fired reasons. Either way the
 governed operation never executed (no egress — the enforcement contract; T-01-19).
 
 Async-hook resolution (Open Q2 / Assumption A3, RESOLVED 2026-06-02): langchain 1.3.2
@@ -36,9 +37,12 @@ from agentos_contract import PipelineProtocol
 
 from agentos_sdk.enforce import (
     ApprovalCoordinator,
+    CircuitReporter,
+    ConsensusCoordinator,
     GovernanceDenied,
+    ResourceGovernor,
+    SandboxRunner,
     SideEffectDispatcher,
-    format_reasons,
     governed_call,
 )
 from agentos_sdk.normalize import normalize_action, normalize_model_call
@@ -50,8 +54,9 @@ class GovernanceMiddleware(AgentMiddleware):
     Two native LangChain hooks are governed here: tool calls (INT-01) and model
     invocations (INT-02). Memory, MCP, and delegation are not LangChain middleware
     hooks — they are governed by the SDK wrappers in `agentos_sdk.wrappers`, sharing
-    the same enforcement core. Without a `coordinator`, blocking outcomes
-    (require_approval / sandbox / require_consensus) fail CLOSED.
+    the same enforcement core. Without a `coordinator`, `require_approval` fails
+    CLOSED; without a `sandbox` runner, so does the `sandbox` outcome (RUN-03);
+    without a `consensus` coordinator, so does `require_consensus` (POL-09).
     """
 
     def __init__(
@@ -61,11 +66,19 @@ class GovernanceMiddleware(AgentMiddleware):
         *,
         coordinator: ApprovalCoordinator | None = None,
         dispatcher: SideEffectDispatcher | None = None,
+        sandbox: SandboxRunner | None = None,
+        consensus: ConsensusCoordinator | None = None,
+        governor: ResourceGovernor | None = None,
+        reporter: CircuitReporter | None = None,
     ) -> None:
         self._pipeline = pipeline  # the in-process PDP (D-07); satisfies PipelineProtocol
         self._token = token        # the agent's signed JWT (from registration, IDN-01)
         self._coordinator = coordinator
         self._dispatcher = dispatcher
+        self._sandbox = sandbox
+        self._consensus = consensus  # POL-09 quorum seam (None = require_consensus fails closed)
+        self._governor = governor  # RUN-05 per-agent execution budgets (None = unbudgeted)
+        self._reporter = reporter  # RUN-06 breaker signal sink for EXECUTION errors (None = off)
 
     async def awrap_tool_call(self, request: ToolCallRequest, handler):
         """Async PEP hook (langchain 1.3.2). The map decides; a block returns a
@@ -78,12 +91,26 @@ class GovernanceMiddleware(AgentMiddleware):
                 lambda: handler(request),
                 coordinator=self._coordinator,
                 dispatcher=self._dispatcher,
+                sandbox=self._sandbox,
+                consensus=self._consensus,
+                governor=self._governor,
+                reporter=self._reporter,
             )
         except GovernanceDenied as denied:
-            # SHORT-CIRCUIT happened inside the core: handler was never called.
+            # The core refused: on a deny/quarantine/network budget the handler was
+            # never called; on a POST-HOC budget breach (memory, or a wall overrun that
+            # ran to completion) it did run and only its result is withheld.
+            # `str(denied)` is the governed exception's OWN message, so a
+            # GovernanceQuarantined reads as quarantined while a deny is unchanged.
+            # `status="error"` is load-bearing, not cosmetic: this is the ONE surface
+            # that turns the governed exception back into a normal return value, and
+            # ToolMessage defaults to status="success". Without it a consumer that
+            # branches on `status` (LangChain's tool-failure convention) reads a
+            # contained action as a completed one.
             return ToolMessage(
-                content=f"Blocked by agentos-guard: {format_reasons(denied.decision)}",
+                content=str(denied),
                 tool_call_id=request.tool_call["id"],
+                status="error",
             )
 
     async def awrap_model_call(self, request: ModelRequest, handler):
@@ -98,8 +125,10 @@ class GovernanceMiddleware(AgentMiddleware):
                 lambda: handler(request),
                 coordinator=self._coordinator,
                 dispatcher=self._dispatcher,
+                sandbox=self._sandbox,
+                consensus=self._consensus,
+                governor=self._governor,
+                reporter=self._reporter,
             )
         except GovernanceDenied as denied:
-            return AIMessage(
-                content=f"Blocked by agentos-guard: {format_reasons(denied.decision)}"
-            )
+            return AIMessage(content=str(denied))

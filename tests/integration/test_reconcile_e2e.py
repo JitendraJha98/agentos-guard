@@ -9,6 +9,7 @@ reconciliation worth having: it REPAIRS drift, then converges.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 from sqlalchemy import create_engine, delete
@@ -147,7 +148,7 @@ def test_get_latest_policy_is_stable_within_one_second(wired):
 # ------------------------------------------------------------ trust reconciler
 
 
-def test_trust_reconciler_refreshes_reputation_into_the_pipeline_path(wired):
+def test_trust_reconciler_refreshes_reputation_into_the_pipeline_path(wired, monkeypatch):
     registry, audit, reputation = wired["registry"], wired["audit"], wired["reputation"]
     registry.register("bad")
 
@@ -167,6 +168,15 @@ def test_trust_reconciler_refreshes_reputation_into_the_pipeline_path(wired):
     asyncio.run(offend())
 
     reconciler = TrustReconciler(reputation)
+    # Reputation decays CONTINUOUSLY with wall-clock time (7-day half-life, reputation.py:207
+    # falls back to `time.time()`), so "a converged fleet reports no churn" is only well defined
+    # at a FIXED instant. Unpinned, the two reconcile() calls below land a few ms apart and the
+    # score legitimately moves further than the reconciler's 1e-9 epsilon — which made the second
+    # assertion flake (~1 run in 6 under load). Freeze the clock so the test asserts CONVERGENCE
+    # rather than "less than 1.7 ms elapsed"; the decay behaviour itself is correct and untouched.
+    frozen = time.time()
+    monkeypatch.setattr(time, "time", lambda: frozen)
+
     assert reconciler.reconcile() == 1  # one agent's score moved
     assert registry.load_trust("bad") < DEFAULT_TRUST_SCORE
 

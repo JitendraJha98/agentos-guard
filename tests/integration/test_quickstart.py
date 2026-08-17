@@ -50,8 +50,27 @@ def test_quickstart_run_governs_allow_and_deny_with_no_opa_cli(monkeypatch, tmp_
 
     assert result.allow_outcome is Outcome.allow
     assert result.deny_outcome is Outcome.deny
-    assert result.audit_records == 2  # one allow + one deny, hash-chained + signed
+    # allow + deny + the sandbox demo decision, plus its `sandbox_executed` containment
+    # event — all on the one hash-chained, signed chain.
+    assert result.audit_records == 4
     assert result.api_token  # a dev API token is surfaced
+
+
+def test_quickstart_wires_the_sandbox_seam_and_quarantines(tmp_path) -> None:
+    """RUN-03: the quickstart WIRES `QuarantineSandbox`, so a `sandbox` outcome is
+    contained (observed + recorded) instead of failing closed as an unexplained block.
+
+    This is the wiring an integrator copies. Without a runner wired, `sandbox` — the
+    outcome every mid-risk action lands on — raises a hard `Blocked by agentos-guard`
+    with no approval request and no containment evidence, so the quickstart must show
+    the seam rather than leave it to be discovered.
+    """
+    from agentos_sdk.quickstart import run
+
+    result = run(db_path=str(tmp_path / "quickstart.db"))
+
+    assert result.sandbox_outcome is Outcome.sandbox
+    assert result.sandbox_runs == 1  # the containment evidence RUN-03 exists to produce
 
 
 def _policy_input(host: str) -> dict:

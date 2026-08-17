@@ -4,7 +4,13 @@ Zero internal dependencies. Every PEP form and pipeline stage imports from here.
 """
 
 from agentos_contract.action import ActionContext, ActionType, AgentAction
-from agentos_contract.decision import Decision, Outcome, Reason, SideEffect
+from agentos_contract.decision import (
+    Decision,
+    Outcome,
+    Reason,
+    SandboxResult,
+    SideEffect,
+)
 from agentos_contract.pipeline import PipelineProtocol
 from agentos_contract.policy_io import (
     AUTHORABLE_EFFECTS,
@@ -30,6 +36,7 @@ __all__ = [
     "POLICY_INPUT_FIELDS",
     "POLICY_INPUT_SCHEMA_VERSION",
     "Reason",
+    "SandboxResult",
     "SideEffect",
     "PipelineProtocol",
     "RiskFinding",
