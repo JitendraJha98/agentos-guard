@@ -22,8 +22,10 @@ from typing import TypeVar
 
 from agentos_contract import ActionType
 
-# ActionType -> the fully-qualified entrypoint that intercepts/normalizes it.
-_REGISTRY: dict[ActionType, str] = {}
+# ActionType -> the fully-qualified entrypoints that intercept/normalize it. A SET, not a single
+# string: from Phase 10 an action type legitimately has SEVERAL PEP forms (SDK middleware, SDK
+# wrappers, the network gateway), and overwriting would hide all but the last one registered.
+_REGISTRY: dict[ActionType, set[str]] = {}
 
 _F = TypeVar("_F", bound=Callable[..., object])
 
@@ -33,23 +35,26 @@ class InterceptionGapError(RuntimeError):
 
 
 def covers(action_type: ActionType) -> Callable[[_F], _F]:
-    """Register `fn` as the interception/normalization path for `action_type`."""
+    """Register `fn` as AN interception/normalization path for `action_type` (several may exist)."""
 
     def _register(fn: _F) -> _F:
-        _REGISTRY[action_type] = f"{fn.__module__}.{fn.__qualname__}"
+        _REGISTRY.setdefault(action_type, set()).add(f"{fn.__module__}.{fn.__qualname__}")
         return fn
 
     return _register
 
 
 def covered_types() -> set[ActionType]:
-    """The set of action types that currently have a registered PEP path."""
-    return set(_REGISTRY)
+    """The set of action types that currently have at least one registered PEP path.
+
+    A key with an EMPTY set is a gap, not coverage — the type is listed but nothing intercepts it.
+    """
+    return {t for t, entries in _REGISTRY.items() if entries}
 
 
-def coverage_matrix() -> dict[ActionType, str]:
-    """A copy of the full {action_type -> entrypoint} map (for inspection/reporting)."""
-    return dict(_REGISTRY)
+def coverage_matrix() -> dict[ActionType, set[str]]:
+    """A copy of the full {action_type -> {entrypoints}} map (for inspection/reporting)."""
+    return {t: set(entries) for t, entries in _REGISTRY.items()}
 
 
 def verify_coverage() -> None:
