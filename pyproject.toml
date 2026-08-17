@@ -20,6 +20,7 @@ dependencies = [
     "agentos-constitution",
     "agentos-contract",
     "agentos-controlplane",
+    "agentos-gateway",
     "agentos-pipeline",
     "agentos-sdk",
 ]
@@ -57,6 +58,7 @@ members = ["packages/*"]
 agentos-constitution = { workspace = true }
 agentos-contract = { workspace = true }
 agentos-controlplane = { workspace = true }
+agentos-gateway = { workspace = true }
 agentos-pipeline = { workspace = true }
 agentos-sdk = { workspace = true }
 
