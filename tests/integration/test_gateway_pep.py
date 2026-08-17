@@ -23,10 +23,13 @@ from sqlalchemy.pool import StaticPool
 
 from agentos_contract import ActionType
 from agentos_controlplane.audit import AuditWriter
+from agentos_controlplane.consensus import StoreConsensusCoordinator
 from agentos_controlplane.registry import Registry
+from agentos_controlplane.sandbox import QuarantineSandbox
 from agentos_controlplane.store.engine import create_all, create_session_factory
-from agentos_controlplane.store.models import AuditRecord
+from agentos_controlplane.store.models import AuditRecord, SandboxRun
 from agentos_gateway import create_gateway
+from agentos_pipeline.graduated import GraduatedThresholds
 from agentos_pipeline.identity import IdentityStage
 from agentos_pipeline.policy import ConstitutionPolicyEngine
 from agentos_pipeline.posture import PostureMap
@@ -48,6 +51,7 @@ class _Upstream:
         self.calls = 0
         self.headers: list[dict[str, str]] = []
         self.bodies: list[bytes] = []
+        self.paths: list[str] = []
         self.app = FastAPI()
 
         @self.app.post("/{full_path:path}")
@@ -55,18 +59,57 @@ class _Upstream:
             self.calls += 1
             self.headers.append({k.lower(): v for k, v in request.headers.items()})
             self.bodies.append(await request.body())
+            self.paths.append("/" + full_path)
             return {"ok": True}
 
-    def client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url="http://upstream"
-        )
+
+class _Governed:
+    """A spy in front of the real pipeline: it keeps the `AgentAction` the PDP was HANDED.
+
+    That is the other half of the no-egress contract. `upstream.calls` proves nothing left on a
+    block; `governed[-1].target` vs `upstream.paths[-1]` proves that what did leave is the same
+    resource the PDP judged — a proxy that governs one name and requests another enforces nothing.
+    """
+
+    def __init__(self, pipeline) -> None:
+        self._pipeline = pipeline
+        self.actions: list = []
+
+    async def evaluate(self, action):
+        self.actions.append(action)
+        return await self._pipeline.evaluate(action)
+
+
+class _Voter:
+    """A real ConsensusVoter (POL-09): a named, independent agent with a fixed verdict."""
+
+    def __init__(self, name: str, verdict: bool) -> None:
+        self.name = name
+        self._verdict = verdict
+
+    async def vote(self, action, decision) -> bool:
+        return self._verdict
 
 
 class _Wired:
-    """The gateway in front of the stub upstream, over the real pipeline and one shared store."""
+    """The gateway in front of the stub upstream, over the real pipeline and one shared store.
 
-    def __init__(self, constitution_wasm) -> None:
+    The optional arguments exist to drive the paths a plain `allow`/`deny` pair cannot reach:
+    `thresholds` grades the probe to another outcome, `wire_sandbox`/`voters` supply the REAL
+    Phase-9 seams (unset = the fail-closed, unwired gateway), and `transport`/`client_base_url`
+    stand in for an upstream that answers something other than JSON or lives somewhere else.
+    """
+
+    def __init__(
+        self,
+        constitution_wasm,
+        *,
+        thresholds: GraduatedThresholds = GraduatedThresholds(),
+        wire_sandbox: bool = False,
+        voters: tuple = (),
+        transport: httpx.BaseTransport | None = None,
+        client_base_url: str = "http://upstream",
+    ) -> None:
         engine = create_engine(
             "sqlite+pysqlite:///:memory:",
             poolclass=StaticPool,
@@ -76,26 +119,44 @@ class _Wired:
         self.store = create_session_factory(engine)
         registry = Registry(self.store)
         self.token = registry.register(AGENT_ID)
-        self.pipeline = Pipeline(
-            identity=IdentityStage(registry.identity),
-            policy=ConstitutionPolicyEngine(
-                wasm_path=str(constitution_wasm.wasm_path),
-                lists=constitution_wasm.bundle.lists,
-                constitution_version=constitution_wasm.bundle.constitution_version,
-                principles_meta=constitution_wasm.principles_meta,
-            ),
-            scorers=[PromptInjectionScorer()],
-            audit=AuditWriter(self.store, signer=registry.identity),
-            posture=PostureMap(),
+        audit = AuditWriter(self.store, signer=registry.identity)
+        self.pipeline = _Governed(
+            Pipeline(
+                identity=IdentityStage(registry.identity),
+                policy=ConstitutionPolicyEngine(
+                    wasm_path=str(constitution_wasm.wasm_path),
+                    lists=constitution_wasm.bundle.lists,
+                    constitution_version=constitution_wasm.bundle.constitution_version,
+                    principles_meta=constitution_wasm.principles_meta,
+                ),
+                scorers=[PromptInjectionScorer()],
+                audit=audit,
+                posture=PostureMap(),
+                thresholds=thresholds,
+            )
         )
         self.upstream = _Upstream()
         self.client = TestClient(
             create_gateway(
                 self.pipeline,
                 upstream_base_url="http://upstream",
-                client=self.upstream.client(),
+                client=httpx.AsyncClient(
+                    transport=transport or httpx.ASGITransport(app=self.upstream.app),
+                    base_url=client_base_url,
+                ),
+                # ONE AuditWriter per store (the chain-head cache): the seams share the
+                # pipeline's writer rather than opening a second appender.
+                sandbox=QuarantineSandbox(self.store, audit) if wire_sandbox else None,
+                consensus=(
+                    StoreConsensusCoordinator(self.store, audit, voters) if voters else None
+                ),
             )
         )
+
+    @property
+    def governed(self) -> list:
+        """The actions the PDP actually judged."""
+        return self.pipeline.actions
 
     def headers(self, *, with_token: bool = True) -> dict[str, str]:
         h = {"Authorization": UPSTREAM_KEY}
@@ -108,10 +169,25 @@ class _Wired:
             rows = session.scalars(select(AuditRecord).order_by(AuditRecord.seq))
             return json.dumps([r.body for r in rows], default=str)
 
+    def sandbox_runs(self) -> list[SandboxRun]:
+        with self.store() as session:
+            return list(session.scalars(select(SandboxRun)))
+
 
 @pytest.fixture
 def wired(constitution_wasm) -> _Wired:
     return _Wired(constitution_wasm)
+
+
+@pytest.fixture
+def sandboxed(constitution_wasm) -> _Wired:
+    """The SAME stack graded so that ANY risk lands on `sandbox` and nothing reaches `deny`
+    (the RUN-03 determinism trick from test_sandbox_e2e), with the real QuarantineSandbox wired."""
+    return _Wired(
+        constitution_wasm,
+        thresholds=GraduatedThresholds(sandbox_at=0.0, deny_at=1.0),
+        wire_sandbox=True,
+    )
 
 
 def _reason_codes(response) -> list[str]:
@@ -213,6 +289,223 @@ def test_model_route_denies_an_injection_without_reaching_the_provider(wired: _W
     assert resp.status_code == 403
     assert "prompt_injection" in _reason_codes(resp)
     assert wired.upstream.calls == before  # no prompt egress
+
+
+def test_a_sandbox_outcome_returns_the_quarantine_surface(sandboxed: _Wired) -> None:
+    """RUN-03 through the gateway: the `sandbox` outcome is CONTAINMENT, not a plain deny.
+    The quarantine surface (its own message + a persisted, audited observation) is what proves
+    the `sandbox=` seam is really wired — delete that kwarg from `create_gateway` and this is
+    the test that fails instead of the suite silently downgrading quarantine to a deny."""
+    resp = sandboxed.client.post(
+        "/tools/http_get", json={"url": ALLOWED_URL, "content": ""}, headers=sandboxed.headers()
+    )
+    assert resp.status_code == 403
+    assert resp.json()["error"]["message"].startswith(
+        "Quarantined by agentos-guard (sandboxed, no real effect)"
+    )
+    assert sandboxed.upstream.calls == 0  # quarantine means NO egress
+    runs = sandboxed.sandbox_runs()
+    assert len(runs) == 1 and runs[0].quarantined is True  # the runner really ran, once
+    assert "sandbox_executed" in sandboxed.audit_bodies()
+
+
+def test_an_unwired_sandbox_seam_fails_closed(constitution_wasm) -> None:
+    """The same outcome with NO runner wired: containment cannot be enforced, so the gateway
+    blocks (fail-closed) — never a silent proxy, and nothing is observed or persisted."""
+    wired = _Wired(constitution_wasm, thresholds=GraduatedThresholds(sandbox_at=0.0, deny_at=1.0))
+    resp = wired.client.post(
+        "/tools/http_get", json={"url": ALLOWED_URL, "content": ""}, headers=wired.headers()
+    )
+    assert resp.status_code == 403
+    assert resp.json()["error"]["message"].startswith("Blocked by agentos-guard")
+    assert wired.upstream.calls == 0
+    assert wired.sandbox_runs() == []
+
+
+def test_a_consensus_quorum_releases_the_proxy(consensus_wasm) -> None:
+    """POL-09 through the gateway: 2-of-3 agreement is what buys the forward."""
+    wired = _Wired(
+        consensus_wasm, voters=(_Voter("a", True), _Voter("b", True), _Voter("c", False))
+    )
+    resp = wired.client.post(
+        "/tools/http_post", json={"url": ALLOWED_URL}, headers=wired.headers()
+    )
+    assert resp.status_code == 200 and resp.json() == {"ok": True}
+    assert wired.upstream.calls == 1
+
+
+def test_a_missing_consensus_quorum_never_reaches_upstream(consensus_wasm) -> None:
+    """...and without it the request is refused BEFORE any forward exists."""
+    wired = _Wired(
+        consensus_wasm, voters=(_Voter("a", False), _Voter("b", False), _Voter("c", True))
+    )
+    resp = wired.client.post(
+        "/tools/http_post", json={"url": ALLOWED_URL}, headers=wired.headers()
+    )
+    assert resp.status_code == 403
+    assert wired.upstream.calls == 0
+
+
+@pytest.mark.parametrize("name", ["http_get", "a.b-c_d"])
+def test_the_forwarded_path_is_exactly_the_governed_target(wired: _Wired, name: str) -> None:
+    """The governed string and the requested resource are ONE string. If they can differ, every
+    policy keyed on `action.target` (privilege rings, kill switches, breaker keys, egress
+    allowlists) is enforceable under one name and executable under another."""
+    resp = wired.client.post(
+        f"/tools/{name}", json={"url": ALLOWED_URL, "content": ""}, headers=wired.headers()
+    )
+    assert resp.status_code == 200
+    assert wired.upstream.paths == ["/tools/" + wired.governed[-1].target]
+
+
+@pytest.mark.parametrize(
+    "encoded",
+    [
+        "delete_database%23x",  # '#' — truncates the path httpx builds
+        "delete_database%3Fx=1",  # '?' — the rest becomes a query string
+        "%2E%2E",  # '..' — a dot segment collapses out of the path
+        "delete_database%20x",  # a space — no longer the name that was governed
+    ],
+)
+def test_a_tool_name_that_cannot_be_forwarded_verbatim_is_rejected(
+    wired: _Wired, encoded: str
+) -> None:
+    """The exploit this closes: `/tools/delete_database%23x` was governed as the ungated name
+    `delete_database#x` while the gated `/tools/delete_database` is what actually ran upstream."""
+    resp = wired.client.post(
+        f"/tools/{encoded}", json={"url": ALLOWED_URL, "content": ""}, headers=wired.headers()
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]["type"] == "agentos_guard_bad_request"
+    assert wired.upstream.calls == 0
+
+
+@pytest.mark.parametrize("route", ["/tools/http_get", "/v1/chat/completions"])
+@pytest.mark.parametrize(
+    "raw", [b"", b"{ not json", b"[1,2,3]", b'"hello"', b"42", b"null", b"true", b"\x00"]
+)
+def test_a_body_that_is_not_a_json_object_is_rejected_cleanly(
+    wired: _Wired, route: str, raw: bytes
+) -> None:
+    """A shape the gateway cannot normalize must be a clean, cheap 400 — never a 500 traceback.
+    A PEP an agent can fuzz into unhandled exceptions is a PEP it can probe for free."""
+    resp = wired.client.post(
+        route, content=raw, headers={**wired.headers(), "Content-Type": "application/json"}
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]["type"] == "agentos_guard_bad_request"
+    assert wired.upstream.calls == 0
+
+
+def test_a_non_list_messages_field_is_governed_not_crashed(wired: _Wired) -> None:
+    """`messages` is attacker-shaped too: a non-list must still be normalized and SCANNED,
+    because an injection hidden in a shape the scorer skipped is an unscanned prompt."""
+    resp = wired.client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4o", "messages": {"role": "user", "content": INJECTION}},
+        headers=wired.headers(),
+    )
+    assert resp.status_code == 403
+    assert "prompt_injection" in _reason_codes(resp)
+    assert wired.upstream.calls == 0
+
+
+def test_the_declared_upstream_is_authoritative_over_an_injected_client(constitution_wasm) -> None:
+    """`upstream_base_url` names the ONE permitted egress destination. A client that arrives
+    pointing somewhere else must not be able to redirect governed traffic — a silently ignored
+    destination makes the declared one advisory."""
+    wired = _Wired(constitution_wasm, client_base_url="http://somewhere-else.invalid")
+    wired.client.post(
+        "/tools/http_get", json={"url": ALLOWED_URL, "content": ""}, headers=wired.headers()
+    )
+    assert wired.upstream.calls == 1
+    assert wired.upstream.headers[0]["host"] == "upstream"
+
+
+@pytest.mark.parametrize(
+    "status,payload,content_type",
+    [
+        (502, b"<html>bad gateway</html>", "text/html"),
+        (204, b"", "text/plain"),
+        (200, b'data: {"delta":"hi"}\n\ndata: [DONE]\n\n', "text/event-stream"),
+    ],
+)
+def test_a_non_json_upstream_response_is_relayed_not_swallowed(
+    constitution_wasm, status: int, payload: bytes, content_type: str
+) -> None:
+    """An upstream may answer HTML, an empty 204 or an SSE stream. Re-parsing every response as
+    JSON turned all three into a gateway 500 — which hides the real status and makes `stream:
+    true` unusable, and an unusable PEP is one a deployment routes around."""
+    wired = _Wired(
+        constitution_wasm,
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                status, content=payload, headers={"content-type": content_type}
+            )
+        ),
+    )
+    resp = wired.client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4o", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+        headers=wired.headers(),
+    )
+    assert resp.status_code == status
+    assert resp.content == payload
+    assert resp.headers.get("content-type", "").startswith(content_type)
+
+
+def test_an_unreachable_upstream_is_a_governed_502_not_a_gateway_500(constitution_wasm) -> None:
+    """A transport fault is the upstream's, not governance's: 502 with a typed reason, so an
+    operator can tell "the provider is down" from "the gateway is broken"."""
+
+    def _boom(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    wired = _Wired(constitution_wasm, transport=httpx.MockTransport(_boom))
+    resp = wired.client.post(
+        "/tools/http_get", json={"url": ALLOWED_URL, "content": ""}, headers=wired.headers()
+    )
+    assert resp.status_code == 502
+    assert resp.json()["error"]["type"] == "agentos_guard_upstream_unreachable"
+
+
+def test_hop_by_hop_headers_do_not_cross_the_proxy_boundary(wired: _Wired) -> None:
+    """RFC 7230 6.1: the hop-by-hop set belongs to THIS connection. `expect: 100-continue` would
+    stall a compliant upstream until the timeout (a free client-driven DoS), `upgrade`/`te` are
+    protocol-confusion primitives, `proxy-authorization` is credential forwarding — and every
+    token NAMED in `Connection` is hop-by-hop too."""
+    hop = {
+        "Connection": "keep-alive, x-secret-hop",
+        "Keep-Alive": "timeout=5",
+        "X-Secret-Hop": "should-not-travel",
+        "TE": "trailers",
+        "Trailer": "x-thing",
+        "Upgrade": "websocket",
+        "Proxy-Authorization": "Basic c2VjcmV0",
+        "Expect": "100-continue",
+    }
+    wired.client.post(
+        "/tools/http_get",
+        json={"url": ALLOWED_URL, "content": ""},
+        headers={**wired.headers(), **hop},
+    )
+    assert wired.upstream.calls == 1
+    seen = wired.upstream.headers[0]
+    # The gateway's OWN client manages its own hop (httpx sends `connection: keep-alive`); what
+    # must not survive is the caller's connection header and everything it named.
+    assert seen.get("connection") != hop["Connection"]
+    for banned in (
+        "keep-alive",
+        "x-secret-hop",
+        "te",
+        "trailer",
+        "upgrade",
+        "proxy-authorization",
+        "expect",
+    ):
+        assert banned not in seen
+    # ...while the caller's UPSTREAM credential still arrives: this is a strip list, not a wall.
+    assert seen["authorization"] == UPSTREAM_KEY
 
 
 def test_the_gateway_is_a_registered_interception_path() -> None:

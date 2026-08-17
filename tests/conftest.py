@@ -32,6 +32,9 @@ from agentos_pipeline.runner import Pipeline
 # same file minus 1.1 (the REAL D-04 deleted-principle recompile).
 CONSTITUTION_YAML = Path("tests/fixtures/test_constitution.yaml")
 CONSTITUTION_NO_EGRESS_YAML = Path("tests/fixtures/test_constitution_no_egress.yaml")
+# The POL-09 variant: ONE principle whose effect is `require_consensus` (the graduated stage
+# never emits that outcome on its own), shared by every PEP form that has to reach it.
+CONSTITUTION_CONSENSUS_YAML = Path("tests/fixtures/test_constitution_consensus.yaml")
 # The agent identity the e2e + red-team probes act as.
 AGENT_ID = "test-agent"
 
@@ -74,6 +77,12 @@ def _build_constitution(tmp_path_factory, yaml_path: Path, label: str) -> BuiltP
 def constitution_wasm(tmp_path_factory) -> BuiltPolicy:
     """The full test constitution, compiled ONCE per session."""
     return _build_constitution(tmp_path_factory, CONSTITUTION_YAML, "wasm_full")
+
+
+@pytest.fixture(scope="session")
+def consensus_wasm(tmp_path_factory) -> BuiltPolicy:
+    """The consensus test constitution, compiled ONCE per session (POL-09)."""
+    return _build_constitution(tmp_path_factory, CONSTITUTION_CONSENSUS_YAML, "wasm_consensus")
 
 
 @pytest.fixture(scope="session")

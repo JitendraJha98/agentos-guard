@@ -20,11 +20,19 @@ from agentos_sdk.coverage import covers
 from agentos_sdk.normalize import _agent_id_from_token
 
 
-def _join_messages(messages: list[dict[str, Any]] | None) -> str:
+def _join_messages(messages: Any) -> str:
     """Flatten chat messages to one inspectable string so the SEC-01 risk stage can scan them —
-    an OpenAI-compatible body is exactly where indirect prompt injection arrives."""
+    an OpenAI-compatible body is exactly where indirect prompt injection arrives.
+
+    The SHAPE of `messages` is client-supplied too, so a non-list is normalized rather than
+    iterated (which raised a TypeError: an un-audited 500 at the PEP) and rather than dropped —
+    an injection hiding in a shape the scorer skipped would be an unscanned prompt reaching the
+    provider. Serializing it keeps every malformed body scannable.
+    """
+    if not isinstance(messages, list):
+        return "" if messages is None else json.dumps(messages, default=str)
     parts: list[str] = []
-    for m in messages or []:
+    for m in messages:
         content = m.get("content") if isinstance(m, dict) else None
         parts.append(content if isinstance(content, str) else json.dumps(content, default=str))
     return "\n".join(parts)
