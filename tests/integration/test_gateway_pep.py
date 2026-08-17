@@ -518,3 +518,79 @@ def test_the_gateway_is_a_registered_interception_path() -> None:
     entries = coverage_matrix()[ActionType.tool_call]
     assert any(e.endswith("normalize_gateway_tool_call") for e in entries)
     assert any(e.endswith("normalize_action") for e in entries)  # the SDK PEP survived
+
+
+# --------------------------------------------------------------- RUN-06 at the gateway
+
+
+class _AllowPipeline:
+    """Minimal PDP stub: everything is permitted, so the ONLY thing under test below is what
+    happens to an UPSTREAM transport fault."""
+
+    async def evaluate(self, action):
+        from agentos_contract import Decision, Outcome
+
+        return Decision(action_id=action.id, outcome=Outcome.allow, reasons=[])
+
+
+class _RecordingReporter:
+    """The RUN-06 CircuitReporter seam."""
+
+    def __init__(self) -> None:
+        self.failures: list[tuple[str, str]] = []
+
+    async def record_failure(self, agent_id: str, target: str) -> None:
+        self.failures.append((agent_id, target))
+
+
+def _raising_transport(exc: Exception) -> httpx.MockTransport:
+    def _boom(request: httpx.Request) -> httpx.Response:
+        raise exc
+
+    return httpx.MockTransport(_boom)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        pytest.param(httpx.ConnectError("refused"), id="connect-error"),
+        pytest.param(httpx.ReadTimeout("slow"), id="read-timeout"),
+    ],
+)
+def test_an_upstream_fault_reaches_the_circuit_breaker_and_surfaces_as_502(exc) -> None:
+    """REGRESSION (RUN-06 at the gateway): a transport fault must still be an EXECUTION FAILURE.
+
+    The 502 surface was first built INSIDE the proxy, which meant the `run` callable always
+    returned successfully — so `governed_call` never reported the failure to the CircuitReporter and
+    gateway traffic could never trip a breaker, silently exempting this PEP form from RUN-06. The
+    fault now propagates out of `run` (so the breaker sees it) and the 502 is built OUTSIDE
+    `governed_call`, so the caller still gets an honest upstream error.
+    """
+    reporter = _RecordingReporter()
+    app = create_gateway(
+        _AllowPipeline(),
+        upstream_base_url="http://upstream",
+        client=httpx.AsyncClient(transport=_raising_transport(exc), base_url="http://upstream"),
+        reporter=reporter,
+    )
+    resp = TestClient(app).post(
+        "/tools/http_get", json={"url": "https://api.example.com/data"}, headers={}
+    )
+
+    assert resp.status_code == 502
+    assert resp.json()["error"]["type"] == "agentos_guard_upstream_unreachable"
+    # The breaker SAW the failure — this is the assertion the old shape could not make.
+    assert reporter.failures == [("", "http_get")]
+
+
+def test_a_malformed_upstream_base_url_is_a_502_not_an_unaudited_500() -> None:
+    """httpx.InvalidURL is NOT an httpx.HTTPError subclass, so it escaped the guard and surfaced
+    as a 500 — a gateway fault blamed on the caller, with no typed upstream error."""
+    app = create_gateway(
+        _AllowPipeline(),
+        upstream_base_url="http://[not-a-url",
+        client=httpx.AsyncClient(transport=_raising_transport(httpx.ConnectError("x"))),
+    )
+    resp = TestClient(app).post("/tools/http_get", json={"url": "https://api.example.com/"})
+    assert resp.status_code == 502
+    assert resp.json()["error"]["type"] == "agentos_guard_upstream_unreachable"

@@ -149,24 +149,15 @@ def create_gateway(
     upstream_url = upstream_base_url.rstrip("/")
 
     async def _proxy(path: str, request: Request, body: bytes) -> Response:
-        try:
-            upstream = await http.post(
-                upstream_url + path, content=body, headers=_forward_headers(request)
-            )
-        except httpx.HTTPError as exc:
-            # The UPSTREAM failed, not governance. A 500 here would blame the gateway for a
-            # transport fault and hide the real one; the exception class is the only detail
-            # relayed — never its message, which can quote the request.
-            return JSONResponse(
-                status_code=502,
-                content={
-                    "error": {
-                        "type": "agentos_guard_upstream_unreachable",
-                        "message": "upstream request failed",
-                        "reason": type(exc).__name__,
-                    }
-                },
-            )
+        # A transport fault must PROPAGATE out of the `run` callable: `governed_call` reports a
+        # raising execution to the RUN-06 CircuitReporter, which is how repeated upstream failures
+        # trip the breaker. Swallowing it here and returning 502 made the run callable always
+        # succeed, so gateway traffic could never trip a breaker — RUN-06 silently did not apply
+        # to this PEP form. The 502 surface is built OUTSIDE governed_call instead (see _govern),
+        # so the caller still gets an honest upstream error AND the breaker still sees the failure.
+        upstream = await http.post(
+            upstream_url + path, content=body, headers=_forward_headers(request)
+        )
         # Relay BYTES, not JSON. An upstream legitimately answers HTML, an empty 204 or an SSE
         # stream, and re-parsing every response as JSON turned each of those into a gateway 500 —
         # including every `"stream": true` request. (SSE is relayed complete rather than
@@ -197,6 +188,23 @@ def create_gateway(
             # them means "no usable result", and on all but a post-hoc budget breach the forward
             # above was never even constructed.
             return _denied_response(denied)
+        except (httpx.HTTPError, httpx.InvalidURL) as exc:
+            # The UPSTREAM failed, not governance — and by the time we are here `governed_call`
+            # has ALREADY reported the failure to the circuit breaker (that is why _proxy lets it
+            # propagate). A 500 would blame the gateway for a transport fault and hide the real
+            # one. `InvalidURL` is NOT an httpx.HTTPError subclass, so it is named explicitly —
+            # a malformed upstream_base_url would otherwise escape as an un-audited 500.
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "error": {
+                        "type": "agentos_guard_upstream_unreachable",
+                        "message": "upstream request failed",
+                        # The class name only — a message can quote the request back.
+                        "reason": type(exc).__name__,
+                    }
+                },
+            )
 
     @router.post("/v1/chat/completions")
     async def chat_completions(request: Request) -> Response:

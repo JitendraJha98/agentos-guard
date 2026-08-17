@@ -28,13 +28,33 @@ def _join_messages(messages: Any) -> str:
     iterated (which raised a TypeError: an un-audited 500 at the PEP) and rather than dropped —
     an injection hiding in a shape the scorer skipped would be an unscanned prompt reaching the
     provider. Serializing it keeps every malformed body scannable.
+
+    Every message is likewise serialized WHOLE rather than reaching in for a string `content`.
+    Reaching in was bypassable: a bare-string list item, a `text` key, a nested content list, and
+    the spec-valid `{"content": null, "tool_calls": [...]}` shape all carried the injected prompt
+    in a field the scan turned into the literal "null", so the payload sailed past SEC-01 and
+    reached the provider. The scorer wants inspectable TEXT, not a schema — so the safe direction
+    is to include everything the client sent and let the detector decide.
     """
     if not isinstance(messages, list):
         return "" if messages is None else json.dumps(messages, default=str)
     parts: list[str] = []
     for m in messages:
-        content = m.get("content") if isinstance(m, dict) else None
-        parts.append(content if isinstance(content, str) else json.dumps(content, default=str))
+        if isinstance(m, str):
+            parts.append(m)
+            continue
+        if isinstance(m, dict):
+            content = m.get("content")
+            # Keep plain content readable for the detector, but NEVER drop the rest of the
+            # message: role, name, tool_calls.arguments and any vendor extension can all carry
+            # the injection.
+            if isinstance(content, str):
+                parts.append(content)
+            rest = {k: v for k, v in m.items() if not (k == "content" and isinstance(v, str))}
+            if rest:
+                parts.append(json.dumps(rest, default=str, sort_keys=True))
+            continue
+        parts.append(json.dumps(m, default=str))
     return "\n".join(parts)
 
 
