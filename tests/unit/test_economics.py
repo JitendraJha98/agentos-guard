@@ -855,3 +855,206 @@ def test_the_paging_query_orders_by_the_id_tiebreaker(store) -> None:
         "for_agent must break recorded_at ties on the primary key; without it Postgres returns "
         "tied rows in an arbitrary order and a paged walk silently skips and repeats"
     )
+
+
+# --- ECON-03: downstream provider + GPU attribution ---------------------------
+
+
+def _tool_action(agent: str = "a1", target: str = "api.stripe.com") -> AgentAction:
+    return AgentAction(agent_id=agent, type=ActionType.tool_call, target=target, payload={})
+
+
+def _record(rec: CostRecorder, action: AgentAction, usage: Usage, **kw) -> None:
+    asyncio.run(rec.record(action, _decision(action), usage, **kw))
+
+
+def test_a_downstream_call_attributes_its_provider_from_its_OWN_target(store) -> None:
+    """The target is a fact the PEP already normalized. Nothing infers which vendor it 'really' is,
+    because a guessed vendor lands in a cost report an operator reconciles against a real invoice —
+    and a wrong line there is worse than a missing one."""
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+
+    _record(rec, _tool_action("a1", target="api.stripe.com"), Usage(0, 0, None))
+
+    with store() as s:
+        assert s.scalars(select(CostRecord)).one().provider == "api.stripe.com"
+
+
+def test_an_mcp_call_is_downstream_consumption_too(store) -> None:
+    """An MCP server is a third-party service an agent consumes exactly as it consumes an HTTP API;
+    covering only `tool_call` would leave the whole INT-04 surface unattributed."""
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+    action = AgentAction(agent_id="a1", type=ActionType.mcp_call, target="mcp://payments", payload={})
+
+    _record(rec, action, Usage(0, 0, None))
+
+    with store() as s:
+        assert s.scalars(select(CostRecord)).one().provider == "mcp://payments"
+
+
+def test_a_model_invocation_has_no_provider_because_it_is_priced_by_MODEL(store) -> None:
+    """`target` on a model invocation is 'chat', not a vendor. Writing it into `provider` would
+    invent a downstream service that was never called, and put the same spend under two different
+    headings on the same report."""
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+
+    _record(rec, _action(), Usage(1, 1, "gpt-4o"))
+
+    with store() as s:
+        assert s.scalars(select(CostRecord)).one().provider is None
+
+
+def test_a_device_shared_gpu_reading_keeps_its_label_into_the_audit_body(store) -> None:
+    """The label must travel with the number. A device-wide figure landing in the hash-chained
+    audit WITHOUT its qualifier is the fabricated per-agent bill this design exists to avoid, one
+    hop downstream — and the chain is the one copy nobody can go back and annotate."""
+    from agentos_controlplane.gpu import DEVICE_SHARED, GpuReading
+
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+
+    _record(
+        rec,
+        _action(),
+        Usage(1, 1, "gpt-4o"),
+        gpu=GpuReading(gpu_memory_mib=8192, attribution=DEVICE_SHARED),
+    )
+
+    with store() as s:
+        row = s.scalars(select(CostRecord)).one()
+    event = _cost_events(store)[0]
+    assert (row.gpu_memory_mib, row.gpu_attribution) == (8192, DEVICE_SHARED)
+    assert event["gpu_memory_mib"] == 8192
+    assert event["gpu_attribution"] == DEVICE_SHARED
+
+
+def test_no_gpu_reading_leaves_the_columns_NULL_not_zero(store) -> None:
+    """The D-7 rule on the GPU columns: 0 MiB asserts 'this agent used no GPU', which is a claim
+    about an agent nobody measured. NULL says 'we did not measure', which is the truth."""
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+
+    _record(rec, _action(), Usage(1, 1, "gpt-4o"))
+
+    with store() as s:
+        row = s.scalars(select(CostRecord)).one()
+    assert row.gpu_seconds is None
+    assert row.gpu_memory_mib is None
+    assert row.gpu_attribution is None
+    assert "gpu_memory_mib" not in _cost_events(store)[0]
+
+
+def test_the_probe_is_not_called_at_all_where_there_is_no_GPU_to_meter(store, monkeypatch) -> None:
+    """The capability is resolved ONCE, not per action. A failed `import` is not cached by Python,
+    so probing per call would re-walk the whole import path on every governed action in exactly the
+    deployments — most of them — that have no GPU."""
+    from agentos_controlplane import economics
+
+    calls = []
+    monkeypatch.setattr(economics, "gpu_metering_available", lambda: False)
+    monkeypatch.setattr(economics, "read_gpu", lambda: calls.append(1))
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+
+    _record(rec, _action(), Usage(1, 1, "gpt-4o"))
+    _record(rec, _action(), Usage(1, 1, "gpt-4o"))
+
+    assert calls == [], "an NVML-less deployment must pay nothing per action for GPU metering"
+
+
+def test_where_a_GPU_exists_it_is_read_exactly_once_per_action(store, monkeypatch) -> None:
+    """The other half: one reading per action, not one per level of the call stack."""
+    from agentos_controlplane import economics
+    from agentos_controlplane.gpu import PROCESS, GpuReading
+
+    calls = []
+    monkeypatch.setattr(economics, "gpu_metering_available", lambda: True)
+    monkeypatch.setattr(
+        economics,
+        "read_gpu",
+        lambda: calls.append(1) or GpuReading(gpu_memory_mib=2048, attribution=PROCESS),
+    )
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+
+    _record(rec, _action(), Usage(1, 1, "gpt-4o"))
+
+    with store() as s:
+        row = s.scalars(select(CostRecord)).one()
+    assert len(calls) == 1
+    assert (row.gpu_memory_mib, row.gpu_attribution) == (2048, PROCESS)
+
+
+def test_the_provider_roll_up_groups_by_agent_and_provider(store) -> None:
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+    for agent, target in (
+        ("a1", "api.stripe.com"),
+        ("a1", "api.stripe.com"),
+        ("a1", "api.twilio.com"),
+        ("a2", "api.stripe.com"),
+    ):
+        _record(rec, _tool_action(agent, target=target), Usage(0, 0, None))
+
+    rollup = {(r["agent_id"], r["provider"]): r["calls"] for r in rec.by_provider()}
+
+    assert rollup == {
+        ("a1", "api.stripe.com"): 2,
+        ("a1", "api.twilio.com"): 1,
+        ("a2", "api.stripe.com"): 1,
+    }
+
+
+def test_an_all_unpriced_provider_reports_no_dollar_figure_rather_than_zero(store) -> None:
+    """SUM over an all-null column is NULL, and coercing that to 0 puts 'this agent spent $0.00 with
+    Stripe' on an operator-facing report — for the DEFAULT deployment, which supplied no rates at
+    all. The same defect `totals()` already refuses, on the route an operator is likeliest to read
+    as a downstream bill."""
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+
+    _record(rec, _tool_action("a1", target="api.stripe.com"), Usage(0, 0, None))
+
+    row = rec.by_provider()[0]
+    assert row["cost_micro_usd"] is None
+    assert row["priced_calls"] == 0
+
+
+def test_a_device_shared_reading_is_never_TOTALLED_into_a_per_agent_gpu_figure(store) -> None:
+    """The roll-up is the hop where the label is likeliest to be dropped, and dropping it here is
+    exactly how a device-wide 8 GiB becomes 'agent a1 used 8 GiB'. Device-shared observations are
+    surfaced as a COUNT — visible, so nobody reads the absent number as 'no GPU was seen' — and
+    never as a quantity attributed to one agent."""
+    from agentos_controlplane.gpu import DEVICE_SHARED, PROCESS, GpuReading
+
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+    _record(rec, _action(), Usage(1, 1, "gpt-4o"),
+            gpu=GpuReading(gpu_memory_mib=8192, attribution=DEVICE_SHARED))
+    _record(rec, _action(), Usage(1, 1, "gpt-4o"),
+            gpu=GpuReading(gpu_memory_mib=2048, attribution=PROCESS))
+
+    row = rec.totals()[0]
+
+    assert row["gpu_process_memory_mib_max"] == 2048
+    assert row["gpu_device_shared_actions"] == 1
+
+
+def test_an_agent_with_no_gpu_reading_at_all_reports_None_not_zero(store) -> None:
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+
+    _record(rec, _action(), Usage(1, 1, "gpt-4o"))
+
+    row = rec.totals()[0]
+    assert row["gpu_process_memory_mib_max"] is None
+    assert row["gpu_process_seconds"] is None
+    assert row["gpu_device_shared_actions"] == 0
+
+
+def test_the_per_action_detail_carries_the_provider_and_the_gpu_label(store) -> None:
+    """The detail route is where an operator reconciles a line against an invoice, so it is where a
+    GPU number stripped of its qualifier would do the most damage."""
+    from agentos_controlplane.gpu import DEVICE_SHARED, GpuReading
+
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+
+    _record(rec, _tool_action("a1", target="api.stripe.com"), Usage(0, 0, None),
+            gpu=GpuReading(gpu_memory_mib=8192, attribution=DEVICE_SHARED))
+
+    row = rec.for_agent("a1")[0]
+    assert row["provider"] == "api.stripe.com"
+    assert row["gpu_memory_mib"] == 8192
+    assert row["gpu_attribution"] == DEVICE_SHARED

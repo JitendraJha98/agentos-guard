@@ -507,6 +507,22 @@ def build_inventory_router(
             raise HTTPException(status_code=404, detail="cost attribution is not wired")
         return cost.for_agent(agent_id, limit=max(1, min(limit, 1000)), offset=max(0, offset))
 
+    @router.get("/economics/providers")
+    def cost_by_provider(limit: int = 200, offset: int = 0) -> list[dict]:
+        """ECON-03 — downstream (non-model) consumption per (agent, provider).
+
+        The provider on each row is the action's own target, so this reports which third-party
+        services an agent is actually consuming from facts the PEP recorded — nothing here infers a
+        vendor from a hostname, because a guessed vendor lands in a report an operator reconciles
+        line-by-line against a real invoice.
+
+        Gated and paged for the same reasons as the cost roll-up: which vendors an agent calls is
+        commercial information, and the aggregation reads the whole cost table.
+        """
+        if cost is None:
+            raise HTTPException(status_code=404, detail="cost attribution is not wired")
+        return cost.by_provider(limit=max(1, min(limit, 1000)), offset=max(0, offset))
+
     @router.get("/economics/budgets")
     def list_budgets() -> list[dict]:
         """ECON-02 — the configured spending limits and what has been spent against them.

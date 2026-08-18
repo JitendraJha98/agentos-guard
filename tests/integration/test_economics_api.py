@@ -261,3 +261,44 @@ def test_the_roll_up_read_is_bounded_and_pageable(client) -> None:
 
     assert [r["agent_id"] for r in first] == ["a1"]
     assert [r["agent_id"] for r in second] == ["a2"]
+
+
+# ---------------------------------------------------------------- ECON-03: the downstream route
+
+
+def _tool_action(agent: str, target: str) -> AgentAction:
+    return AgentAction(agent_id=agent, type=ActionType.tool_call, target=target, payload={})
+
+
+def test_the_provider_route_reports_downstream_consumption_per_agent(client, cost) -> None:
+    """ECON-03's downstream half: which third-party services is this agent actually consuming.
+
+    The model invocations the `cost` fixture already recorded must NOT appear here. A model
+    invocation's target is 'chat', and listing that as a vendor would invent a downstream service
+    and put the same spend under two headings on two routes an operator compares.
+    """
+    for target in ("api.stripe.com", "api.stripe.com", "api.twilio.com"):
+        action = _tool_action("a1", target)
+        decision = Decision(
+            action_id=action.id, outcome=Outcome.allow, reasons=[Reason(stage="policy", code="ok")]
+        )
+        asyncio.run(cost.record(action, decision, Usage(0, 0, None)))
+
+    rows = client.get("/economics/providers").json()
+
+    assert {(r["agent_id"], r["provider"], r["calls"]) for r in rows} == {
+        ("a1", "api.stripe.com", 2),
+        ("a1", "api.twilio.com", 1),
+    }
+    assert all(r["cost_micro_usd"] is None for r in rows), (
+        "no rate priced these calls, and a $0.00 vendor line is a claim about a bill nobody checked"
+    )
+
+
+def test_the_provider_route_is_gated_and_404s_without_a_recorder(
+    client_no_token, client_no_cost
+) -> None:
+    """Which vendors an agent calls is commercial information in its own right — it maps directly
+    onto what a deployment is built out of."""
+    assert client_no_token.get("/economics/providers").status_code == 401
+    assert client_no_cost.get("/economics/providers").status_code == 404
