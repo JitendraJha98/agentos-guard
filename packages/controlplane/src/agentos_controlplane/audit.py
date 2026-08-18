@@ -146,6 +146,9 @@ EVENT_KINDS = frozenset(
         # AUD-06 (Slice 11a): an epoch was sealed under a Merkle root. Short identifiers + the
         # root digest only — never record bodies.
         "merkle_epoch_sealed",
+        # ECON-01 (Slice 11b): what an action cost. Short identifiers + numbers only — never the
+        # prompt that produced the tokens.
+        "cost_recorded",
     }
 )
 

@@ -741,3 +741,35 @@ class MerkleRoot(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class CostRecord(Base):
+    """ECON-01 — what one action actually cost, attributed to one agent.
+
+    Money is INTEGER micro-USD, not a float. Floating-point money accumulates representation error
+    across a sum, and a budget decision (Slice 11c) made on a drifting total is a decision the
+    operator cannot reproduce. Integers also mean the same value round-trips identically through
+    SQLite and Postgres, which a NUMERIC would not.
+
+    `cost_micro_usd` is NULLABLE and stays null when the model is unpriced: tokens are a fact we
+    observed, dollars are a conversion we can only do with a rate the operator gave us. Writing a
+    zero there would read as 'this action was free'.
+
+    `price_book_version` pins WHICH rates produced the figure, so a bill can be re-derived — and so
+    a rate correction does not silently rewrite history.
+    """
+
+    __tablename__ = "cost_record"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    action_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    action_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cost_micro_usd: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    price_book_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+    )
