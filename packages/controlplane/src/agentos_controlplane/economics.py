@@ -95,10 +95,16 @@ class PriceBook:
 class CostRecorder:
     """The concrete `CostMeter` (the SDK-side Protocol). Persists + audits one action's cost."""
 
-    def __init__(self, session_factory, audit, price_book: PriceBook | None = None) -> None:
+    def __init__(
+        self, session_factory, audit, price_book: PriceBook | None = None, ledger=None
+    ) -> None:
         self._sf = session_factory
         self._audit = audit
         self._prices = price_book or PriceBook()
+        # ECON-02: the in-memory BudgetLedger, notified as each cost lands so the decision path's
+        # spend figure moves without a per-action SQL SUM. None (the ECON-01 deployment that never
+        # opted into budgets) means nothing is notified and this class behaves exactly as before.
+        self._ledger = ledger
 
     def _model_for(self, action: AgentAction, usage: Usage) -> str | None:
         """Which model this action is billed against.
@@ -125,8 +131,12 @@ class CostRecorder:
         the two failures are not symmetric. An event with no row is a visible reconciliation gap the
         AUD-06 chain can be read against; a committed row with no event is a money figure with no
         evidence behind it, which is precisely what the audit chain exists to make impossible.
-        (`decision` is unused here on purpose: it is in the `CostMeter` Protocol because Slice 11c's
-        budget ledger consumes it, and moving a Protocol parameter later would break implementers.)
+
+        (`decision` is unused, and Slice 11c did NOT turn out to need it either — the budget ledger
+        keys on agent and dollars alone, which is the whole of what a spending limit is about. It
+        stays in the `CostMeter` Protocol because the seam is where the decision is in hand and an
+        operator's own meter may legitimately bill by outcome; dropping a Protocol parameter would
+        break those implementers to delete one unused name here.)
         """
         model = self._model_for(action, usage)
         cost = self._prices.cost_micro_usd(model, usage.input_tokens, usage.output_tokens)
@@ -157,6 +167,11 @@ class CostRecorder:
                 )
             )
             s.commit()
+        # ECON-02, AFTER the commit: the ledger is a cache over this table, so it must never lead
+        # the durable record. A notified-then-failed insert would leave the decision path enforcing
+        # spend the table cannot account for — a budget nobody can reconcile against the ledger.
+        if self._ledger is not None:
+            self._ledger.note_spend(action.agent_id, cost)
 
     def totals(self) -> list[dict]:
         """Per-agent roll-up. Tokens and dollars are summed SEPARATELY and dollars may cover fewer

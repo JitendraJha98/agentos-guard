@@ -46,6 +46,9 @@ DEFAULT_INTERVALS = {
     "trust": 60.0,         # reputation moves slowly; a minute of staleness is fine
     "graph": 120.0,        # inventory is descriptive, not enforcing
     "cache": 15.0,         # a stale policy cache enforces the WRONG constitution
+    # ECON-02: tighter than trust because spend does NOT move slowly — a runaway loop burns a
+    # budget in seconds, and this interval is how far a multi-process fleet's view of spend can lag.
+    "budget": 30.0,
 }
 
 
