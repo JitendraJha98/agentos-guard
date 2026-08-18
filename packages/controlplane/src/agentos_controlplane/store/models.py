@@ -708,3 +708,36 @@ class GraphWatermark(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class MerkleRoot(Base):
+    """AUD-06 — a sealed epoch: the Merkle root over a contiguous audit `seq` range.
+
+    Epochs are contiguous and non-overlapping by construction (`seq_start` is the previous epoch's
+    `seq_end + 1`), so no record can slip between two epochs and escape coverage — a record in no
+    epoch could never be proven to an auditor at all.
+
+    A separate table rather than a reuse of `ChainCheckpoint`: that row binds {seq, record_hash},
+    and stuffing a root into `record_hash` would make the column mean two different things
+    depending on the row. It also has to be self-contained for export (CMP-06) — root, range and
+    anchor travelling together is exactly what a disclosure bundle serializes.
+
+    The anchor columns are nullable and filled by a SEPARATE operator step: sealing is cheap and
+    local, anchoring costs a network round-trip to a TSA. Making them one operation would mean a
+    TSA outage stops the log from being sealed at all.
+    """
+
+    __tablename__ = "merkle_root"
+
+    epoch: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    seq_start: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    seq_end: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    root: Mapped[str] = mapped_column(String(64), nullable=False)  # sha256 hex
+    leaf_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # AUD-05 reuse: the SAME anchor kinds and the SAME verify dispatch as ChainCheckpoint.
+    anchor_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    proof: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    tsa_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

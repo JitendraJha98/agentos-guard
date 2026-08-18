@@ -143,6 +143,9 @@ EVENT_KINDS = frozenset(
         # identifiers only. ADVISORY — an observation, not a decision: the control plane surfaces
         # the divergence and an operator decides, because a manifest can simply be stale.
         "rogue_agent_detected",
+        # AUD-06 (Slice 11a): an epoch was sealed under a Merkle root. Short identifiers + the
+        # root digest only — never record bodies.
+        "merkle_epoch_sealed",
     }
 )
 

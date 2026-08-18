@@ -1,8 +1,12 @@
 """AUD-06 — the pure Merkle core: hashing rules, root, proofs, and the attacks they stop."""
+import asyncio
 import hashlib
 
 import pytest
+from sqlalchemy import create_engine, select
+from sqlalchemy.pool import StaticPool
 
+from agentos_controlplane.audit import AuditWriter
 from agentos_controlplane.merkle import (
     MerkleError,
     inclusion_proof,
@@ -11,6 +15,8 @@ from agentos_controlplane.merkle import (
     node_hash,
     verify_inclusion,
 )
+from agentos_controlplane.store.engine import create_all, create_session_factory
+from agentos_controlplane.store.models import MerkleRoot
 
 H = lambda b: hashlib.sha256(b).hexdigest()  # noqa: E731
 
@@ -131,3 +137,32 @@ def test_verify_inclusion_never_raises_on_hostile_input() -> None:
 def test_inclusion_proof_rejects_an_out_of_range_index() -> None:
     with pytest.raises(MerkleError):
         inclusion_proof(["00", "11"], 5)
+
+
+@pytest.fixture()
+def store():
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    create_all(engine)
+    return create_session_factory(engine)
+
+
+def test_merkle_root_row_round_trips(store) -> None:
+    with store() as s:
+        s.add(MerkleRoot(epoch=0, seq_start=0, seq_end=9, root="ab" * 32, leaf_count=10))
+        s.commit()
+    with store() as s:
+        row = s.scalars(select(MerkleRoot)).one()
+    assert (row.epoch, row.seq_start, row.seq_end, row.leaf_count) == (0, 0, 9, 10)
+    assert row.anchor_kind is None and row.proof is None
+
+
+def test_the_seal_event_kind_is_accepted_and_unknown_kinds_are_not(store) -> None:
+    """The kind is allowlisted, so a typo'd or invented seal event can never enter the chain."""
+    audit = AuditWriter(store)
+    asyncio.run(audit.append_event("merkle_epoch_sealed", {"epoch": 0, "root": "ab" * 32}))
+    with pytest.raises(ValueError):
+        asyncio.run(audit.append_event("merkle_epoch_definitely_not_a_kind", {}))
