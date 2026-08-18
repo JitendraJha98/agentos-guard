@@ -435,8 +435,10 @@ def build_inventory_router(
     def agent_graph() -> dict:
         """DISC-06 — the live agent graph: nodes + edges, delegation lineage included.
 
-        A read over the materialized view only. The graph is rebuilt by the `GraphReconciler`'s
-        batch pass, so serving it here can never put work on the per-action hot path.
+        A read over the materialized view only — the rebuild is the `GraphReconciler`'s batch
+        pass, so this route adds no materialization work. It is not free of the hot path though:
+        the view lives in the database the AuditWriter appends to, which is why the read is
+        bounded (`max_nodes` / `max_edges`) rather than serializing every row a prober can create.
         """
         if graph is None:
             raise HTTPException(status_code=404, detail="the agent graph is not wired")

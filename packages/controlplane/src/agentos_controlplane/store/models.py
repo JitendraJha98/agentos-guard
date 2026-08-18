@@ -618,6 +618,17 @@ class GraphNode(Base):
 
     UNIQUE on (kind, name) so a repeated materialization pass converges on the same row rather
     than growing a second copy of the graph on every sweep.
+
+    `kind`/`name` are CALLER text — an agent names itself in the audit body it caused — so the
+    store bounds and sanitizes them to these widths before the row (SQLite does not enforce
+    String(n); on Postgres an over-long value fails the INSERT and aborts the whole sweep), and
+    caps how many distinct agent nodes exist at all.
+
+    `source` records the FIDELITY of the row the way `inventory_component.source` does — 'declared'
+    (the registration manifest), 'observed' (this exact agent really acted) or 'observed_class'
+    (the class-level placeholder named after its own class, because the audit body omits the
+    per-action target). Without it a placeholder is byte-identical to a genuine component that
+    happens to be named 'tool'.
     """
 
     __tablename__ = "graph_node"
@@ -627,6 +638,9 @@ class GraphNode(Base):
     # agent | tool | model | mcp | memory | delegation | prompt
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="observed"
+    )  # declared|observed|observed_class
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -639,8 +653,17 @@ class GraphEdge(Base):
     """DISC-06 — a directed edge in the live agent graph.
 
     `uses` is agent -> component; `delegates` is agent -> agent, its lineage derived from the audit
-    body's `parent_action_id` by resolving which agent performed the parent action. `observations`
-    counts how often the edge was seen, so an operator can tell a one-off from a hot path.
+    body's `parent_action_id` by resolving which agent performed the parent action.
+
+    `observations` counts ACTIONS — one per audit record consumed for this edge, exactly once,
+    because the materialization pass is incremental (each record is read once, past a persisted
+    watermark). It does NOT count sweeps: a sweep-counter would rank a one-off agent above a hot
+    path purely for having existed longer. A DECLARED edge starts at 0, so "declared but never
+    exercised" stays distinguishable from "used once". BigInteger because a hot edge on a busy
+    fleet outgrows int4.
+
+    `source` mirrors `graph_node.source` (declared > observed > observed_class), so a Phase-13
+    transitive walk can tell a class-level placeholder from real evidence.
 
     UNIQUE on the (src, dst, relation) 5-tuple for the same reason `graph_node` is unique on
     (kind, name): a scheduled sweep must converge, not accumulate.
@@ -659,7 +682,29 @@ class GraphEdge(Base):
     dst_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     dst_name: Mapped[str] = mapped_column(String(255), nullable=False)
     relation: Mapped[str] = mapped_column(String(32), nullable=False)  # uses | delegates
-    observations: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    observations: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="observed"
+    )  # declared|observed|observed_class
     last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class GraphWatermark(Base):
+    """DISC-06 — how far the graph materialization has consumed the audit chain.
+
+    One row, keyed by a constant. It is what makes the pass INCREMENTAL: without it every sweep
+    re-read the whole audit log and re-issued a statement per record, so the cost grew with the log
+    forever and the long write transaction blocked the AuditWriter appending to the SAME database —
+    a stalled append drives the pipeline's fail-safe, i.e. observation degrading enforcement.
+    Persisted rather than in-process so a restart does not pay for all of history again.
+    """
+
+    __tablename__ = "graph_watermark"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)  # constant — one row
+    seq: Mapped[int] = mapped_column(BigInteger, nullable=False)  # last AuditRecord.seq consumed
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )

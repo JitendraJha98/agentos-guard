@@ -226,7 +226,14 @@ class GraphReconciler:
     SAME pass. The inventory half is kept, not superseded: it is what supplies
     the per-NAME component nodes the audit body cannot (it carries no `target`).
 
-    A batch pass by construction — nothing here touches the per-action hot path.
+    A batch pass, but NOT an independent one: it writes to the same database the
+    AuditWriter appends to, so it competes for the same write lock. That is why
+    `materialize()` is incremental (a persisted watermark) and commits in small
+    batches — the earlier full-table pass held the lock for its whole duration,
+    which stalled and then FAILED concurrent audit appends, and a failed append
+    drives the pipeline's fail-safe. Keep any work added here bounded for the
+    same reason: this loop cannot touch the hot path directly, but it can starve
+    it through the store they share.
     """
 
     name = "graph"
