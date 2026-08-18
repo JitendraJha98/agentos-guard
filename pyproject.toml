@@ -58,6 +58,12 @@ redteam = [
 # 0.13.0). 0.20.0 is the newest release that co-installs with the redteam group.
 adapters = [
     "openai-agents>=0.20,<0.21",
+    # A TRANSITIVE constraint, not a dependency we use: openai-agents pulls `mcp`, and mcp 2.x
+    # requires `httpx2`. starlette's TestClient PREFERS httpx2 whenever it is installed, so its
+    # responses stop being instances of the httpx 0.28 types every client in this repo is built
+    # on — 8 control-plane-client tests fail on `isinstance(response.stream, SyncByteStream)`.
+    # openai-agents accepts mcp>=1.19,<3, so holding it at 1.x keeps one HTTP stack in the venv.
+    "mcp>=1.19,<2",
 ]
 
 # uv workspace: each package under packages/ has its own pyproject.toml and
