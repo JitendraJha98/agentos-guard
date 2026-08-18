@@ -218,21 +218,31 @@ class TrustReconciler:
 
 
 class GraphReconciler:
-    """Materialize observed components from audit activity (DISC-02 seed).
+    """Materialize the live agent graph (DISC-06) and keep the observed inventory current.
 
-    Phase-7 scope, honestly: this materializes the agent->capability-class edges
-    the audit log already carries. The full live agent graph — delegation edges,
-    models, MCP servers, memories as first-class nodes — is DISC-06 in Phase 10.
+    Phase 7 shipped only the capability-class seed and its docstring deferred the
+    real graph to DISC-06; this now drives `AgentGraphStore.materialize()` as
+    well, so nodes, delegation edges and the observed inventory converge on the
+    SAME pass. The inventory half is kept, not superseded: it is what supplies
+    the per-NAME component nodes the audit body cannot (it carries no `target`).
+
+    A batch pass by construction — nothing here touches the per-action hot path.
     """
 
     name = "graph"
 
-    def __init__(self, inventory, *, interval_s: float = DEFAULT_INTERVALS["graph"]) -> None:
+    def __init__(
+        self, inventory, *, graph=None, interval_s: float = DEFAULT_INTERVALS["graph"]
+    ) -> None:
         self._inventory = inventory
+        self._graph = graph
         self.interval_s = interval_s
 
     def reconcile(self) -> int:
-        return int(self._inventory.enrich_from_audit() or 0)
+        changed = int(self._inventory.enrich_from_audit() or 0)
+        if self._graph is not None:
+            changed += int(self._graph.materialize() or 0)
+        return changed
 
 
 class CacheReconciler:

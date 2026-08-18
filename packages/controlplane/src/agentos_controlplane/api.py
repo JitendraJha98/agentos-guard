@@ -20,6 +20,7 @@ from agentos_controlplane.approvals import AlreadyResolvedError, ApprovalStore
 from agentos_controlplane.auth import make_require_token, resolve_api_token
 from agentos_controlplane.circuit_breaker import CircuitBreakerStore
 from agentos_controlplane.framework_discovery import FrameworkDetector
+from agentos_controlplane.graph import AgentGraphStore
 from agentos_controlplane.inventory import InventoryStore
 from agentos_controlplane.killswitch import EmergencyActiveError, KillSwitchStore
 from agentos_controlplane.registry import Registry
@@ -368,11 +369,12 @@ def build_inventory_router(
     detector: FrameworkDetector | None = None,
     shadow: ShadowAgentStore | None = None,
     rogue: RogueDetector | None = None,
+    graph: AgentGraphStore | None = None,
 ) -> APIRouter:
     """DISC-01/02 — read API over the authoritative agent inventory, plus the DISC-03 framework
-    inventory, the DISC-04 shadow-agent sightings and the DISC-05 rogue-agent findings: further
-    collaborators on the SAME router rather than new ones, so the gated read surface over "what is
-    actually out there" stays one place."""
+    inventory, the DISC-04 shadow-agent sightings, the DISC-05 rogue-agent findings and the DISC-06
+    live agent graph: further collaborators on the SAME router rather than new ones, so the gated
+    read surface over "what is actually out there" stays one place."""
     router = APIRouter()
 
     @router.get("/inventory")
@@ -429,6 +431,18 @@ def build_inventory_router(
             raise HTTPException(status_code=404, detail="rogue detection is not wired")
         return rogue.list_findings(include_resolved=include_resolved)
 
+    @router.get("/discovery/graph")
+    def agent_graph() -> dict:
+        """DISC-06 — the live agent graph: nodes + edges, delegation lineage included.
+
+        A read over the materialized view only. The graph is rebuilt by the `GraphReconciler`'s
+        batch pass, so serving it here can never put work on the per-action hot path.
+        """
+        if graph is None:
+            raise HTTPException(status_code=404, detail="the agent graph is not wired")
+        view = graph.view()
+        return {"nodes": view.nodes, "edges": view.edges}
+
     return router
 
 
@@ -471,6 +485,8 @@ def create_app(
     shadow_store: ShadowAgentStore | None = None,
     # DISC-05: likewise appended last.
     rogue_detector: RogueDetector | None = None,
+    # DISC-06: likewise appended last.
+    graph_store: AgentGraphStore | None = None,
 ) -> FastAPI:
     # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
     # explicit arg -> AGENTOS_API_TOKEN env -> ephemeral random (logged) — never silently open.
@@ -491,11 +507,12 @@ def create_app(
     # framework_detector it answers 404 rather than opening an ungated surface. DISC-04's
     # shadow-agent route does the same — who is probing the fleet unregistered is never public.
     # DISC-05's rogue-agent route likewise: which agents are outside their declared scope is not
-    # public information either.
+    # public information either. DISC-06's graph route most of all — who talks to whom is a map of
+    # the fleet's blast radius.
     if inventory_store is not None:
         app.include_router(
             build_inventory_router(
-                inventory_store, framework_detector, shadow_store, rogue_detector
+                inventory_store, framework_detector, shadow_store, rogue_detector, graph_store
             ),
             dependencies=guard,
         )
