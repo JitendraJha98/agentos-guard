@@ -24,6 +24,7 @@ from agentos_controlplane.inventory import InventoryStore
 from agentos_controlplane.killswitch import EmergencyActiveError, KillSwitchStore
 from agentos_controlplane.registry import Registry
 from agentos_controlplane.resources import ConstitutionError, ResourceStore, VersionConflict
+from agentos_controlplane.shadow import ShadowAgentStore
 from agentos_controlplane.supply_chain import KnownBad, SupplyChainChecker
 from agentos_controlplane.store.models import ApprovalRequest, GovernanceReview
 
@@ -362,11 +363,14 @@ def build_resource_router(resources: ResourceStore, known_bad: "KnownBad | None"
 
 
 def build_inventory_router(
-    inventory: InventoryStore, detector: FrameworkDetector | None = None
+    inventory: InventoryStore,
+    detector: FrameworkDetector | None = None,
+    shadow: ShadowAgentStore | None = None,
 ) -> APIRouter:
     """DISC-01/02 — read API over the authoritative agent inventory, plus the DISC-03 framework
-    inventory: a second collaborator on the SAME router rather than a new one, so the gated
-    read surface over "what is actually out there" stays one place."""
+    inventory and the DISC-04 shadow-agent sightings: further collaborators on the SAME router
+    rather than new ones, so the gated read surface over "what is actually out there" stays one
+    place."""
     router = APIRouter()
 
     @router.get("/inventory")
@@ -397,6 +401,18 @@ def build_inventory_router(
             raise HTTPException(status_code=404, detail="framework discovery is not wired")
         await detector.scan()
         return detector.list_frameworks()
+
+    @router.get("/discovery/shadow-agents")
+    def list_shadow_agents() -> list[dict]:
+        """DISC-04 — actors seen acting without registration.
+
+        Read-only by design: the rows are written by the pipeline's identity short-circuit, which
+        is the only place that knows an actor acted unregistered. There is no write route because
+        there is no operator action to take here — the action was already denied.
+        """
+        if shadow is None:
+            raise HTTPException(status_code=404, detail="shadow detection is not wired")
+        return shadow.list_shadow_agents()
 
     return router
 
@@ -436,6 +452,8 @@ def create_app(
     dashboard: bool = False,
     # DISC-03: appended LAST so no existing positional caller shifts.
     framework_detector: FrameworkDetector | None = None,
+    # DISC-04: likewise appended last.
+    shadow_store: ShadowAgentStore | None = None,
 ) -> FastAPI:
     # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
     # explicit arg -> AGENTOS_API_TOKEN env -> ephemeral random (logged) — never silently open.
@@ -453,10 +471,12 @@ def create_app(
     # DISC-01/02: the inventory read router rides the same gate; absent an inventory_store the
     # routes are not wired (GET /inventory -> 404), keeping existing create_app callers working.
     # DISC-03: the framework-discovery read route rides this SAME router and gate; absent a
-    # framework_detector it answers 404 rather than opening an ungated surface.
+    # framework_detector it answers 404 rather than opening an ungated surface. DISC-04's
+    # shadow-agent route does the same — who is probing the fleet unregistered is never public.
     if inventory_store is not None:
         app.include_router(
-            build_inventory_router(inventory_store, framework_detector), dependencies=guard
+            build_inventory_router(inventory_store, framework_detector, shadow_store),
+            dependencies=guard,
         )
     # RUN-06: the breaker router rides the same gate; absent a breaker_store the /circuit routes are
     # not wired (GET /circuit -> 404), keeping existing create_app callers working.
