@@ -173,10 +173,15 @@ class CostRecorder:
         if self._ledger is not None:
             self._ledger.note_spend(action.agent_id, cost)
 
-    def totals(self) -> list[dict]:
+    def totals(self, limit: int = 200, offset: int = 0) -> list[dict]:
         """Per-agent roll-up. Tokens and dollars are summed SEPARATELY and dollars may cover fewer
         actions than tokens — an operator reading a total must be able to see that some actions were
         unpriced rather than assume the dollar figure is complete.
+
+        Bounded and pageable, for the reason `for_agent` is: the aggregation reads the WHOLE cost
+        table, which grows with every governed action the fleet ever takes, and this is reachable
+        from a gated read route. Paging over the GROUPED rows (agents), not the raw rows, so a page
+        is always a complete set of per-agent totals rather than a partial sum of somebody's spend.
 
         `cost_micro_usd` is None, not 0, for an agent whose actions are ALL unpriced. SQL `SUM` over
         an all-null column returns NULL and coercing that to zero invents "this agent spent $0.00" —
@@ -197,6 +202,8 @@ class CostRecorder:
                 )
                 .group_by(CostRecord.agent_id)
                 .order_by(CostRecord.agent_id)
+                .limit(limit)
+                .offset(offset)
             ).all()
         return [
             {

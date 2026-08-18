@@ -18,6 +18,7 @@ from sqlalchemy.pool import StaticPool
 from agentos_contract import ActionType, AgentAction, Decision, Outcome, Reason, Usage
 from agentos_controlplane.api import create_app
 from agentos_controlplane.approvals import ApprovalStore
+from agentos_controlplane.budget import BudgetLedger
 from agentos_controlplane.audit import AuditWriter
 from agentos_controlplane.economics import CostRecorder, PriceBook
 from agentos_controlplane.inventory import InventoryStore
@@ -68,24 +69,33 @@ def cost(store, audit) -> CostRecorder:
     return rec
 
 
-def _app(store, audit, cost):
+@pytest.fixture
+def budget(store) -> BudgetLedger:
+    return BudgetLedger(store)
+
+
+def _app(store, audit, cost, budget=None):
     inv = InventoryStore(store)
     inv.declare("a1", tools=["http_get"])
     return create_app(
-        ApprovalStore(store, audit), inventory_store=inv, api_token=TOKEN, cost=cost
+        ApprovalStore(store, audit),
+        inventory_store=inv,
+        api_token=TOKEN,
+        cost=cost,
+        budget=budget,
     )
 
 
 @pytest.fixture
-def client(store, audit, cost) -> TestClient:
-    c = TestClient(_app(store, audit, cost))
+def client(store, audit, cost, budget) -> TestClient:
+    c = TestClient(_app(store, audit, cost, budget))
     c.headers.update(AUTH)
     return c
 
 
 @pytest.fixture
-def client_no_token(store, audit, cost) -> TestClient:
-    return TestClient(_app(store, audit, cost))  # no default auth header
+def client_no_token(store, audit, cost, budget) -> TestClient:
+    return TestClient(_app(store, audit, cost, budget))  # no default auth header
 
 
 @pytest.fixture
@@ -148,3 +158,81 @@ def test_an_app_built_without_a_recorder_404s_and_keeps_the_other_routes(client_
     assert client_no_cost.get("/economics/costs").status_code == 404
     assert client_no_cost.get("/economics/costs/a1").status_code == 404
     assert client_no_cost.get("/inventory").status_code == 200
+
+
+# ---------------------------------------------------------------- ECON-02: the budget routes
+
+
+def test_setting_a_budget_makes_it_readable_with_the_spend_against_it(client) -> None:
+    """One route sets the limit and one shows what has been spent against it — an operator deciding
+    whether to raise a budget needs both numbers in the same place."""
+    assert client.put("/economics/budgets/a1", json={"limit_micro_usd": 10_000_000}).status_code == 200
+
+    rows = client.get("/economics/budgets").json()
+
+    assert len(rows) == 1
+    assert (rows[0]["agent_id"], rows[0]["limit_micro_usd"], rows[0]["period"]) == (
+        "a1",
+        10_000_000,
+        "day",
+    )
+
+
+def test_the_read_route_reports_the_ratio_the_constitution_will_see(client, budget) -> None:
+    """The number on the route and the number in the decision are the SAME reading — an operator who
+    cannot see what the principle will compare against cannot explain a budget block."""
+    client.put("/economics/budgets/a1", json={"limit_micro_usd": 4_000_000})
+    budget.note_spend("a1", 3_000_000)
+
+    row = client.get("/economics/budgets").json()[0]
+
+    assert row["spend_usd"] == 3.0
+    assert row["budget_used_ratio"] == pytest.approx(0.75)
+    assert row["budget_used_ratio"] == budget.posture_for("a1").budget_used_ratio
+
+
+def test_raising_a_budget_bumps_the_version(client) -> None:
+    """Raising a limit is how an over-budget agent is unblocked. That is a privileged act, so it
+    leaves a trace an incident review can read."""
+    client.put("/economics/budgets/a1", json={"limit_micro_usd": 1_000_000})
+    client.put("/economics/budgets/a1", json={"limit_micro_usd": 8_000_000})
+
+    assert client.get("/economics/budgets").json()[0]["version"] == 2
+
+
+def test_a_malformed_or_impossible_budget_is_refused(client) -> None:
+    """A negative limit or an unknown period is a typo, and a typo must not become a silently
+    disabled spend control."""
+    assert client.put("/economics/budgets/a1", json={}).status_code == 422
+    assert client.put("/economics/budgets/a1", json={"limit_micro_usd": "lots"}).status_code == 422
+    assert client.put("/economics/budgets/a1", json={"limit_micro_usd": -1}).status_code == 422
+    assert (
+        client.put("/economics/budgets/a1", json={"limit_micro_usd": 1, "period": "fortnight"}).status_code
+        == 422
+    )
+    assert client.get("/economics/budgets").json() == []
+
+
+def test_the_budget_routes_are_gated(client_no_token) -> None:
+    """Raising a spending limit from an unauthenticated request is a governance bypass, not a
+    convenience: an agent that can raise its own budget has no budget."""
+    assert client_no_token.get("/economics/budgets").status_code == 401
+    assert (
+        client_no_token.put("/economics/budgets/a1", json={"limit_micro_usd": 1}).status_code == 401
+    )
+
+
+def test_an_app_built_without_a_ledger_404s(client_no_cost) -> None:
+    assert client_no_cost.get("/economics/budgets").status_code == 404
+    assert client_no_cost.put("/economics/budgets/a1", json={"limit_micro_usd": 1}).status_code == 404
+
+
+def test_the_roll_up_read_is_bounded_and_pageable(client) -> None:
+    """The 11b review left this open: the roll-up grouped over the WHOLE cost table on a gated read
+    route, so its cost grew with every governed action the fleet ever took. It is capped now, and
+    pageable so the cap cannot make it silently disagree with the per-agent detail."""
+    first = client.get("/economics/costs", params={"limit": 1}).json()
+    second = client.get("/economics/costs", params={"limit": 1, "offset": 1}).json()
+
+    assert [r["agent_id"] for r in first] == ["a1"]
+    assert [r["agent_id"] for r in second] == ["a2"]

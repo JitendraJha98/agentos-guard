@@ -145,10 +145,14 @@ def test_remediation_rejects_control_chars():
 def test_example_constitution_loads_and_compiles_with_stable_version():
     from agentos_constitution import compile_constitution, constitution_version
     c = load_constitution(EXAMPLE)
-    assert {p.id for p in c.principles} >= {"1.1", "2.1", "3.2", "3.5", "4.1"}
+    assert {p.id for p in c.principles} >= {"1.1", "2.1", "3.2", "3.5", "4.1", "5.1", "5.2"}
     by_id = {p.id: p for p in c.principles}
     assert by_id["4.1"].effect == "governance_review"
     assert by_id["3.5"].kind == "sequence"
+    # ECON-02: the shipped budget principles. Named here so deleting one from the example file is a
+    # deliberate edit that turns a test red, not a silent removal of the fleet's only spend gate.
+    assert by_id["5.1"].effect == "require_approval"
+    assert by_id["5.2"].effect == "governance_review"
     bundle = compile_constitution(c)
     assert bundle.constitution_version.startswith("sha256:")
     # stable: re-loading + re-compiling yields the identical version and bytes

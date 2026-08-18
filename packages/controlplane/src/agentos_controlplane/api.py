@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from agentos_controlplane.approvals import AlreadyResolvedError, ApprovalStore
 from agentos_controlplane.auth import make_require_token, resolve_api_token
 from agentos_controlplane.circuit_breaker import CircuitBreakerStore
+from agentos_controlplane.budget import BudgetLedger
 from agentos_controlplane.economics import CostRecorder
 from agentos_controlplane.framework_discovery import FrameworkDetector
 from agentos_controlplane.graph import AgentGraphStore
@@ -374,12 +375,14 @@ def build_inventory_router(
     graph: AgentGraphStore | None = None,
     sealer: MerkleSealer | None = None,
     cost: CostRecorder | None = None,
+    budget: BudgetLedger | None = None,
 ) -> APIRouter:
     """DISC-01/02 — read API over the authoritative agent inventory, plus the DISC-03 framework
     inventory, the DISC-04 shadow-agent sightings, the DISC-05 rogue-agent findings, the DISC-06
-    live agent graph, the AUD-06 sealed audit epochs and the ECON-01 cost roll-up: further
-    collaborators on the SAME router rather than new ones, so the gated read surface over "what is
-    actually out there" — and what actually happened, and what it cost — stays one place."""
+    live agent graph, the AUD-06 sealed audit epochs, the ECON-01 cost roll-up and the ECON-02
+    budgets: further collaborators on the SAME router rather than new ones, so the gated surface
+    over "what is actually out there" — and what happened, what it cost, and what it may cost —
+    stays one place."""
     router = APIRouter()
 
     @router.get("/inventory")
@@ -474,16 +477,20 @@ def build_inventory_router(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @router.get("/economics/costs")
-    def cost_totals() -> list[dict]:
+    def cost_totals(limit: int = 200, offset: int = 0) -> list[dict]:
         """ECON-01 — per-agent cost roll-up. Gated: what an agent costs is commercial information.
 
         Tokens and dollars are reported side by side with the count of actions each covers, because
         the dollar sum omits every unpriced action and an operator reading it as the whole bill
         would under-count exactly the models they have not supplied rates for.
+
+        Paged for the same reason the per-agent route is: the aggregation reads the WHOLE cost
+        table, which grows with every governed action the fleet ever takes, and an unbounded scan
+        on a gated read route is still a scan of everything.
         """
         if cost is None:
             raise HTTPException(status_code=404, detail="cost attribution is not wired")
-        return cost.totals()
+        return cost.totals(limit=max(1, min(limit, 1000)), offset=max(0, offset))
 
     @router.get("/economics/costs/{agent_id}")
     def cost_for_agent(agent_id: str, limit: int = 200, offset: int = 0) -> list[dict]:
@@ -497,6 +504,43 @@ def build_inventory_router(
         if cost is None:
             raise HTTPException(status_code=404, detail="cost attribution is not wired")
         return cost.for_agent(agent_id, limit=max(1, min(limit, 1000)), offset=max(0, offset))
+
+    @router.get("/economics/budgets")
+    def list_budgets() -> list[dict]:
+        """ECON-02 — the configured spending limits and what has been spent against them.
+
+        Unpaged deliberately, unlike the cost routes above: this table holds one row per agent an
+        operator explicitly budgeted, not one per action, so it does not grow with fleet activity.
+        """
+        if budget is None:
+            raise HTTPException(status_code=404, detail="budgets are not wired")
+        return budget.list_budgets()
+
+    @router.put("/economics/budgets/{agent_id}")
+    def set_budget(agent_id: str, body: dict) -> dict:
+        """ECON-02 — set an agent's spending limit.
+
+        Gated like every route on this router, and that gate is load-bearing here rather than
+        merely consistent: raising a budget is how an over-budget agent is unblocked, so an agent
+        that could call this route would have no budget at all.
+
+        A malformed limit is refused rather than coerced. A negative limit or an unknown period is a
+        typo, and a typo that lands as a stored budget is a spend control that looks configured and
+        enforces nothing.
+        """
+        if budget is None:
+            raise HTTPException(status_code=404, detail="budgets are not wired")
+        try:
+            limit = int(body["limit_micro_usd"])
+            period = str(body.get("period", "day"))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422, detail="limit_micro_usd (int) is required"
+            ) from exc
+        if limit < 0 or period not in {"day", "month", "total"}:
+            raise HTTPException(status_code=422, detail="invalid limit or period")
+        budget.set_budget(agent_id, limit_micro_usd=limit, period=period)
+        return {"agent_id": agent_id, "limit_micro_usd": limit, "period": period}
 
     return router
 
@@ -546,6 +590,8 @@ def create_app(
     sealer: MerkleSealer | None = None,
     # ECON-01: likewise appended last.
     cost: CostRecorder | None = None,
+    # ECON-02: likewise appended last.
+    budget: BudgetLedger | None = None,
 ) -> FastAPI:
     # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
     # explicit arg -> AGENTOS_API_TOKEN env -> ephemeral random (logged) — never silently open.
@@ -569,7 +615,9 @@ def create_app(
     # public information either. DISC-06's graph route most of all — who talks to whom is a map of
     # the fleet's blast radius. AUD-06's disclosure route likewise: an operator chooses what to
     # disclose and to whom, so the bundle is never a public endpoint. ECON-01's cost roll-up too:
-    # what an agent spends maps onto which workloads a deployment runs and how heavily.
+    # what an agent spends maps onto which workloads a deployment runs and how heavily. ECON-02's
+    # budget routes need the gate most of all — they WRITE, and raising a budget is how an
+    # over-budget agent is unblocked, so an ungated one would be a governance bypass.
     if inventory_store is not None:
         app.include_router(
             build_inventory_router(
@@ -580,6 +628,7 @@ def create_app(
                 graph_store,
                 sealer,
                 cost,
+                budget,
             ),
             dependencies=guard,
         )
