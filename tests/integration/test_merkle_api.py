@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -28,7 +29,7 @@ from agentos_controlplane.audit_verify import verify_chain
 from agentos_controlplane.checkpoint import LocalEd25519Anchor
 from agentos_controlplane.identity_engine import IdentityEngine
 from agentos_controlplane.inventory import InventoryStore
-from agentos_controlplane.merkle import MerkleSealer, verify_inclusion
+from agentos_controlplane.merkle import MerkleSealer, merkle_root, verify_bundle, verify_inclusion
 from agentos_controlplane.store.engine import create_all, create_session_factory
 from agentos_controlplane.store.models import AuditRecord, MerkleRoot
 
@@ -99,16 +100,32 @@ def client_no_sealer(store, audit) -> TestClient:
 
 
 def test_a_disclosed_bundle_verifies_against_the_root_with_no_database(client) -> None:
-    """The end-to-end claim of AUD-06: a third party holding ONLY the bundle can verify it."""
+    """The end-to-end claim of AUD-06: a third party holding ONLY the bundle can verify it.
+
+    Through `verify_bundle`, not `verify_inclusion`. The tree check alone binds a record_hash, so a
+    test that feeds it `bundle["record"]["record_hash"]` asserts only that the bundle agrees with
+    itself — something a forger satisfies for free. What an auditor needs proved is that the BODY
+    they were handed is the record the root commits to, at the seq the bundle claims.
+    """
     bundle = client.get("/audit/disclose/2").json()
 
-    assert verify_inclusion(
+    assert verify_bundle(bundle).ok
+
+
+def test_a_swapped_body_is_refused_even_though_the_proof_still_verifies(client) -> None:
+    """An auditor shown `outcome: "allow"` where the record said `deny`, beside a proof that says
+    True, would certify the forgery. The proof never covered the body."""
+    bundle = client.get("/audit/disclose/2").json()
+    bundle["record"]["body"] = dict(bundle["record"]["body"], framework="fabricated")
+
+    assert verify_inclusion(  # the raw tree check is still satisfied ...
         bundle["record"]["record_hash"],
         bundle["index"],
         bundle["proof"],
         bundle["epoch"]["root"],
         bundle["epoch"]["leaf_count"],
     )
+    assert not verify_bundle(bundle).ok  # ... and the bundle check is not
 
 
 def test_a_bundle_discloses_one_record_and_summarizes_the_rest_as_hashes(client) -> None:
@@ -213,7 +230,12 @@ def test_a_record_deleted_from_under_a_sealed_epoch_is_caught(store, sealer) -> 
 
 def test_an_epoch_that_skips_a_seq_is_caught(store, sealer) -> None:
     """A record inside NO epoch can never be disclosed. A forged second epoch that starts past the
-    first one's end would quietly strand everything between them."""
+    first one's end would quietly strand everything between them.
+
+    Named `merkle_range_gap`, not `merkle_epoch_overlap`: a gap is remediated by re-sealing the
+    stranded range, an overlap by deleting a bogus row, and the check name is what a CI consumer
+    keys its response on.
+    """
     with store() as s:
         s.add(MerkleRoot(epoch=1, seq_start=99, seq_end=100, root="ab" * 32, leaf_count=2))
         s.commit()
@@ -221,7 +243,74 @@ def test_an_epoch_that_skips_a_seq_is_caught(store, sealer) -> None:
     result = verify_chain(store)
 
     assert not result.ok
+    assert result.violation.check == "merkle_range_gap"
+
+
+def test_an_epoch_that_reclaims_a_covered_seq_is_still_an_overlap(store, sealer) -> None:
+    """The opposite fault keeps the opposite name: one seq under two roots that can disagree."""
+    with store() as s:
+        s.add(MerkleRoot(epoch=1, seq_start=2, seq_end=4, root="ab" * 32, leaf_count=3))
+        s.commit()
+
+    result = verify_chain(store)
+
+    assert not result.ok
     assert result.violation.check == "merkle_epoch_overlap"
+
+
+def test_a_truncated_log_re_sealed_to_match_is_caught_by_the_signed_announcement(
+    store, audit, sealer
+) -> None:
+    """The forgery the epoch row alone cannot refuse, on the STRONGEST posture (signed chain).
+
+    `seq_start`, `seq_end`, `leaf_count` and `root` are writable together, so re-deriving a row
+    against the range that same row declares proves only that the row is self-consistent: destroy
+    the tail, shrink the row, recompute the root, and the verifier prints OK over deleted governed
+    actions. The one thing the forger cannot rewrite is `seal()`'s own announcement — hash-chained
+    and signed, and still stating the range that was really sealed.
+    """
+    with store() as s:
+        for row in s.scalars(select(AuditRecord).where(AuditRecord.seq >= 3)).all():
+            s.delete(row)
+        ep = s.get(MerkleRoot, 0)
+        ep.seq_end, ep.leaf_count = 2, 3
+        ep.root = merkle_root(
+            list(s.scalars(select(AuditRecord.record_hash).order_by(AuditRecord.seq.asc())).all())
+        )
+        s.commit()
+
+    result = verify_chain(store)
+
+    assert not result.ok
+    assert result.violation.check == "merkle_announcement_missing"
+
+
+def test_an_epoch_row_that_contradicts_its_announcement_is_caught(store, sealer) -> None:
+    """The same forgery with the announcement left in place: the row and the chain now disagree
+    about what was sealed, and the chain is the half that is signed."""
+    with store() as s:
+        s.get(MerkleRoot, 0).root = "ab" * 32
+        s.commit()
+
+    result = verify_chain(store)
+
+    assert not result.ok
+    assert result.violation.check == "merkle_announcement_mismatch"
+
+
+def test_a_forged_seq_end_fails_fast_instead_of_hanging_the_verifier(store, sealer) -> None:
+    """`merkle_root` has no append-only trigger and is exactly the table a forger writes to. A
+    range materialized before it is bounded turns a caught forgery into a hung CI job — the
+    operator reads that as a broken build, not as evidence."""
+    with store() as s:
+        s.get(MerkleRoot, 0).seq_end = 10**18
+        s.commit()
+
+    started = time.perf_counter()
+    result = verify_chain(store)
+
+    assert time.perf_counter() - started < 5.0
+    assert not result.ok and result.violation.check == "merkle_range_incomplete"
 
 
 def test_an_anchored_epoch_verifies_and_a_corrupted_anchor_does_not(store, sealer) -> None:

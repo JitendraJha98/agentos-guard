@@ -14,6 +14,7 @@ from agentos_controlplane.checkpoint import (
     verify_checkpoint_proof,
 )
 from agentos_controlplane.identity_engine import IdentityEngine
+from agentos_controlplane import merkle as merkle_mod
 from agentos_controlplane.merkle import (
     MerkleError,
     MerkleSealer,
@@ -22,6 +23,7 @@ from agentos_controlplane.merkle import (
     leaf_hash,
     merkle_root,
     node_hash,
+    verify_bundle,
     verify_inclusion,
 )
 from agentos_controlplane.store.engine import create_all, create_session_factory
@@ -141,6 +143,18 @@ def test_verify_inclusion_never_raises_on_hostile_input() -> None:
     assert not verify_inclusion("00", 5, [], root, 2)                           # index >= size
     assert not verify_inclusion("00", 1, [("left", "nothex")], root, 2)
     assert not verify_inclusion("00", 0, [None], root, 2)                       # not a pair
+
+
+def test_an_index_past_the_last_leaf_is_refused_by_the_bound_not_by_luck() -> None:
+    """REGRESSION GUARD for the `index < leaf_count` bound itself. Index n in an n-leaf tree
+    consumes exactly the same sibling path as index n-2 and climbs to the same root, so without the
+    bound a genuine record verifies at a position OUTSIDE the tree — and `seq_start + index` is how
+    a reader turns that position into a seq. The other hostile-input cases pass an empty proof, so
+    they die on iterator exhaustion and leave the bound untested."""
+    leaves = [f"{i:064x}" for i in range(2)]
+    root = merkle_root(leaves)
+
+    assert not verify_inclusion(leaves[0], 2, inclusion_proof(leaves, 0), root, 2)
 
 
 def test_inclusion_proof_rejects_an_out_of_range_index() -> None:
@@ -311,3 +325,273 @@ def test_anchoring_an_unsealed_epoch_is_refused(store) -> None:
     sealer = MerkleSealer(store, audit)
     with pytest.raises(MerkleError):
         sealer.anchor_epoch(0, LocalEd25519Anchor(None))
+
+
+def test_re_anchoring_an_epoch_is_refused_unless_it_is_deliberate(store) -> None:
+    """Re-anchoring silently would let an RFC-3161 epoch be replaced by the durability-only local
+    anchor — external authority traded for a self-signature, with `anchored` still reporting true.
+    A downgrade nobody can see is worse than a refusal somebody has to read."""
+    audit = AuditWriter(store)
+    _actions(audit, 3)
+    sealer = MerkleSealer(store, audit)
+    ep = asyncio.run(sealer.seal())
+    engine = IdentityEngine(is_registered=lambda s: True, load_trust=lambda s: 0.5)
+    sealer.anchor_epoch(ep.epoch, LocalEd25519Anchor(engine))
+
+    with pytest.raises(MerkleError):
+        sealer.anchor_epoch(ep.epoch, LocalEd25519Anchor(engine))
+
+    sealer.anchor_epoch(ep.epoch, LocalEd25519Anchor(engine), replace=True)  # deliberate: allowed
+
+
+def test_sealing_refuses_a_range_that_skips_a_record(store) -> None:
+    """REGRESSION GUARD for the contiguity check. A record inside no epoch can never be disclosed,
+    so a root over a range with a hole is a claim of coverage that is not coverage — refusing is
+    the only honest answer, and the check is otherwise defended by a comment alone."""
+    audit = AuditWriter(store)
+    _actions(audit, 4)
+    with store() as s:
+        s.delete(s.scalars(select(AuditRecord).where(AuditRecord.seq == 2)).one())
+        s.commit()
+
+    with pytest.raises(MerkleError):
+        asyncio.run(MerkleSealer(store, audit).seal())
+
+
+def _drive(coro):
+    """Run a coroutine to completion from INSIDE a running asyncio.run(), which forbids nesting.
+
+    Only sound because the audit writer's single await is an uncontended asyncio.Lock, which never
+    actually suspends — asserted below rather than assumed.
+    """
+    try:
+        coro.send(None)
+    except StopIteration as stop:
+        return stop.value
+    raise AssertionError("the append suspended — this test's assumption no longer holds")
+
+
+def test_a_record_appended_mid_seal_is_excluded_by_the_pinned_head(store) -> None:
+    """REGRESSION GUARD for the pinned upper bound — the slice's ONLY concurrency protection, and
+    otherwise defended by a comment alone. If the leaf query were not bounded by the head read
+    before it, a record landing mid-build would be hashed into a root whose row claims a different
+    range: a root that does not match its own stated range fails verification and reads as
+    tampering."""
+    audit = AuditWriter(store)
+    _actions(audit, 4)
+    raced = []
+
+    def racing_factory():
+        s = store()
+        real_scalar = s.scalar
+
+        def scalar(stmt, *a, **kw):
+            out = real_scalar(stmt, *a, **kw)
+            if not raced:  # the head read, before the leaves are collected
+                raced.append(True)
+                _drive(
+                    audit.append_event(
+                        "framework_discovered",
+                        {"framework": "late", "distribution": "d", "version": "1"},
+                    )
+                )
+            return out
+
+        s.scalar = scalar
+        return s
+
+    ep = asyncio.run(MerkleSealer(racing_factory, audit).seal())
+
+    assert raced, "the racing append never fired — the test proves nothing"
+    assert (ep.seq_start, ep.seq_end, ep.leaf_count) == (0, 3, 4)
+
+
+def test_one_seal_reads_a_bounded_range_and_the_next_picks_up_the_rest(store, monkeypatch) -> None:
+    """A first seal on a production chain would otherwise pull the whole audit table into memory.
+    Capping delays coverage to the next call; it never loses it."""
+    audit = AuditWriter(store)
+    _actions(audit, 5)
+    sealer = MerkleSealer(store, audit)
+    monkeypatch.setattr(merkle_mod, "_MAX_EPOCH_LEAVES", 2)
+
+    first = asyncio.run(sealer.seal())
+    second = asyncio.run(sealer.seal())
+
+    assert (first.seq_start, first.seq_end, first.leaf_count) == (0, 1, 2)
+    assert (second.seq_start, second.seq_end, second.leaf_count) == (2, 3, 2)
+
+
+def test_a_failed_announcement_leaves_no_committed_epoch_behind(store) -> None:
+    """The announcement is what puts the root inside the tamper-evident chain. An epoch committed
+    without one is permanently outside that protection and indistinguishable from a row a forger
+    inserted by hand — so undo the epoch rather than keep a root nobody vouched for."""
+
+    class Failing:
+        async def append_event(self, *args, **kwargs):
+            raise RuntimeError("the AUD-04 secret gate refused the announcement")
+
+    audit = AuditWriter(store)
+    _actions(audit, 3)
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(MerkleSealer(store, Failing()).seal())
+
+    with store() as s:
+        assert s.scalars(select(MerkleRoot)).all() == []
+
+
+def test_disclosure_names_the_epoch_that_actually_covers_the_seq(store) -> None:
+    """Which root a record is proven against decides what the proof means, so it must not depend on
+    the engine's row order across the two epochs that exist by the second seal."""
+    audit = AuditWriter(store)
+    _actions(audit, 3)
+    sealer = MerkleSealer(store, audit)
+    first = asyncio.run(sealer.seal())
+    second = asyncio.run(sealer.seal())  # covers the first seal's own announcement
+
+    for seq in range(first.seq_start, first.seq_end + 1):
+        assert sealer.disclose(seq)["epoch"]["epoch"] == first.epoch
+    assert sealer.disclose(second.seq_start)["epoch"]["epoch"] == second.epoch
+
+
+def test_disclose_refuses_when_records_were_deleted_from_under_the_epoch(store) -> None:
+    """Building a proof over the survivors while the row still claims the original size produces a
+    success-shaped bundle the recipient cannot verify — and an unverifiable proof reads to an
+    auditor as tampering, not as our bug. Fail here, where the operator can see it."""
+    audit = AuditWriter(store)
+    _actions(audit, 8)
+    sealer = MerkleSealer(store, audit)
+    asyncio.run(sealer.seal())
+    with store() as s:
+        s.delete(s.scalars(select(AuditRecord).where(AuditRecord.seq == 6)).one())
+        s.commit()
+
+    # the message names the real cause; "the proof did not verify" would send the operator hunting
+    # for a tree bug instead of for the deletion
+    with pytest.raises(MerkleError, match="deleted from under a sealed root"):
+        sealer.disclose(2)
+
+
+def test_disclose_refuses_a_body_that_no_longer_hashes_to_its_own_record_hash(store) -> None:
+    """The tree is built over the stored `record_hash` column, so a body edited underneath it still
+    yields a proof that verifies — beside a fabricated body. Handing an auditor "inclusion
+    verified" next to content the root never committed to is the worst failure this feature has."""
+    audit = AuditWriter(store)
+    _actions(audit, 6)
+    sealer = MerkleSealer(store, audit)
+    asyncio.run(sealer.seal())
+    with store() as s:
+        row = s.scalars(select(AuditRecord).where(AuditRecord.seq == 2)).one()
+        row.body = dict(row.body, framework="fabricated")  # record_hash column untouched
+        s.commit()
+
+    with pytest.raises(MerkleError):
+        sealer.disclose(2)
+
+
+def test_verify_bundle_refuses_a_swapped_body_that_the_raw_proof_still_accepts(store) -> None:
+    """THE bundle-level attack. `verify_inclusion` binds a record_hash, not a body: swap the body,
+    keep the hash, and the shipped tree check still says True. An auditor handed a bundle reading
+    `allow` where the record said `deny` would run the verifier, see True, and certify it."""
+    audit = AuditWriter(store)
+    _actions(audit, 6)
+    sealer = MerkleSealer(store, audit)
+    asyncio.run(sealer.seal())
+    bundle = sealer.disclose(2)
+    bundle["record"]["body"] = dict(bundle["record"]["body"], framework="fabricated")
+
+    # the raw tree check is happy — which is exactly why an auditor must not be handed it alone
+    assert verify_inclusion(
+        bundle["record"]["record_hash"],
+        bundle["index"],
+        bundle["proof"],
+        bundle["epoch"]["root"],
+        bundle["epoch"]["leaf_count"],
+    )
+    assert not verify_bundle(bundle).ok
+
+
+def test_verify_bundle_refuses_a_record_replayed_at_a_position_it_never_occupied(store) -> None:
+    """`leaf_count` decides the tree's shape, so a bundle that supplies it binds nothing: a genuine
+    record at index 4 of 5 replays untouched as index 1 of 2 under the same root. Pinning
+    leaf_count to the epoch's range and the index to the body's seq is what makes `seq_start +
+    index` mean something, because moving the record now means moving a seq inside the hashed body.
+    """
+    audit = AuditWriter(store)
+    _actions(audit, 5)
+    sealer = MerkleSealer(store, audit)
+    asyncio.run(sealer.seal())
+    bundle = sealer.disclose(4)
+
+    forgeries = 0
+    for leaf_count in range(1, 30):
+        for index in range(leaf_count):
+            forged = json.loads(json.dumps(bundle))
+            forged["index"] = index
+            forged["epoch"]["leaf_count"] = leaf_count
+            if verify_inclusion(
+                forged["record"]["record_hash"],
+                index,
+                forged["proof"],
+                forged["epoch"]["root"],
+                leaf_count,
+            ) and (index, leaf_count) != (bundle["index"], bundle["epoch"]["leaf_count"]):
+                forgeries += 1
+                assert not verify_bundle(forged).ok
+    assert forgeries, "no replay was constructible — the guard is untested"
+
+
+def test_verify_bundle_reports_an_unanchored_root_as_our_word_alone(store) -> None:
+    """`anchored: false` must not read the same as `verified`. A root nobody outside vouched for is
+    a number in a file the discloser wrote, so the two facts stay separate fields."""
+    audit = AuditWriter(store)
+    _actions(audit, 5)
+    sealer = MerkleSealer(store, audit)
+    asyncio.run(sealer.seal())
+
+    result = verify_bundle(sealer.disclose(2))
+
+    assert result.ok and not result.anchor_verified and "no anchor" in result.reason
+
+
+def test_verify_bundle_checks_the_anchor_the_bundle_now_carries(store) -> None:
+    """The slice's goal is a root carrying authority the operator does not supply. Shipping
+    `anchored: true` without the proof made that unverifiable — an auditor could not tell an
+    RFC-3161 timestamp from a string typed into the column."""
+    audit = AuditWriter(store)
+    _actions(audit, 5)
+    sealer = MerkleSealer(store, audit)
+    ep = asyncio.run(sealer.seal())
+    engine = IdentityEngine(is_registered=lambda s: True, load_trust=lambda s: 0.5)
+    sealer.anchor_epoch(ep.epoch, LocalEd25519Anchor(engine))
+    bundle = sealer.disclose(2)
+
+    assert bundle["epoch"]["anchor_proof"] is not None
+    good = verify_bundle(bundle, public_key_pem=engine.public_key_pem)
+    assert good.ok and good.anchor_verified
+
+    # material not supplied -> a counted skip, never a silent pass
+    assert not verify_bundle(bundle).anchor_verified
+    # a root re-anchored over different bytes cannot pass as the original
+    bundle["epoch"]["root"] = "ff" * 32
+    assert not verify_bundle(bundle, public_key_pem=engine.public_key_pem).ok
+
+
+def test_verify_bundle_never_raises_on_hostile_input(store) -> None:
+    """An auditor runs this on a file someone mailed them; a traceback is easy to mistake for 'the
+    check did not run' when it means 'the check failed'."""
+    audit = AuditWriter(store)
+    _actions(audit, 4)
+    sealer = MerkleSealer(store, audit)
+    asyncio.run(sealer.seal())
+    good = sealer.disclose(1)
+
+    for hostile in (
+        {},
+        {"record": None, "epoch": {}, "index": 0, "proof": []},
+        {**good, "epoch": {**good["epoch"], "leaf_count": "four"}},
+        {**good, "index": None},
+        {**good, "record": {**good["record"], "record_hash": "not-hex"}},
+        {**good, "epoch": {**good["epoch"], "anchor_kind": "invented", "anchor_proof": "zz"}},
+    ):
+        assert not verify_bundle(hostile).ok

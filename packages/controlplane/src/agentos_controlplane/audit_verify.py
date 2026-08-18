@@ -76,8 +76,9 @@ def verify_chain(
     checkpointed seq (checkpoint_truncation), and the anchor proof must verify (checkpoint_proof);
     a checkpoint whose verification material was not supplied is SKIPPED (counted, not failed).
     Finally every AUD-06 Merkle epoch must still re-derive its sealed root from those same
-    recomputed hashes, and the epochs must tile the chain without a gap — a disclosed inclusion
-    proof is only worth what this pass says the root is still worth."""
+    recomputed hashes, must agree with its own signed in-chain announcement, and the epochs must
+    tile the chain without a gap — a disclosed inclusion proof is only worth what this pass says
+    the root is still worth."""
     with session_factory() as session:
         rows = session.scalars(select(AuditRecord).order_by(AuditRecord.seq.asc())).all()
 
@@ -248,23 +249,100 @@ def verify_chain(
     # never-trust-a-stored-derived-field discipline as every step above. A tree built over the
     # stored column would faithfully summarize whatever a forger wrote there, so the Merkle pass
     # would agree with the forgery instead of contradicting it.
+    #
+    # The merkle_root TABLE is not in the chain: `seq_start`, `seq_end`, `leaf_count` and `root`
+    # are writable together, so re-deriving a row against the range that same row declares proves
+    # only that the row is self-consistent — a forger who truncates the log and rewrites the row to
+    # match gets an OK. What they cannot rewrite is `seal()`'s own `merkle_epoch_sealed` record:
+    # it is hash-chained and signed, and it states what was REALLY sealed. Reading it here is the
+    # one detection this pass adds that the chain pass cannot already make on its own, and it is
+    # the protection seal()'s docstring claims for announcing at all.
     with session_factory() as session:
         epochs = session.scalars(select(MerkleRoot).order_by(MerkleRoot.epoch.asc())).all()
+    announced: dict[int, dict] = {}
+    for body in (row.body for row in rows):
+        # FIRST announcement per epoch wins: an unsigned duplicate appended later (unsigned rows
+        # skip step 6) must not be able to displace the genuine one.
+        if body.get("kind") == "merkle_epoch_sealed" and isinstance(body.get("epoch"), int):
+            announced.setdefault(body["epoch"], body)
     eps_checked = 0
     eps_skipped = 0
     expected_start = 0
     for ep in epochs:
         # Epochs are contiguous by construction. A gap strands every seq between two epochs in NO
         # epoch, where it can never be disclosed; an overlap gives one seq two roots that can
-        # disagree about it.
+        # disagree about it. The two are named apart because the remediations are opposite — a gap
+        # means re-sealing a stranded range, an overlap means deleting a bogus row — and the check
+        # name is what a CI consumer keys on.
         if ep.seq_start != expected_start:
             return VerifyResult(
                 False,
                 n,
                 Violation(
                     ep.seq_start,
-                    "merkle_epoch_overlap",
+                    "merkle_range_gap" if ep.seq_start > expected_start else "merkle_epoch_overlap",
                     f"epoch {ep.epoch} starts at {ep.seq_start}, expected {expected_start}",
+                ),
+                sigs,
+                cps_checked,
+                cps_skipped,
+                eps_checked,
+                eps_skipped,
+            )
+        # Bound the range with ARITHMETIC before materializing it. `seq_end` is attacker-writable
+        # and nothing constrains it, so a forged 10**18 never returns: the operator would see a hung
+        # CI job, not "forgery caught" — the same never-crash-the-verifier discipline as the
+        # malformed-hex and malformed-DER fixes above, applied to never-hang.
+        if (
+            ep.seq_end < ep.seq_start
+            or ep.seq_end - ep.seq_start + 1 != ep.leaf_count
+            or ep.seq_end > max_seq
+        ):
+            return VerifyResult(
+                False,
+                n,
+                Violation(
+                    ep.seq_start,
+                    "merkle_range_incomplete",
+                    f"epoch {ep.epoch}'s range {ep.seq_start}..{ep.seq_end} cannot hold its "
+                    f"stated {ep.leaf_count} records",
+                ),
+                sigs,
+                cps_checked,
+                cps_skipped,
+                eps_checked,
+                eps_skipped,
+            )
+        # The signed announcement, not the table, is the authority on what was sealed.
+        ann = announced.get(ep.epoch)
+        if ann is None:
+            return VerifyResult(
+                False,
+                n,
+                Violation(
+                    ep.seq_start,
+                    "merkle_announcement_missing",
+                    f"epoch {ep.epoch} has no merkle_epoch_sealed record in the chain",
+                ),
+                sigs,
+                cps_checked,
+                cps_skipped,
+                eps_checked,
+                eps_skipped,
+            )
+        if (ann.get("seq_start"), ann.get("seq_end"), ann.get("leaf_count"), ann.get("root")) != (
+            ep.seq_start,
+            ep.seq_end,
+            ep.leaf_count,
+            ep.root,
+        ):
+            return VerifyResult(
+                False,
+                n,
+                Violation(
+                    ep.seq_start,
+                    "merkle_announcement_mismatch",
+                    f"epoch {ep.epoch}'s row disagrees with the sealed announcement in the chain",
                 ),
                 sigs,
                 cps_checked,
