@@ -26,7 +26,7 @@ import httpx
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-from agentos_contract import PipelineProtocol
+from agentos_contract import ActionType, PipelineProtocol
 from agentos_sdk.enforce import (
     ApprovalCoordinator,
     CircuitReporter,
@@ -39,7 +39,11 @@ from agentos_sdk.enforce import (
     governed_call,
 )
 
-from agentos_gateway.normalize import normalize_gateway_model_call, normalize_gateway_tool_call
+from agentos_gateway.normalize import (
+    normalize_gateway_model_call,
+    normalize_gateway_tool_call,
+    normalize_gateway_usage,
+)
 
 TOKEN_HEADER = "x-agentos-token"
 # Headers the gateway must never pass upstream. The governance token is ours alone; the rest is the
@@ -142,12 +146,13 @@ def create_gateway(
     gets identical containment here and in the SDK — a gateway wired without them fails CLOSED on
     those outcomes, exactly like an unwired SDK PEP.
 
-    `meter` (ECON-01) is the same pass-through, with an honest limit: the governed `run` here relays
-    the upstream's raw BYTES, so nothing on it reports usage in the shape the extractor recognizes
-    and a gateway-governed call currently records NOTHING rather than a fabricated zero (spec D-7).
-    The seam is wired anyway because the alternative — teaching the gateway its own recording path
-    later — is exactly the second path that would let the gateway and the SDK disagree about what
-    one agent spent."""
+    `meter` (ECON-01) is the same pass-through. The gateway IS the model proxy, and an INT-07 agent
+    has no SDK in its process — so an unmetered gateway would leave the one class of agent an
+    operator cannot otherwise see costing a structural $0.00, which Slice 11c's budget engine would
+    read as "no spend" rather than "no data". So the relayed completion body is mapped to the
+    contract's `Usage` (`normalize_gateway_usage`) and ATTACHED to the response, leaving the single
+    `_run_reported` seam to do the recording — never a second recording path, which is what would
+    let the gateway and the SDK disagree about what one agent spent."""
     app = FastAPI(title="agentos-guard gateway", version="0.1.0")
     router = APIRouter()
     http = client or httpx.AsyncClient(timeout=30.0)
@@ -157,7 +162,7 @@ def create_gateway(
     # no error — which would make `upstream_base_url` advisory.
     upstream_url = upstream_base_url.rstrip("/")
 
-    async def _proxy(path: str, request: Request, body: bytes) -> Response:
+    async def _proxy(path: str, request: Request, body: bytes, *, completion: bool) -> Response:
         # A transport fault must PROPAGATE out of the `run` callable: `governed_call` reports a
         # raising execution to the RUN-06 CircuitReporter, which is how repeated upstream failures
         # trip the breaker. Swallowing it here and returning 502 made the run callable always
@@ -171,20 +176,30 @@ def create_gateway(
         # stream, and re-parsing every response as JSON turned each of those into a gateway 500 —
         # including every `"stream": true` request. (SSE is relayed complete rather than
         # incrementally: the governed forward is one awaited call, so the body is buffered here.)
-        return Response(
+        response = Response(
             content=upstream.content,
             status_code=upstream.status_code,
             media_type=upstream.headers.get("content-type"),
         )
+        if completion:
+            # ECON-01: what the PROVIDER reported, ridden out on the response so the shared
+            # `_run_reported` seam meters it. `None` when the body reports nothing (an error, a
+            # stream, a shape we do not know) — and None records NOTHING, never a zero row.
+            response.usage = normalize_gateway_usage(upstream.content)
+        return response
 
     async def _govern(action, path: str, request: Request) -> Response:
         """The ONE enforcement site: `governed_call` decides, the forward is its `run`."""
         raw = await request.body()
+        # Only a model invocation has a provider-defined usage shape to read. A tool response is a
+        # tool's own return value, and duck-typing usage out of one is how an untrusted result gets
+        # to write the ledger.
+        completion = action.type is ActionType.model_invocation
         try:
             return await governed_call(
                 pipeline,
                 action,
-                lambda: _proxy(path, request, raw),
+                lambda: _proxy(path, request, raw, completion=completion),
                 coordinator=coordinator,
                 dispatcher=dispatcher,
                 sandbox=sandbox,

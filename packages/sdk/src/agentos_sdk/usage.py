@@ -28,22 +28,53 @@ def _field(obj: object, name: str) -> object | None:
     return getattr(obj, name, None)
 
 
+def _reported_by(obj: object) -> Usage | None:
+    """Usage carried by `obj` ITSELF, in one of the two shapes a provider reports it in.
+
+    The object is only ever consulted through a NAMED usage holder — never duck-typed as a whole.
+    An earlier version fell back to reading `input_tokens`/`output_tokens` off the returned value
+    directly, which meant any tool or MCP result shaped like usage wrote the ledger: a `count_tokens`
+    tool billed its own answer, and an attacker-influenced MCP response could post a negative row.
+    A provider reports usage under `usage`/`usage_metadata`; a tool return value is not a provider.
+    """
+    for holder in (
+        _field(obj, "usage_metadata"),  # LangChain AIMessage
+        _field(obj, "usage"),  # OpenAI Agents RunResult / Anthropic Message / gateway mapper
+    ):
+        if holder is None:
+            continue
+        if isinstance(holder, Usage):
+            # Already normalized by a caller that knows the wire format (the gateway's response
+            # mapper). Returned UNCHANGED: rebuilding it would re-read the served model off the
+            # outer object, which does not carry one, and silently record a priced model as unpriced.
+            return holder
+        usage = Usage.reported(
+            _field(holder, "input_tokens"), _field(holder, "output_tokens"), _model(obj)
+        )
+        if usage is not None:
+            return usage
+    return None
+
+
 def extract_usage(result: object) -> Usage | None:
     """Pull reported usage off a returned object, or None when nothing recognizable is there.
 
     Returning None is the load-bearing behavior: a caller must be able to tell 'no usage reported'
     from 'zero tokens used', because only one of those means the action was free.
     """
-    for holder in (
-        _field(result, "usage_metadata"),  # LangChain AIMessage
-        _field(result, "usage"),  # OpenAI Agents RunResult / raw response
-        result,  # a Usage-shaped object returned directly
-    ):
-        if holder is None:
-            continue
-        inp, out = _field(holder, "input_tokens"), _field(holder, "output_tokens")
-        if isinstance(inp, int) and isinstance(out, int):
-            return Usage(input_tokens=inp, output_tokens=out, model=_model(result))
+    usage = _reported_by(result)
+    if usage is not None:
+        return usage
+    # langchain 1.x does NOT hand the model hook the message. `awrap_model_call`'s handler returns a
+    # `ModelResponse` dataclass whose `.result` is the message list, and that object carries no
+    # usage of its own — so reading only the outer value metered NOTHING on the one action type that
+    # has a token cost, for the flagship PEP. The usage (and the served model) are on the messages.
+    messages = _field(result, "result")
+    if isinstance(messages, list):
+        for message in messages:
+            usage = _reported_by(message)
+            if usage is not None:
+                return usage
     return None
 
 

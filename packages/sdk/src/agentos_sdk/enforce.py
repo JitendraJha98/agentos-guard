@@ -196,6 +196,17 @@ class CostMeter(Protocol):
     adapter, the network gateway — attributes cost identically. A second recording path would let
     two PEPs disagree about what the same agent spent, and the disagreement would surface as a
     budget decision (Slice 11c) nobody can explain.
+
+    TWO KNOWN UNDER-COUNTS, stated because a silent gap in a ledger is worse than a named one:
+
+    - A `sandbox` outcome (RUN-03) is metered by whatever the sandbox runner does, not here — that
+      path never reaches `_run_reported`. Tokens burned inside containment do not reach the ledger.
+    - A post-hoc RUN-05 breach (a memory overrun, or a wall deadline the handler blew through and
+      still completed) re-raises before metering. The provider WAS called and those tokens WERE
+      billed; the result is withheld from the agent and its usage goes with it.
+
+    Both are consistent — the ledger under-states, never over-states — but a budget engine reading
+    it must not treat a contained or budget-breaching agent's $0.00 as evidence it spent nothing.
     """
 
     async def record(self, action: AgentAction, decision: Decision, usage: Usage) -> None: ...
@@ -559,8 +570,15 @@ async def _run_reported(
             if usage is not None:
                 await meter.record(action, decision, usage)
         except Exception:
-            logging.getLogger(__name__).warning(
-                "cost metering failed for action %s", action.id, exc_info=True
+            # ERROR, not warning: this swallow is the only thing standing between a broken ledger
+            # and a budget engine that reads it as "spent nothing", so it has to clear the level a
+            # deployment actually alerts on. The values that used to make it attacker-REACHABLE (a
+            # token count too large for the column, an over-long model name) are now refused where
+            # the `Usage` is built, so what lands here is an infrastructure fault, not an agent.
+            logging.getLogger(__name__).error(
+                "cost metering failed for action %s — this agent's spend is now under-counted",
+                action.id,
+                exc_info=True,
             )
     return result
 

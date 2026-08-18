@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from agentos_contract import ActionType, AgentAction
+from agentos_contract import ActionType, AgentAction, Usage
 from agentos_sdk.coverage import covers
 
 # The SAME unverified `sub`-claim peek the SDK normalizers use (Anti-Pattern 5: the PEP must not
@@ -69,6 +69,45 @@ def normalize_gateway_model_call(body: dict[str, Any], token: str) -> AgentActio
         payload={"model": model, "messages": _join_messages(body.get("messages"))},
         identity_token=token,
     )
+
+
+# The two wire shapes a completion response reports tokens in. Anthropic uses the contract's own
+# names; OpenAI-compatible servers use `prompt_tokens`/`completion_tokens`, which the duck-typed
+# SDK extractor does not recognize at all — so without this mapping an INT-07 agent (the whole
+# point of the gateway: governance with no SDK in the agent's process) recorded no cost whatsoever.
+_USAGE_KEYS = (
+    ("input_tokens", "output_tokens"),  # Anthropic Messages
+    ("prompt_tokens", "completion_tokens"),  # OpenAI-compatible chat completions
+)
+
+
+def normalize_gateway_usage(body: bytes) -> Usage | None:
+    """A completion response body -> the contract's `Usage`, or None when it reports none.
+
+    The response-side counterpart of the normalizers above, and it stays here for the same reason:
+    wire-format knowledge belongs to the PEP, so the control plane never learns what an OpenAI
+    `CompletionUsage` is. The gateway attaches the result to the relayed `Response`, which means
+    the single `_run_reported` metering seam does the recording — a second recording path is exactly
+    the thing that would let the gateway and the SDK disagree about what one agent spent.
+
+    Only the MODEL route calls this. A `/tools/{name}` response has no defined usage format, and
+    duck-typing one out of a tool's return value is how an untrusted result gets to write the
+    ledger. A streamed (SSE) body is not JSON either, so it reports nothing rather than a
+    fabricated zero (D-7) — the honest answer until the gateway learns to read stream deltas.
+    """
+    try:
+        payload = json.loads(body)
+    except Exception:
+        return None
+    if not isinstance(payload, dict) or not isinstance(usage := payload.get("usage"), dict):
+        return None
+    for input_key, output_key in _USAGE_KEYS:
+        # `Usage.reported` is the one definition of a plausible provider-reported count, shared with
+        # the SDK extractor: it refuses negatives, bools and values too large for the ledger column.
+        reported = Usage.reported(usage.get(input_key), usage.get(output_key), payload.get("model"))
+        if reported is not None:
+            return reported
+    return None
 
 
 @covers(ActionType.tool_call)

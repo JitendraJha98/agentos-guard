@@ -486,11 +486,17 @@ def build_inventory_router(
         return cost.totals()
 
     @router.get("/economics/costs/{agent_id}")
-    def cost_for_agent(agent_id: str) -> list[dict]:
-        """ECON-01 — the actions behind one agent's total (the per-ACTION half of the requirement)."""
+    def cost_for_agent(agent_id: str, limit: int = 200, offset: int = 0) -> list[dict]:
+        """ECON-01 — the actions behind one agent's total (the per-ACTION half of the requirement).
+
+        Paged, and the page bound is exposed rather than hidden: the read is capped (the table
+        grows with every governed action), so an operator reconciling a busy agent against an
+        invoice MUST be able to walk past the first page — otherwise this route and the roll-up
+        above report different money for the same agent with nothing to explain the gap.
+        """
         if cost is None:
             raise HTTPException(status_code=404, detail="cost attribution is not wired")
-        return cost.for_agent(agent_id)
+        return cost.for_agent(agent_id, limit=max(1, min(limit, 1000)), offset=max(0, offset))
 
     return router
 

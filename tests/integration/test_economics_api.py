@@ -126,6 +126,19 @@ def test_an_agent_with_no_recorded_cost_is_an_empty_list_not_an_error(client) ->
     assert client.get("/economics/costs/never-ran").json() == []
 
 
+def test_the_per_agent_route_can_be_paged_so_the_two_routes_cannot_disagree(client) -> None:
+    """The detail read is capped — the table grows with every governed action. Without a way past
+    the cap an operator reconciling a busy agent against an invoice silently reads less money here
+    than the roll-up reports, with nothing in the response to explain the difference."""
+    first = client.get("/economics/costs/a1", params={"limit": 1}).json()
+    second = client.get("/economics/costs/a1", params={"limit": 1, "offset": 1}).json()
+
+    assert len(first) == len(second) == 1
+    assert {r["action_id"] for r in first + second} == {
+        r["action_id"] for r in client.get("/economics/costs/a1").json()
+    }
+
+
 def test_the_routes_are_gated(client_no_token) -> None:
     assert client_no_token.get("/economics/costs").status_code == 401
     assert client_no_token.get("/economics/costs/a1").status_code == 401
