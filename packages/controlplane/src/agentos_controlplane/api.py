@@ -23,7 +23,7 @@ from agentos_controlplane.framework_discovery import FrameworkDetector
 from agentos_controlplane.graph import AgentGraphStore
 from agentos_controlplane.inventory import InventoryStore
 from agentos_controlplane.killswitch import EmergencyActiveError, KillSwitchStore
-from agentos_controlplane.merkle import MerkleError, MerkleSealer
+from agentos_controlplane.merkle import MerkleError, MerkleIntegrityError, MerkleSealer
 from agentos_controlplane.registry import Registry
 from agentos_controlplane.resources import ConstitutionError, ResourceStore, VersionConflict
 from agentos_controlplane.rogue import RogueDetector
@@ -449,8 +449,8 @@ def build_inventory_router(
         return {"nodes": view.nodes, "edges": view.edges}
 
     @router.get("/audit/epochs")
-    def list_epochs() -> list[dict]:
-        """AUD-06 — the sealed Merkle epochs and their anchor status."""
+    def list_epochs() -> dict:
+        """AUD-06 — the sealed Merkle epochs and their anchor status, newest first."""
         if sealer is None:
             raise HTTPException(status_code=404, detail="merkle sealing is not wired")
         return sealer.list_epochs()
@@ -463,6 +463,11 @@ def build_inventory_router(
             raise HTTPException(status_code=404, detail="merkle sealing is not wired")
         try:
             return sealer.disclose(seq)
+        except MerkleIntegrityError as exc:
+            # 409, not 404: the record EXISTS and its evidence does not check out. A 404 here would
+            # tell an operator's monitoring that tampering under a sealed root is the same event as
+            # asking for a seq that was never written.
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except MerkleError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

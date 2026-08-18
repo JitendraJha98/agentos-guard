@@ -139,10 +139,12 @@ def test_a_bundle_discloses_one_record_and_summarizes_the_rest_as_hashes(client)
 
 
 def test_the_epoch_list_reports_what_was_sealed(client) -> None:
-    rows = client.get("/audit/epochs").json()
+    page = client.get("/audit/epochs").json()
+    rows = page["epochs"]
 
     assert [(r["seq_start"], r["seq_end"], r["leaf_count"]) for r in rows] == [(0, 4, RECORDS)]
     assert rows[0]["anchored"] is False and rows[0]["anchor_kind"] is None
+    assert page["total"] == 1 and page["truncated"] is False
 
 
 def test_disclosing_a_record_no_epoch_covers_yet_is_a_404(client) -> None:
@@ -355,3 +357,135 @@ def test_an_unverifiable_anchor_is_skipped_not_silently_passed(store, sealer) ->
     result = verify_chain(store)  # no public key supplied
 
     assert result.ok and result.epochs_checked == 1 and result.skipped_epochs == 1
+
+
+# ---------------------------------------------------------- re-review: the announcement's OTHER half
+
+
+def _signed_sealed(n: int = 5):
+    """A REAL signed chain with epoch 0 sealed. Returns (session_factory, sealer, IdentityEngine).
+
+    The pre-existing truncation test above runs on the `audit` fixture, which has no signer — so it
+    demonstrated the unsigned case while its docstring claimed "the STRONGEST posture (signed
+    chain)". These tests use a chain that is actually signed, because the attack they cover only
+    exists there: it is the appended UNSIGNED row that does the damage.
+    """
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
+    create_all(engine)
+    sf = create_session_factory(engine)
+    signer = IdentityEngine(is_registered=lambda s: True, load_trust=lambda s: 0.5)
+    audit = AuditWriter(sf, signer=signer)
+    for i in range(n):
+        asyncio.run(
+            audit.append_event("framework_discovered", {"framework": f"f{i}", "distribution": "d", "version": "1"})
+        )
+    sealer = MerkleSealer(sf, audit)
+    asyncio.run(sealer.seal())
+    return sf, sealer, signer
+
+
+def _append_unsigned(sf, body: dict) -> None:
+    """Append a row the way a DB-write attacker does: correctly hash-chained, NOT signed.
+
+    Chaining costs nothing — canonical_json and sha256 are public. Signing is the part that needs a
+    key the forger does not have, which is exactly why the announcement check has to require it.
+    """
+    with sf() as s:
+        head = s.scalars(select(AuditRecord).order_by(AuditRecord.seq.desc()).limit(1)).first()
+        full = dict(body, seq=head.seq + 1, prev_hash=head.record_hash)
+        s.add(
+            AuditRecord(
+                seq=full["seq"],
+                prev_hash=full["prev_hash"],
+                record_hash=hashlib.sha256(canonical_json(full)).hexdigest(),
+                body=full,
+            )
+        )
+        s.commit()
+
+
+def test_an_unsigned_announcement_cannot_become_the_authority_it_replaces() -> None:
+    """REGRESSION: the announcement check required hash-chaining but never required the SIGNATURE.
+
+    Truncate the log past the genuine announcement, shrink the epoch row to match, then append your
+    own unsigned `merkle_epoch_sealed` describing the forged range. Appending is free; only signing
+    is not. Before this fix the forged announcement was the ONLY one for epoch 0, so the check that
+    exists to measure the row against the chain measured it against the forger's own record and
+    printed OK over destroyed governed actions — with no signature warning, because other rows in
+    the chain were still signed.
+    """
+    sf, _, signer = _signed_sealed()
+    pub = signer.public_key_pem
+
+    assert verify_chain(sf, public_key_pem=pub).ok
+
+    with sf() as s:
+        for row in s.scalars(select(AuditRecord).where(AuditRecord.seq >= 3)).all():
+            s.delete(row)
+        ep = s.get(MerkleRoot, 0)
+        ep.seq_end, ep.leaf_count = 2, 3
+        ep.root = merkle_root(
+            list(s.scalars(select(AuditRecord.record_hash).order_by(AuditRecord.seq.asc())).all())
+        )
+        s.commit()
+    _append_unsigned(
+        sf,
+        {
+            "kind": "merkle_epoch_sealed",
+            "epoch": 0,
+            "seq_start": 0,
+            "seq_end": 2,
+            "root": None,  # filled below from the forged row so the announcement agrees with it
+            "leaf_count": 3,
+        },
+    )
+    with sf() as s:  # make the forged announcement agree with the forged row exactly
+        forged = s.scalars(
+            select(AuditRecord).order_by(AuditRecord.seq.desc()).limit(1)
+        ).first()
+        body = dict(forged.body, root=s.get(MerkleRoot, 0).root)
+        forged.body = body
+        forged.record_hash = hashlib.sha256(canonical_json(body)).hexdigest()
+        s.commit()
+
+    result = verify_chain(sf, public_key_pem=pub)
+
+    assert not result.ok, "an unsigned announcement must not be able to vouch for an epoch row"
+    assert result.violation.check == "merkle_announcement_unsigned"
+
+
+def test_deleting_the_epoch_row_deletes_the_check_and_is_caught() -> None:
+    """REGRESSION: the Merkle pass iterated only the rows that EXIST.
+
+    So a forger who rewrote history and then dropped the epoch row did not fail the check — they
+    removed it, and `epochs_checked == 0` reads exactly like a deployment that never sealed. The
+    evidence to notice was already loaded: the chain still announces that the epoch was sealed. The
+    table is attacker-writable; the hash-chained announcement is not.
+    """
+    sf, _, signer = _signed_sealed()
+
+    with sf() as s:
+        s.delete(s.get(MerkleRoot, 0))
+        s.commit()
+
+    result = verify_chain(sf, public_key_pem=signer.public_key_pem)
+
+    assert not result.ok
+    assert result.violation.check == "merkle_epoch_row_missing"
+
+
+def test_a_wholly_unsigned_chain_is_not_broken_by_the_signed_announcement_rule(store, sealer) -> None:
+    """The gate is the chain's signature POSTURE, not whether a key was passed.
+
+    AUD-08 makes signing optional, and a caller may supply a public key purely to verify a
+    local_ed25519 ANCHOR on a chain whose rows are legitimately unsigned. That caller has no
+    signature posture to bypass, so requiring a signed announcement there would fail every
+    unsigned-but-honest deployment — a false alarm on the verifier is how operators learn to ignore
+    it.
+    """
+    assert verify_chain(store).ok
+    assert verify_chain(store, public_key_pem="not-used-because-no-row-is-signed").ok is True

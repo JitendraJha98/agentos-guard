@@ -595,3 +595,184 @@ def test_verify_bundle_never_raises_on_hostile_input(store) -> None:
         {**good, "epoch": {**good["epoch"], "anchor_kind": "invented", "anchor_proof": "zz"}},
     ):
         assert not verify_bundle(hostile).ok
+
+
+# ------------------------------------------- re-review: each verify_bundle guard, killed on its own
+
+
+@pytest.fixture()
+def anchored(store):
+    """An ANCHORED bundle plus the key that anchored it — the strongest posture, so a guard that
+    fails here has nowhere left to hide."""
+    audit = AuditWriter(store)
+    _actions(audit, 8)
+    sealer = MerkleSealer(store, audit)
+    ep = asyncio.run(sealer.seal())
+    engine = IdentityEngine(is_registered=lambda s: True, load_trust=lambda s: 0.5)
+    sealer.anchor_epoch(ep.epoch, LocalEd25519Anchor(engine))
+    return sealer.disclose(3), engine.public_key_pem
+
+
+def test_a_corrupted_proof_path_alone_fails(anchored) -> None:
+    """REGRESSION: dropping the inclusion check entirely SURVIVED the suite.
+
+    The only test covering it tampered `root`, which breaks the inclusion check AND the anchor check
+    — so each guard was covered by the other and neither was tested alone. With the inclusion check
+    gone, an unanchored bundle returned ok=True for any record against any proof, which is the whole
+    function's reason to exist. Tamper ONLY the proof: the root still anchors, so nothing but the
+    inclusion check can catch this.
+    """
+    bundle, pub = anchored
+    bundle["proof"] = [(side, "aa" * 32) for side, _ in bundle["proof"]]
+
+    result = verify_bundle(bundle, public_key_pem=pub)
+
+    assert not result.ok and "inclusion proof" in result.reason
+
+
+def test_a_corrupted_anchor_alone_fails(anchored) -> None:
+    """REGRESSION: accepting a failing anchor proof SURVIVED the suite, for the same mutual-cover
+    reason. Tamper ONLY the anchor bytes: the tree still verifies, so nothing but the anchor check
+    can catch it — and an unverified anchor reported as verified is the discloser certifying their
+    own root."""
+    bundle, pub = anchored
+    raw = bytearray(bytes.fromhex(bundle["epoch"]["anchor_proof"]))
+    raw[0] ^= 0xFF
+    bundle["epoch"]["anchor_proof"] = bytes(raw).hex()
+
+    result = verify_bundle(bundle, public_key_pem=pub)
+
+    assert not result.ok and not result.anchor_verified
+
+
+def test_a_consistently_lied_about_record_seq_is_named_as_a_seq_disagreement(anchored) -> None:
+    """REGRESSION: dropping `body["seq"] == rec["seq"]` SURVIVED the suite.
+
+    The lie has to be CONSISTENT to reach this guard — move `record["seq"]` and `index` together, or
+    the index binding catches it first and the mutant hides behind that. Note what is asserted: the
+    REASON, not just the verdict. With the guard dropped the bundle is still refused (the tree walk
+    fails on the moved index), so a verdict-only assertion cannot tell the two apart. The reason is
+    also the part that matters operationally — it is what tells an auditor which invariant broke, and
+    "the inclusion proof does not verify" would send them looking at the tree instead of the seq.
+    """
+    bundle, pub = anchored
+    bundle["record"]["seq"] += 1
+    bundle["index"] += 1
+
+    result = verify_bundle(bundle, public_key_pem=pub)
+
+    assert not result.ok
+    assert "seq" in result.reason and "body" in result.reason
+
+
+def test_a_lied_about_index_alone_fails(anchored) -> None:
+    """REGRESSION: dropping `index == seq - seq_start` SURVIVED. `seq_start + index` is exactly how
+    a reader locates the record in the epoch, so an unbound index moves it."""
+    bundle, pub = anchored
+    bundle["index"] = bundle["index"] + 1
+
+    result = verify_bundle(bundle, public_key_pem=pub)
+
+    assert not result.ok and "index" in result.reason
+
+
+def test_a_lied_about_leaf_count_alone_fails(anchored) -> None:
+    """REGRESSION: dropping `leaf_count == seq_end - seq_start + 1` SURVIVED. verify_inclusion
+    derives the tree's SHAPE from leaf_count, so a bundle free to choose it binds nothing — a real
+    record at index 4 of 5 replays as index 1 of 2."""
+    bundle, pub = anchored
+    bundle["epoch"]["leaf_count"] = bundle["epoch"]["leaf_count"] + 1
+
+    result = verify_bundle(bundle, public_key_pem=pub)
+
+    assert not result.ok and "leaf_count" in result.reason
+
+
+def test_a_negative_seq_start_is_refused(anchored) -> None:
+    """A range starting before the chain does is not a range. Cheap to reject, and it was reachable:
+    the arithmetic identity alone accepts seq_start=-4 with a matching seq_end."""
+    bundle, pub = anchored
+    ep = bundle["epoch"]
+    ep["seq_start"], ep["seq_end"] = -4, -4 + ep["leaf_count"] - 1
+
+    assert not verify_bundle(bundle, public_key_pem=pub).ok
+
+
+def test_disclosure_picks_the_epoch_whose_range_STARTS_at_or_below_the_seq(store) -> None:
+    """REGRESSION: dropping `seq_start <= seq` from the epoch lookup SURVIVED.
+
+    With two epochs, the later one's `seq_end` also covers an early seq, so a lookup filtered only
+    by `seq_end >= seq` can return the WRONG epoch — and then every index and proof is computed
+    against a tree that does not contain the record. Two epochs are what make the bound observable;
+    one epoch cannot distinguish the two predicates.
+    """
+    audit = AuditWriter(store)
+    _actions(audit, 4)
+    sealer = MerkleSealer(store, audit)
+    first = asyncio.run(sealer.seal())
+    _actions(audit, 4)
+    second = asyncio.run(sealer.seal())
+    assert second.seq_start > first.seq_start, "the probe needs two distinct epochs"
+
+    bundle = sealer.disclose(1)
+
+    assert bundle["epoch"]["epoch"] == first.epoch
+    assert verify_bundle(bundle).ok
+
+
+def test_a_seq_below_every_sealed_range_is_refused_not_given_a_negative_index(store) -> None:
+    """REGRESSION: dropping `seq_start <= seq` from the epoch lookup SURVIVED the suite.
+
+    It survives an ordinary two-epoch probe because epochs are contiguous from 0, so the first epoch
+    with `seq_end >= seq` is the covering one anyway. The bound only becomes observable when NO epoch
+    starts at or below the seq — a range sealed from 4 while 0..3 are still unsealed. Without it the
+    lookup returns that later epoch and computes `index = seq - seq_start`, i.e. -2.
+
+    Note what is asserted: the MESSAGE. Both paths refuse — without the bound, `inclusion_proof`
+    rejects the negative index a moment later — so a `pytest.raises(MerkleError)` alone cannot tell
+    them apart. Only one of them tells the operator the truth. "seq 2 is not in a sealed epoch yet"
+    is actionable (seal it); "index -2 out of range for 4 leaves" describes an internal symptom of a
+    lookup that should never have matched, and sends whoever reads it into the tree code.
+    """
+    audit = AuditWriter(store)
+    _actions(audit, 8)
+    with store() as s:  # an epoch covering 4..7 only; 0..3 are sealed by nothing
+        hashes = list(
+            s.scalars(
+                select(AuditRecord.record_hash)
+                .where(AuditRecord.seq >= 4, AuditRecord.seq <= 7)
+                .order_by(AuditRecord.seq.asc())
+            ).all()
+        )
+        s.add(
+            MerkleRoot(epoch=0, seq_start=4, seq_end=7, root=merkle_root(hashes), leaf_count=4)
+        )
+        s.commit()
+    sealer = MerkleSealer(store, audit)
+
+    assert sealer.disclose(5)["epoch"]["epoch"] == 0  # the probe is live: 5 IS covered
+    with pytest.raises(MerkleError, match="not in a sealed epoch"):
+        sealer.disclose(2)
+
+
+def test_the_epoch_list_keeps_the_NEWEST_and_says_it_truncated(store) -> None:
+    """REGRESSION: the cap dropped the newest epochs and reported nothing.
+
+    Ascending order plus a LIMIT sheds exactly the rows an operator is asking about — "is sealing
+    still running, and is the latest epoch anchored?" — and a silently capped list reads as the whole
+    picture. Same no-silent-caps rule the DISC-04/05/06 stores follow with their visible overflow
+    markers.
+    """
+    with store() as s:
+        s.add_all(
+            MerkleRoot(epoch=i, seq_start=i, seq_end=i, root="ab" * 32, leaf_count=1)
+            for i in range(merkle_mod._MAX_EPOCHS + 5)
+        )
+        s.commit()
+
+    page = MerkleSealer(store, AuditWriter(store)).list_epochs()
+
+    assert page["truncated"] is True
+    assert page["total"] == merkle_mod._MAX_EPOCHS + 5
+    assert len(page["epochs"]) == merkle_mod._MAX_EPOCHS
+    assert page["epochs"][0]["epoch"] == merkle_mod._MAX_EPOCHS + 4, "newest must survive the cap"

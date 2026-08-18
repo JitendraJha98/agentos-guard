@@ -85,6 +85,10 @@ def verify_chain(
     prev_recomputed = None  # the RECOMPUTED record_hash of the previous row
     n = 0
     sigs = 0  # rows whose signature was actually verified (the full-rewrite defense)
+    # Which seqs actually PASSED step 6. Step 8 measures an epoch row against the chain's own
+    # sealed announcement, so that announcement has to be a record the forger could not have
+    # written — and "hash-chained" alone does not say that: appending is free, only signing is not.
+    signed_seqs: set[int] = set()
     recomputed_by_seq: dict[int, str] = {}  # {seq: recomputed record_hash} for checkpoint checks
     max_seq = -1
     for expected_seq, row in enumerate(rows):
@@ -177,6 +181,7 @@ def verify_chain(
                     sigs,
                 )
             sigs += 1
+            signed_seqs.add(row.seq)
         prev_recomputed = recomputed
         recomputed_by_seq[row.seq] = recomputed
         max_seq = row.seq
@@ -254,17 +259,25 @@ def verify_chain(
     # are writable together, so re-deriving a row against the range that same row declares proves
     # only that the row is self-consistent — a forger who truncates the log and rewrites the row to
     # match gets an OK. What they cannot rewrite is `seal()`'s own `merkle_epoch_sealed` record:
-    # it is hash-chained and signed, and it states what was REALLY sealed. Reading it here is the
+    # it is hash-chained and SIGNED, and it states what was REALLY sealed. Reading it here is the
     # one detection this pass adds that the chain pass cannot already make on its own, and it is
     # the protection seal()'s docstring claims for announcing at all.
+    #
+    # Both halves of "hash-chained and signed" have to be enforced, and only the first is free.
+    # Appending costs a forger nothing: truncate the log past the genuine announcement, append an
+    # UNSIGNED one describing the forged range, and it becomes the only announcement for that
+    # epoch — so the authority this pass measures against would be the forger's own record. Hence
+    # `signed_seqs`: when a key was supplied, an announcement whose row did not pass step 6 is not
+    # authority, it is just bytes someone appended.
     with session_factory() as session:
         epochs = session.scalars(select(MerkleRoot).order_by(MerkleRoot.epoch.asc())).all()
-    announced: dict[int, dict] = {}
-    for body in (row.body for row in rows):
+    announced: dict[int, tuple[int, dict]] = {}
+    for row in rows:
         # FIRST announcement per epoch wins: an unsigned duplicate appended later (unsigned rows
         # skip step 6) must not be able to displace the genuine one.
+        body = row.body
         if body.get("kind") == "merkle_epoch_sealed" and isinstance(body.get("epoch"), int):
-            announced.setdefault(body["epoch"], body)
+            announced.setdefault(body["epoch"], (row.seq, body))
     eps_checked = 0
     eps_skipped = 0
     expected_start = 0
@@ -314,8 +327,8 @@ def verify_chain(
                 eps_skipped,
             )
         # The signed announcement, not the table, is the authority on what was sealed.
-        ann = announced.get(ep.epoch)
-        if ann is None:
+        entry = announced.get(ep.epoch)
+        if entry is None:
             return VerifyResult(
                 False,
                 n,
@@ -323,6 +336,32 @@ def verify_chain(
                     ep.seq_start,
                     "merkle_announcement_missing",
                     f"epoch {ep.epoch} has no merkle_epoch_sealed record in the chain",
+                ),
+                sigs,
+                cps_checked,
+                cps_skipped,
+                eps_checked,
+                eps_skipped,
+            )
+        ann_seq, ann = entry
+        # An announcement is authority only if it is one the forger could not have written, and
+        # appending is free — only signing is not. So the gate is whether THIS CHAIN has a signature
+        # posture to bypass (`signed_seqs`), not whether a key was supplied: a caller may pass
+        # `public_key_pem` purely to check a local_ed25519 anchor on a chain whose rows are
+        # legitimately unsigned (AUD-08 makes signing optional), and that caller has nothing to
+        # bypass. On a chain where some rows ARE signed, an unsigned announcement is the attack —
+        # truncate past the genuine one, append your own, and become the authority. A wholly
+        # unsigned chain is already covered by the CLI's louder warning that a full rewrite would
+        # not be detected at all.
+        if signed_seqs and ann_seq not in signed_seqs:
+            return VerifyResult(
+                False,
+                n,
+                Violation(
+                    ann_seq,
+                    "merkle_announcement_unsigned",
+                    f"epoch {ep.epoch}'s only sealed announcement is unsigned — appending one is "
+                    f"free, so it cannot be the authority the epoch row is measured against",
                 ),
                 sigs,
                 cps_checked,
@@ -417,6 +456,33 @@ def verify_chain(
                 eps_checked,
                 eps_skipped,
             )
+    # The reverse direction, and the one that closes the loop. Everything above iterates the
+    # merkle_root TABLE, so DELETE-ing a row does not fail a check — it removes the check. A forger
+    # who rewrites history and then drops the epoch row would otherwise turn the pass that catches
+    # them into a pass that never runs, and `epochs_checked == 0` reads exactly like a deployment
+    # that never sealed anything.
+    #
+    # The evidence needed to notice is already in hand: the chain still carries the announcement
+    # saying that epoch was sealed. The table is attacker-writable; the chain is not.
+    orphaned = sorted(announced.keys() - {ep.epoch for ep in epochs})
+    if orphaned:
+        epoch = orphaned[0]
+        ann_seq, _ = announced[epoch]
+        return VerifyResult(
+            False,
+            n,
+            Violation(
+                ann_seq,
+                "merkle_epoch_row_missing",
+                f"the chain announces epoch {epoch} as sealed but no merkle_root row exists — "
+                f"deleting the row deletes the check, not the evidence",
+            ),
+            sigs,
+            cps_checked,
+            cps_skipped,
+            eps_checked,
+            eps_skipped,
+        )
     return VerifyResult(True, n, None, sigs, cps_checked, cps_skipped, eps_checked, eps_skipped)
 
 
@@ -465,6 +531,15 @@ def _main(argv: list[str] | None = None) -> int:
             print(
                 f"WARNING: {result.skipped_checkpoints} checkpoint(s) skipped "
                 "(missing pubkey / --tsa-root) — their anchor proof was NOT verified"
+            )
+        # "0 epochs re-derived" reads identically to "nothing was ever sealed", and one of those is
+        # a deployment that never opted in while the other is a deployment whose Merkle evidence is
+        # gone. An operator who reads OK and moves on cannot tell them apart, so name it.
+        if result.records_checked > 0 and result.epochs_checked == 0:
+            print(
+                "NOTE: no merkle epochs were re-derived — either nothing has been sealed yet "
+                "(AUD-06 gives you no partial-disclosure evidence until it is) or the epoch "
+                "rows are gone"
             )
         # An epoch's root re-deriving proves the records did not change under it — it does NOT date
         # the root. Without a verified anchor, a disclosure against it rests on our word alone.

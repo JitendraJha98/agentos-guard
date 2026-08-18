@@ -58,6 +58,16 @@ class MerkleError(ValueError):
     """A malformed tree request (empty leaf set, index out of range, an unsealed disclosure)."""
 
 
+class MerkleIntegrityError(MerkleError):
+    """A bundle the discloser built and then could not verify — the evidence does not check out.
+
+    Kept apart from its parent because the two mean opposite things to whoever is watching. "No such
+    record" and "not sealed yet" are ordinary answers to a request; this one says the log under a
+    sealed root has changed. A caller that maps both to the same status tells its monitoring that
+    tampering and a typo are the same event.
+    """
+
+
 def leaf_hash(record_hash: str) -> str:
     """SHA256(0x00 ‖ record_hash). `record_hash` is the hex digest already on the audit row."""
     return hashlib.sha256(_LEAF + bytes.fromhex(record_hash)).hexdigest()
@@ -127,7 +137,11 @@ def verify_inclusion(
 
     That binding is only as good as `leaf_count` itself: a caller who takes it from the same bundle
     it is checking has bound nothing, because one attacker chose both. `leaf_count` MUST come from
-    an authenticated source — which is what `verify_bundle` exists to establish before calling here.
+    an authenticated source — which `verify_bundle` establishes only when it returns
+    `anchor_verified=True`. On an UNANCHORED bundle nothing outside the bundle vouches for `root`
+    or `leaf_count`, so a fabricated epoch over an attacker's own tree verifies here exactly as a
+    genuine one does. That is not a flaw in this function; it is what "unanchored" means, and it is
+    why `BundleResult` keeps `ok` and `anchor_verified` apart instead of returning one boolean.
 
     Returns False on malformed input rather than raising: this runs on data from outside, and a
     traceback is easy to mistake for "the check did not run" when it means "the check failed".
@@ -233,7 +247,7 @@ def verify_bundle(
             return BundleResult(False, False, "the disclosed body does not hash to record_hash")
         if body["seq"] != rec["seq"]:
             return BundleResult(False, False, "the body's seq disagrees with the disclosed record")
-        if ep["leaf_count"] != ep["seq_end"] - ep["seq_start"] + 1:
+        if ep["seq_start"] < 0 or ep["leaf_count"] != ep["seq_end"] - ep["seq_start"] + 1:
             return BundleResult(False, False, "the epoch's leaf_count disagrees with its range")
         if index != rec["seq"] - ep["seq_start"]:
             return BundleResult(False, False, "the index disagrees with the record's seq")
@@ -445,24 +459,40 @@ class MerkleSealer:
             }
         result = verify_bundle(bundle)
         if not result.ok:
-            raise MerkleError(f"refusing to disclose seq {seq}: {result.reason}")
+            # A DIFFERENT failure from "no such record" — the record exists and does not check out.
+            # Collapsing them would hand an operator a 404 for evidence that is being tampered
+            # with, and monitoring keys on the status, not on the sentence after it.
+            raise MerkleIntegrityError(f"refusing to disclose seq {seq}: {result.reason}")
         return bundle
 
-    def list_epochs(self) -> list[dict]:
-        """Every sealed epoch and whether its root carries an external anchor yet (bounded)."""
+    def list_epochs(self) -> dict:
+        """The sealed epochs, NEWEST FIRST, with the truncation stated rather than implied.
+
+        Two deliberate choices. Newest first, because an operator reading this is asking "is
+        sealing still running, and is the latest epoch anchored?" — ascending order answered a
+        question nobody had and dropped exactly the rows that answer the real one. And a `truncated`
+        flag, because a silently capped list reads as the whole picture: the same no-silent-caps
+        rule the DISC-04/05/06 stores follow with their visible overflow markers.
+        """
         with self._sf() as s:
-            return [
-                {
-                    "epoch": r.epoch,
-                    "seq_start": r.seq_start,
-                    "seq_end": r.seq_end,
-                    "root": r.root,
-                    "leaf_count": r.leaf_count,
-                    "anchor_kind": r.anchor_kind,
-                    "anchored": r.proof is not None,
-                    "created_at": r.created_at.isoformat() if r.created_at else None,
-                }
-                for r in s.scalars(
-                    select(MerkleRoot).order_by(MerkleRoot.epoch).limit(_MAX_EPOCHS)
-                ).all()
-            ]
+            total = s.scalar(select(func.count()).select_from(MerkleRoot)) or 0
+            rows = s.scalars(
+                select(MerkleRoot).order_by(MerkleRoot.epoch.desc()).limit(_MAX_EPOCHS)
+            ).all()
+            return {
+                "epochs": [
+                    {
+                        "epoch": r.epoch,
+                        "seq_start": r.seq_start,
+                        "seq_end": r.seq_end,
+                        "root": r.root,
+                        "leaf_count": r.leaf_count,
+                        "anchor_kind": r.anchor_kind,
+                        "anchored": r.proof is not None,
+                        "created_at": r.created_at.isoformat() if r.created_at else None,
+                    }
+                    for r in rows
+                ],
+                "total": total,
+                "truncated": total > len(rows),
+            }
