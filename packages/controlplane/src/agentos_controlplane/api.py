@@ -24,6 +24,7 @@ from agentos_controlplane.inventory import InventoryStore
 from agentos_controlplane.killswitch import EmergencyActiveError, KillSwitchStore
 from agentos_controlplane.registry import Registry
 from agentos_controlplane.resources import ConstitutionError, ResourceStore, VersionConflict
+from agentos_controlplane.rogue import RogueDetector
 from agentos_controlplane.shadow import ShadowAgentStore
 from agentos_controlplane.supply_chain import KnownBad, SupplyChainChecker
 from agentos_controlplane.store.models import ApprovalRequest, GovernanceReview
@@ -366,11 +367,12 @@ def build_inventory_router(
     inventory: InventoryStore,
     detector: FrameworkDetector | None = None,
     shadow: ShadowAgentStore | None = None,
+    rogue: RogueDetector | None = None,
 ) -> APIRouter:
     """DISC-01/02 — read API over the authoritative agent inventory, plus the DISC-03 framework
-    inventory and the DISC-04 shadow-agent sightings: further collaborators on the SAME router
-    rather than new ones, so the gated read surface over "what is actually out there" stays one
-    place."""
+    inventory, the DISC-04 shadow-agent sightings and the DISC-05 rogue-agent findings: further
+    collaborators on the SAME router rather than new ones, so the gated read surface over "what is
+    actually out there" stays one place."""
     router = APIRouter()
 
     @router.get("/inventory")
@@ -414,6 +416,19 @@ def build_inventory_router(
             raise HTTPException(status_code=404, detail="shadow detection is not wired")
         return shadow.list_shadow_agents()
 
+    @router.get("/discovery/rogue-agents")
+    def list_rogue_findings(include_resolved: bool = False) -> list[dict]:
+        """DISC-05 — registered agents observed outside their declared scope.
+
+        ADVISORY: read-only, and there is no deny route to pair with it. A declaration gap is
+        evidence, not proof — a manifest goes stale — so an operator judges it and escalates with
+        Phase-9 containment if warranted. Resolved findings are filtered out by default rather
+        than deleted; the audit chain keeps the sighting regardless.
+        """
+        if rogue is None:
+            raise HTTPException(status_code=404, detail="rogue detection is not wired")
+        return rogue.list_findings(include_resolved=include_resolved)
+
     return router
 
 
@@ -454,6 +469,8 @@ def create_app(
     framework_detector: FrameworkDetector | None = None,
     # DISC-04: likewise appended last.
     shadow_store: ShadowAgentStore | None = None,
+    # DISC-05: likewise appended last.
+    rogue_detector: RogueDetector | None = None,
 ) -> FastAPI:
     # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
     # explicit arg -> AGENTOS_API_TOKEN env -> ephemeral random (logged) — never silently open.
@@ -473,9 +490,13 @@ def create_app(
     # DISC-03: the framework-discovery read route rides this SAME router and gate; absent a
     # framework_detector it answers 404 rather than opening an ungated surface. DISC-04's
     # shadow-agent route does the same — who is probing the fleet unregistered is never public.
+    # DISC-05's rogue-agent route likewise: which agents are outside their declared scope is not
+    # public information either.
     if inventory_store is not None:
         app.include_router(
-            build_inventory_router(inventory_store, framework_detector, shadow_store),
+            build_inventory_router(
+                inventory_store, framework_detector, shadow_store, rogue_detector
+            ),
             dependencies=guard,
         )
     # RUN-06: the breaker router rides the same gate; absent a breaker_store the /circuit routes are
