@@ -1,14 +1,23 @@
 """AUD-06 — the pure Merkle core: hashing rules, root, proofs, and the attacks they stop."""
 import asyncio
 import hashlib
+import json
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.pool import StaticPool
 
 from agentos_controlplane.audit import AuditWriter
+from agentos_controlplane.checkpoint import (
+    LocalEd25519Anchor,
+    checkpoint_message,
+    verify_checkpoint_proof,
+)
+from agentos_controlplane.identity_engine import IdentityEngine
 from agentos_controlplane.merkle import (
     MerkleError,
+    MerkleSealer,
+    epoch_message,
     inclusion_proof,
     leaf_hash,
     merkle_root,
@@ -16,7 +25,7 @@ from agentos_controlplane.merkle import (
     verify_inclusion,
 )
 from agentos_controlplane.store.engine import create_all, create_session_factory
-from agentos_controlplane.store.models import MerkleRoot
+from agentos_controlplane.store.models import AuditRecord, MerkleRoot
 
 H = lambda b: hashlib.sha256(b).hexdigest()  # noqa: E731
 
@@ -166,3 +175,139 @@ def test_the_seal_event_kind_is_accepted_and_unknown_kinds_are_not(store) -> Non
     asyncio.run(audit.append_event("merkle_epoch_sealed", {"epoch": 0, "root": "ab" * 32}))
     with pytest.raises(ValueError):
         asyncio.run(audit.append_event("merkle_epoch_definitely_not_a_kind", {}))
+
+
+def _actions(audit: AuditWriter, n: int) -> None:
+    for i in range(n):
+        asyncio.run(
+            audit.append_event(
+                "framework_discovered",
+                {"framework": f"f{i}", "distribution": "d", "version": "1"},
+            )
+        )
+
+
+def test_sealing_covers_every_record_and_proves_each_one(store) -> None:
+    audit = AuditWriter(store)
+    _actions(audit, 6)
+    sealer = MerkleSealer(store, audit)
+    ep = asyncio.run(sealer.seal())
+    assert (ep.seq_start, ep.seq_end, ep.leaf_count) == (0, 5, 6)
+    for seq in range(6):
+        b = sealer.disclose(seq)
+        assert verify_inclusion(
+            b["record"]["record_hash"],
+            b["index"],
+            b["proof"],
+            b["epoch"]["root"],
+            b["epoch"]["leaf_count"],
+        )
+
+
+def test_epochs_are_contiguous_across_seals_so_no_record_escapes_coverage(store) -> None:
+    """A record in NO epoch can never be proven. Contiguity is the coverage guarantee, so assert
+    the second epoch starts exactly where the first ended — including the seal event itself, which
+    is appended by the first seal and must be covered by the second."""
+    audit = AuditWriter(store)
+    _actions(audit, 3)
+    sealer = MerkleSealer(store, audit)
+    first = asyncio.run(sealer.seal())
+    _actions(audit, 2)
+    second = asyncio.run(sealer.seal())
+    assert second.seq_start == first.seq_end + 1
+    assert second.epoch == first.epoch + 1
+    # every seq from 0 to the second epoch's end is inside exactly one epoch
+    for seq in range(0, second.seq_end + 1):
+        assert sealer.disclose(seq)["epoch"]["epoch"] in (first.epoch, second.epoch)
+
+
+def test_sealing_with_nothing_new_returns_none_rather_than_an_empty_epoch(store) -> None:
+    """A root over an empty range would verify nothing while looking like coverage.
+
+    The reachable "nothing new" state is an unstarted chain: every seal appends its OWN
+    announcement, so a seal always leaves exactly one record for the next epoch — sealing converges
+    on one-record epochs, never on None. That is the price of keeping the root inside the chain.
+    """
+    audit = AuditWriter(store)
+    sealer = MerkleSealer(store, audit)
+    assert asyncio.run(sealer.seal()) is None
+    _actions(audit, 2)
+    first = asyncio.run(sealer.seal())
+    assert (first.seq_start, first.seq_end, first.leaf_count) == (0, 1, 2)
+    second = asyncio.run(sealer.seal())
+    assert (second.seq_start, second.seq_end, second.leaf_count) == (2, 2, 1)
+
+
+def test_the_seal_event_lands_in_the_NEXT_epoch_not_its_own(store) -> None:
+    """An epoch containing the record that announces it could never be sealed — the record does not
+    exist until after the root is computed. Assert the announcement is outside its own range."""
+    audit = AuditWriter(store)
+    _actions(audit, 3)
+    sealer = MerkleSealer(store, audit)
+    ep = asyncio.run(sealer.seal())
+    with store() as s:
+        head = s.scalar(select(func.max(AuditRecord.seq)))
+    assert head > ep.seq_end
+
+
+def test_an_anchored_epoch_verifies_under_the_shipped_checkpoint_dispatch(store) -> None:
+    """Reusing verify_checkpoint_proof is the point: one proven crypto path, not two."""
+    audit = AuditWriter(store)
+    _actions(audit, 4)
+    sealer = MerkleSealer(store, audit)
+    ep = asyncio.run(sealer.seal())
+    engine = IdentityEngine(is_registered=lambda s: True, load_trust=lambda s: 0.5)
+
+    sealer.anchor_epoch(ep.epoch, LocalEd25519Anchor(engine))
+
+    with store() as s:
+        row = s.get(MerkleRoot, ep.epoch)
+    msg = epoch_message(row.epoch, row.seq_start, row.seq_end, row.root, row.leaf_count)
+    assert verify_checkpoint_proof(
+        row.anchor_kind, row.proof, msg, public_key_pem=engine.public_key_pem
+    )
+
+
+def test_the_anchored_bytes_commit_to_the_epochs_size_and_cannot_pass_as_a_checkpoint(
+    store,
+) -> None:
+    """The message reuses CHECKPOINT_DOMAIN, so its shape is the ONLY thing keeping an epoch proof
+    from being replayed as a head proof — and leaf_count is in it so a re-sealed range that dropped
+    records cannot reuse the same anchored bytes."""
+    assert epoch_message(0, 0, 5, "ab" * 32, 6) != epoch_message(0, 0, 5, "ab" * 32, 5)
+    assert epoch_message(0, 0, 5, "ab" * 32, 6) != checkpoint_message(5, "ab" * 32)
+
+
+def test_disclosing_an_unsealed_or_missing_record_is_refused(store) -> None:
+    audit = AuditWriter(store)
+    _actions(audit, 2)
+    sealer = MerkleSealer(store, audit)
+    with pytest.raises(MerkleError):
+        sealer.disclose(0)  # nothing sealed yet
+    asyncio.run(sealer.seal())
+    with pytest.raises(MerkleError):
+        sealer.disclose(9999)  # no such record
+
+
+def test_a_bundle_carries_exactly_one_record_body(store) -> None:
+    """Partial disclosure is the requirement. If a bundle leaked sibling BODIES the feature would
+    be pointless — the operator might as well send the whole log."""
+    audit = AuditWriter(store)
+    _actions(audit, 8)
+    sealer = MerkleSealer(store, audit)
+    asyncio.run(sealer.seal())
+
+    bundle = sealer.disclose(3)
+
+    blob = json.dumps(bundle)
+    assert blob.count('"body"') == 1
+    for other in ("f0", "f1", "f2", "f4", "f5", "f6", "f7"):
+        assert f'"{other}"' not in blob
+    assert '"f3"' in blob
+
+
+def test_anchoring_an_unsealed_epoch_is_refused(store) -> None:
+    audit = AuditWriter(store)
+    sealer = MerkleSealer(store, audit)
+    with pytest.raises(MerkleError):
+        sealer.anchor_epoch(0, LocalEd25519Anchor(None))

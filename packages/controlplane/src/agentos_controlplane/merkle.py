@@ -30,6 +30,11 @@ from __future__ import annotations
 
 import hashlib
 
+from sqlalchemy import func, select
+
+from agentos_controlplane.audit import canonical_json
+from agentos_controlplane.store.models import AuditRecord, MerkleRoot
+
 _LEAF = b"\x00"
 _NODE = b"\x01"
 
@@ -132,3 +137,173 @@ def verify_inclusion(
         return next(siblings, None) is None and current == root
     except (ValueError, TypeError):
         return False
+
+
+def epoch_message(epoch: int, seq_start: int, seq_end: int, root: str, leaf_count: int) -> bytes:
+    """The exact bytes anchored for a sealed epoch.
+
+    Reuses the audit `canonical_json` so a verifier reproduces them byte-identically, and reuses
+    Phase 4's CHECKPOINT_DOMAIN so `verify_checkpoint_proof` works UNCHANGED — no second crypto
+    path to get subtly wrong. Sharing that domain makes the message SHAPE the only thing keeping an
+    epoch proof from being replayed as a head proof, and the two can never collide: a checkpoint's
+    canonical JSON has keys {seq, record_hash}, an epoch's has {epoch, leaf_count, root, seq_end,
+    seq_start}.
+
+    `leaf_count` is committed to alongside the range so the anchored bytes pin the epoch's SIZE as
+    well as its bounds — a re-seal that dropped records from the same range cannot reuse them.
+    """
+    return canonical_json(
+        {
+            "epoch": epoch,
+            "leaf_count": leaf_count,
+            "root": root,
+            "seq_end": seq_end,
+            "seq_start": seq_start,
+        }
+    )
+
+
+class MerkleSealer:
+    """Seals audit epochs, anchors their roots, and produces disclosure bundles (AUD-06).
+
+    Operator-/schedule-driven, exactly like checkpointing — nothing here runs on the per-action
+    path.
+    """
+
+    def __init__(self, session_factory, audit) -> None:
+        self._sf = session_factory
+        self._audit = audit
+
+    async def seal(self) -> MerkleRoot | None:
+        """Seal everything appended since the last epoch. Returns the new epoch, or None when there
+        is nothing new to seal.
+
+        The upper bound is READ ONCE and pinned before the leaves are collected. Without that pin,
+        a concurrent append could land mid-build and produce a root over a range the row then
+        claims is something else — a root that does not match its own stated range is worse than no
+        root, because it fails verification and looks like tampering.
+
+        Every seal appends its OWN announcement, which therefore falls into the NEXT epoch: sealing
+        converges on one-record epochs rather than on None, so None means an unstarted chain. That
+        is the price of keeping the root itself inside the tamper-evident chain, and it is worth
+        paying — a root that lived only in this table could be edited without contradicting the
+        chain or any signature.
+        """
+        with self._sf() as s:
+            last = s.scalars(select(MerkleRoot).order_by(MerkleRoot.epoch.desc()).limit(1)).first()
+            start = 0 if last is None else last.seq_end + 1
+            epoch = 0 if last is None else last.epoch + 1
+            head = s.scalar(select(func.max(AuditRecord.seq)))
+            if head is None or head < start:
+                return None
+            rows = s.scalars(
+                select(AuditRecord)
+                .where(AuditRecord.seq >= start, AuditRecord.seq <= head)
+                .order_by(AuditRecord.seq.asc())
+            ).all()
+            # Contiguity is the coverage guarantee: a gap means some record sits in no epoch at all
+            # and can never be proven. Refuse rather than seal a range that silently skips records.
+            if [r.seq for r in rows] != list(range(start, head + 1)):
+                raise MerkleError(f"audit seq range {start}..{head} is not contiguous")
+            row = MerkleRoot(
+                epoch=epoch,
+                seq_start=start,
+                seq_end=head,
+                root=merkle_root([r.record_hash for r in rows]),
+                leaf_count=len(rows),
+            )
+            s.add(row)
+            s.commit()
+            # Read out inside the session: the announcement below must carry what was COMMITTED,
+            # and a detached row is a footgun to reach into after the fact.
+            sealed = {
+                "epoch": row.epoch,
+                "seq_start": row.seq_start,
+                "seq_end": row.seq_end,
+                "root": row.root,
+                "leaf_count": row.leaf_count,
+            }
+        # Audited AFTER the commit, so the event's own record lands beyond `head` and belongs to the
+        # NEXT epoch — an epoch that contained the record announcing itself could never be sealed.
+        await self._audit.append_event("merkle_epoch_sealed", sealed)
+        # Re-read so the caller gets the server-defaulted `created_at` too, never a half-populated
+        # row that reads as "this epoch has no sealing time".
+        with self._sf() as s:
+            return s.get(MerkleRoot, sealed["epoch"])
+
+    def anchor_epoch(self, epoch: int, anchor) -> None:
+        """Bind a sealed root to an external proof (AUD-05's anchors, unchanged)."""
+        with self._sf() as s:
+            row = s.get(MerkleRoot, epoch)
+            if row is None:
+                raise MerkleError(f"epoch {epoch} is not sealed")
+            row.anchor_kind = anchor.kind
+            row.proof = anchor.anchor(
+                epoch_message(row.epoch, row.seq_start, row.seq_end, row.root, row.leaf_count)
+            )
+            row.tsa_url = getattr(anchor, "tsa_url", None)
+            s.commit()
+
+    def disclose(self, seq: int) -> dict:
+        """A partial-disclosure bundle for ONE record: the record, its proof, and the anchored root.
+
+        This is the payload an operator hands an auditor. It contains exactly one record body —
+        already redacted by the AUD-04 gate when it was written — and sibling HASHES, which reveal
+        nothing about the records they summarize.
+        """
+        with self._sf() as s:
+            rec = s.scalars(select(AuditRecord).where(AuditRecord.seq == seq)).first()
+            if rec is None:
+                raise MerkleError(f"no audit record at seq {seq}")
+            ep = s.scalars(
+                select(MerkleRoot).where(MerkleRoot.seq_start <= seq, MerkleRoot.seq_end >= seq)
+            ).first()
+            if ep is None:
+                raise MerkleError(f"seq {seq} is not in a sealed epoch yet")
+            leaves = [
+                r.record_hash
+                for r in s.scalars(
+                    select(AuditRecord)
+                    .where(AuditRecord.seq >= ep.seq_start, AuditRecord.seq <= ep.seq_end)
+                    .order_by(AuditRecord.seq.asc())
+                ).all()
+            ]
+            index = seq - ep.seq_start
+            return {
+                "record": {
+                    "seq": rec.seq,
+                    "record_hash": rec.record_hash,
+                    "prev_hash": rec.prev_hash,
+                    "body": rec.body,
+                    "signature": rec.signature,
+                    "signing_key_id": rec.signing_key_id,
+                },
+                "index": index,
+                "proof": inclusion_proof(leaves, index),
+                "epoch": {
+                    "epoch": ep.epoch,
+                    "seq_start": ep.seq_start,
+                    "seq_end": ep.seq_end,
+                    "root": ep.root,
+                    "leaf_count": ep.leaf_count,
+                    "anchor_kind": ep.anchor_kind,
+                    "anchored": ep.proof is not None,
+                },
+            }
+
+    def list_epochs(self) -> list[dict]:
+        """Every sealed epoch and whether its root carries an external anchor yet."""
+        with self._sf() as s:
+            return [
+                {
+                    "epoch": r.epoch,
+                    "seq_start": r.seq_start,
+                    "seq_end": r.seq_end,
+                    "root": r.root,
+                    "leaf_count": r.leaf_count,
+                    "anchor_kind": r.anchor_kind,
+                    "anchored": r.proof is not None,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                }
+                for r in s.scalars(select(MerkleRoot).order_by(MerkleRoot.epoch)).all()
+            ]
