@@ -757,6 +757,9 @@ class CostRecord(Base):
 
     `price_book_version` pins WHICH rates produced the figure, so a bill can be re-derived — and so
     a rate correction does not silently rewrite history.
+
+    ECON-03 widens the same row rather than adding a second table: downstream API spend and GPU time
+    are what an action cost, and splitting them off would let two tables disagree about one action.
     """
 
     __tablename__ = "cost_record"
@@ -770,6 +773,18 @@ class CostRecord(Base):
     output_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     cost_micro_usd: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     price_book_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # ECON-03 — downstream (non-model) consumption. `provider` is the action's own target, a FACT
+    # the PEP already normalized; it is never an inferred vendor name. Inferring "this target is
+    # really AWS" would put a guess into a cost report an operator reconciles against a real invoice.
+    provider: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # ECON-03 — GPU, recorded only when something actually reported it, never zero-filled.
+    gpu_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    gpu_memory_mib: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # WHICH THING WAS MEASURED, stored beside the number because a figure that loses its qualifier
+    # becomes a bill nobody can challenge. 'process' = attributable to THIS process;
+    # 'device_shared' = a device-wide counter that cannot be honestly divided among concurrent
+    # agents, so it is explicitly NOT a per-agent bill and no roll-up may total it as one.
+    gpu_attribution: Mapped[str | None] = mapped_column(String(16), nullable=True)
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
     )

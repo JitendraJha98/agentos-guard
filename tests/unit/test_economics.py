@@ -74,6 +74,32 @@ def test_cost_record_round_trips_with_an_unpriced_model(store) -> None:
     assert row.cost_micro_usd is None and row.price_book_version is None
 
 
+def test_a_downstream_row_round_trips_its_provider_and_invents_no_gpu_reading(store) -> None:
+    """ECON-03's two halves share one row. `provider` is the action's own target — a fact — while
+    the GPU columns stay NULL because nothing measured a GPU here.
+
+    Null, never 0: a zero reads as 'this agent used no GPU', which is a claim, where the truth is
+    'we did not measure'. The same distinction `cost_micro_usd` already keeps for dollars.
+    """
+    with store() as s:
+        s.add(
+            CostRecord(
+                action_id=uuid4(),
+                agent_id="a1",
+                action_type="tool_call",
+                provider="api.stripe.com",
+            )
+        )
+        s.commit()
+    with store() as s:
+        row = s.scalars(select(CostRecord)).one()
+
+    assert row.provider == "api.stripe.com"
+    assert row.gpu_seconds is None
+    assert row.gpu_memory_mib is None
+    assert row.gpu_attribution is None
+
+
 def test_the_cost_event_kind_is_accepted_and_unknown_kinds_are_not(store) -> None:
     audit = AuditWriter(store)
 
