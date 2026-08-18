@@ -611,3 +611,55 @@ class RogueFinding(Base):
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class GraphNode(Base):
+    """DISC-06 — one node in the live agent graph: an agent, or a component an agent uses.
+
+    UNIQUE on (kind, name) so a repeated materialization pass converges on the same row rather
+    than growing a second copy of the graph on every sweep.
+    """
+
+    __tablename__ = "graph_node"
+    __table_args__ = (UniqueConstraint("kind", "name", name="uq_graph_node"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    # agent | tool | model | mcp | memory | delegation | prompt
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class GraphEdge(Base):
+    """DISC-06 — a directed edge in the live agent graph.
+
+    `uses` is agent -> component; `delegates` is agent -> agent, its lineage derived from the audit
+    body's `parent_action_id` by resolving which agent performed the parent action. `observations`
+    counts how often the edge was seen, so an operator can tell a one-off from a hot path.
+
+    UNIQUE on the (src, dst, relation) 5-tuple for the same reason `graph_node` is unique on
+    (kind, name): a scheduled sweep must converge, not accumulate.
+    """
+
+    __tablename__ = "graph_edge"
+    __table_args__ = (
+        UniqueConstraint(
+            "src_kind", "src_name", "dst_kind", "dst_name", "relation", name="uq_graph_edge"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    src_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    src_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    dst_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    dst_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    relation: Mapped[str] = mapped_column(String(32), nullable=False)  # uses | delegates
+    observations: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
