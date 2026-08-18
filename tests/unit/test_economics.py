@@ -99,6 +99,7 @@ def test_usage_is_extracted_from_a_langchain_message() -> None:
 
 def test_usage_is_extracted_from_an_openai_agents_usage_object() -> None:
     """Same extractor, no provider branch — the two SDKs agree on the field names."""
+    pytest.importorskip("agents", reason="openai-agents (the `adapters` group) is not installed")
     from agents.usage import Usage as AgentsUsage
 
     holder = type(
@@ -226,3 +227,210 @@ def test_per_agent_detail_lists_the_actions_behind_the_total(store) -> None:
     rows = rec.for_agent("a1")
     assert [r["action_id"] for r in rows] == [str(mine.id)]
     assert rows[0]["cost_micro_usd"] == 7_500_000 and rows[0]["price_book_version"] == "v"
+
+
+# --- the ONE enforcement seam -------------------------------------------------
+
+
+class _Pipeline:
+    """A stub PDP with a fixed outcome. The PEP forms below differ only in HOW they reach
+    `governed_call`, which is exactly the property these tests are about."""
+
+    def __init__(self, outcome: Outcome = Outcome.allow) -> None:
+        self._outcome = outcome
+
+    async def evaluate(self, action):
+        return _decision(action, self._outcome)
+
+
+def _returns(value):
+    """`run` in the shape `governed_call` wants it: a zero-arg awaitable callable."""
+
+    async def _run():
+        return value
+
+    return _run
+
+
+def _message(input_tokens: int = 1000, output_tokens: int = 500):
+    from langchain_core.messages import AIMessage
+
+    return AIMessage(
+        content="ok",
+        usage_metadata={
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        },
+        response_metadata={"model_name": "gpt-4o"},
+    )
+
+
+def _recorder(store) -> CostRecorder:
+    return CostRecorder(store, AuditWriter(store), PriceBook({"gpt-4o": (2.5, 10.0)}, version="v"))
+
+
+def _costs(store) -> list[CostRecord]:
+    with store() as s:
+        return list(s.scalars(select(CostRecord)).all())
+
+
+def test_an_allowed_action_is_metered_through_governed_call(store) -> None:
+    from agentos_sdk.enforce import governed_call
+
+    rec = _recorder(store)
+    action = _action()
+
+    asyncio.run(governed_call(_Pipeline(), action, _returns(_message()), meter=rec))
+
+    assert _costs(store)[0].cost_micro_usd == 7_500_000
+
+
+def test_a_DENIED_action_is_never_metered(store) -> None:
+    """A blocked action ran nothing, so it cost nothing. Metering it would bill an agent for work
+    the control plane prevented — and would inflate the very budget that caused the block."""
+    from agentos_sdk.enforce import GovernanceDenied, governed_call
+
+    rec = _recorder(store)
+    action = _action()
+
+    with pytest.raises(GovernanceDenied):
+        asyncio.run(
+            governed_call(_Pipeline(Outcome.deny), action, _returns(_message()), meter=rec)
+        )
+
+    assert _costs(store) == []
+
+
+def test_a_metering_failure_does_not_break_the_agents_call(store) -> None:
+    """The action already succeeded. Raising here would hand the agent a false failure AND report a
+    phantom execution error to the RUN-06 breaker."""
+    from agentos_sdk.enforce import governed_call
+
+    class _Broken:
+        async def record(self, action, decision, usage):
+            raise RuntimeError("ledger down")
+
+    class _Reporter:
+        def __init__(self) -> None:
+            self.failures = 0
+
+        async def record_failure(self, agent_id, target):
+            self.failures += 1
+
+    msg = _message()
+    reporter = _Reporter()
+
+    result = asyncio.run(
+        governed_call(
+            _Pipeline(), _action(), _returns(msg), reporter=reporter, meter=_Broken()
+        )
+    )
+
+    assert result is msg
+    assert reporter.failures == 0, "a bookkeeping failure is not an execution failure"
+
+
+def test_a_result_with_no_usage_records_nothing(store) -> None:
+    """No row at all, not a zero row: the ledger must never claim an action was free because the
+    provider declined to say what it used."""
+    from agentos_sdk.enforce import governed_call
+
+    rec = _recorder(store)
+
+    asyncio.run(governed_call(_Pipeline(), _action(), _returns("plain string"), meter=rec))
+
+    assert _costs(store) == []
+
+
+# --- every PEP form attributes identically ------------------------------------
+
+
+def test_the_langchain_middleware_meters_both_of_its_hooks(store) -> None:
+    """The two middleware call sites are separate `governed_call` invocations, so a meter threaded
+    into one and forgotten in the other is exactly the divergence this slice exists to prevent."""
+    from agentos_sdk import GovernanceMiddleware
+
+    class _Model:
+        model_name = "gpt-4o"
+
+    class _ModelRequest:
+        model = _Model()
+        messages = ["summarize this"]
+
+    class _ToolRequest:
+        tool_call = {"name": "http_get", "args": {"url": "https://api.example.com/x"}, "id": "1"}
+
+    async def _handler(request):
+        return _message(input_tokens=1000, output_tokens=500)
+
+    mw = GovernanceMiddleware(_Pipeline(), "tok", meter=_recorder(store))
+
+    asyncio.run(mw.awrap_model_call(_ModelRequest(), _handler))
+    asyncio.run(mw.awrap_tool_call(_ToolRequest(), _handler))
+
+    assert [(r.action_type, r.cost_micro_usd) for r in _costs(store)] == [
+        ("model_invocation", 7_500_000),
+        ("tool_call", 7_500_000),
+    ]
+
+
+def test_the_sdk_wrappers_meter(store) -> None:
+    from agentos_sdk import governed_mcp_call
+
+    asyncio.run(
+        governed_mcp_call(
+            _Pipeline(), "tok", server="s", tool="t", args="{}",
+            run=_returns(_message()), meter=_recorder(store),
+        )
+    )
+
+    assert _costs(store)[0].action_type == "mcp_call"
+
+
+def test_the_openai_agents_adapter_meters(store) -> None:
+    pytest.importorskip("agents", reason="openai-agents (the `adapters` group) is not installed")
+    from agents.usage import Usage as AgentsUsage
+
+    from agentos_sdk.adapters.openai_agents import governed_tool
+
+    class _Result:
+        usage = AgentsUsage(requests=1, input_tokens=7, output_tokens=3, total_tokens=10)
+
+    @governed_tool(_Pipeline(), "tok", meter=_recorder(store))
+    async def http_get(url: str):
+        return _Result()
+
+    asyncio.run(http_get(url="https://api.example.com/x"))
+
+    row = _costs(store)[0]
+    assert (row.action_type, row.input_tokens, row.output_tokens) == ("tool_call", 7, 3)
+
+
+def test_every_pep_form_takes_the_meter_last(store) -> None:
+    """`meter` is APPENDED, never inserted: these are public entry points with positional callers,
+    and a parameter added in the middle silently rebinds every one of them.
+
+    The gateway is in this list even though a relayed HTTP `Response` carries no usage the extractor
+    recognizes — the seam has to be present and identically shaped there, or a deployment that later
+    learns to read provider bodies would have to grow a SECOND recording path, which is the exact
+    disagreement `_run_reported` exists to prevent.
+    """
+    import inspect
+
+    from agentos_gateway.app import create_gateway
+    from agentos_sdk import GovernanceMiddleware, governed_delegation, governed_mcp_call, governed_memory_access
+    from agentos_sdk.adapters.openai_agents import governance_tool_guardrail, governed_tool
+    from agentos_sdk.enforce import governed_call
+
+    for form in (
+        governed_call,
+        GovernanceMiddleware.__init__,
+        governed_memory_access,
+        governed_mcp_call,
+        governed_delegation,
+        governed_tool,
+        governance_tool_guardrail,
+        create_gateway,
+    ):
+        assert list(inspect.signature(form).parameters)[-1] == "meter", form.__qualname__

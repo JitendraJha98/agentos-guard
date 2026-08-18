@@ -31,6 +31,7 @@ from agentos_sdk.enforce import (
     ApprovalCoordinator,
     CircuitReporter,
     ConsensusCoordinator,
+    CostMeter,
     GovernanceDenied,
     ResourceGovernor,
     SandboxRunner,
@@ -135,10 +136,18 @@ def create_gateway(
     consensus: ConsensusCoordinator | None = None,
     governor: ResourceGovernor | None = None,
     reporter: CircuitReporter | None = None,
+    meter: CostMeter | None = None,
 ) -> FastAPI:
     """Build the gateway ASGI app. The Phase-9 seams are pass-through parameters so a deployment
     gets identical containment here and in the SDK — a gateway wired without them fails CLOSED on
-    those outcomes, exactly like an unwired SDK PEP."""
+    those outcomes, exactly like an unwired SDK PEP.
+
+    `meter` (ECON-01) is the same pass-through, with an honest limit: the governed `run` here relays
+    the upstream's raw BYTES, so nothing on it reports usage in the shape the extractor recognizes
+    and a gateway-governed call currently records NOTHING rather than a fabricated zero (spec D-7).
+    The seam is wired anyway because the alternative — teaching the gateway its own recording path
+    later — is exactly the second path that would let the gateway and the SDK disagree about what
+    one agent spent."""
     app = FastAPI(title="agentos-guard gateway", version="0.1.0")
     router = APIRouter()
     http = client or httpx.AsyncClient(timeout=30.0)
@@ -182,6 +191,7 @@ def create_gateway(
                 consensus=consensus,
                 governor=governor,
                 reporter=reporter,
+                meter=meter,
             )
         except GovernanceDenied as denied:
             # Covers deny, quarantine, a missing quorum and a budget breach alike: every one of

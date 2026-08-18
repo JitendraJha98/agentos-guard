@@ -39,6 +39,7 @@ from agentos_sdk.enforce import (
     ApprovalCoordinator,
     CircuitReporter,
     ConsensusCoordinator,
+    CostMeter,
     GovernanceDenied,
     ResourceGovernor,
     SandboxRunner,
@@ -73,6 +74,7 @@ def governed_tool(
     consensus: ConsensusCoordinator | None = None,
     governor: ResourceGovernor | None = None,
     reporter: CircuitReporter | None = None,
+    meter: CostMeter | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Awaitable[Any]]]:
     """Wrap a tool callable so governance runs BEFORE its body. The RECOMMENDED entry point: it
     blocks wherever the tool is called from, because it wraps the callable itself.
@@ -123,6 +125,7 @@ def governed_tool(
                 consensus=consensus,
                 governor=governor,
                 reporter=reporter,
+                meter=meter,
             )
 
         # Preserve the name/docstring/signature `function_tool` introspects to build the tool
@@ -190,6 +193,7 @@ def governance_tool_guardrail(
     consensus: ConsensusCoordinator | None = None,
     governor: ResourceGovernor | None = None,
     reporter: CircuitReporter | None = None,
+    meter: CostMeter | None = None,
 ) -> Any:
     """Build a framework-native `ToolInputGuardrail` that consults the SAME enforcement core.
 
@@ -230,6 +234,7 @@ def governance_tool_guardrail(
                 consensus=consensus,
                 governor=governor,
                 reporter=reporter,
+                meter=meter,
             )
         except GovernanceDenied as denied:
             return ToolGuardrailFunctionOutput.reject_content(message=str(denied))
