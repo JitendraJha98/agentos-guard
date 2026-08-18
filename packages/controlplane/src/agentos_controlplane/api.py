@@ -379,9 +379,23 @@ def build_inventory_router(
 
     @router.get("/discovery/frameworks")
     def list_frameworks() -> list[dict]:
-        """DISC-03 — the frameworks observed in this deployment."""
+        """DISC-03 — the frameworks observed in this deployment, per observing instance."""
         if detector is None:
             raise HTTPException(status_code=404, detail="framework discovery is not wired")
+        return detector.list_frameworks()
+
+    @router.post("/discovery/scan")
+    async def scan_frameworks() -> list[dict]:
+        """DISC-03 — run a discovery pass NOW and return the resulting inventory.
+
+        The WRITE half of the surface: without a caller the table stays empty and the read route
+        above is hollow. Deliberately operator-driven (an ops schedule can poll it) and behind the
+        same gate — a scan reads `importlib.metadata` and appends to the audit chain, and touches
+        the per-action hot path nowhere. Idempotent: an unchanged environment appends no event.
+        """
+        if detector is None:
+            raise HTTPException(status_code=404, detail="framework discovery is not wired")
+        await detector.scan()
         return detector.list_frameworks()
 
     return router

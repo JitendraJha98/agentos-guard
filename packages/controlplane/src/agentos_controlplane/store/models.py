@@ -525,15 +525,22 @@ class ConsensusVote(Base):
 
 
 class DiscoveredFramework(Base):
-    """DISC-03 — an agent framework observed in this deployment.
+    """DISC-03 — an agent framework observed in this deployment, by ONE observing instance.
 
     `name` is the catalogue key (stable), `distribution` the PyPI name actually found, and
-    `version` what was installed at detection time. Keyed by name: the CURRENT observation per
-    framework, with first/last-seen bracketing it; the audit chain carries the immutable history.
+    `version` what was installed at detection time — bounded + charset-restricted at the detector,
+    since METADATA is supply-chain input and the column widths here are enforced on Postgres.
+
+    Keyed by (observer, name): the CURRENT observation per framework PER scanning instance, with
+    first/last-seen bracketing it. The observer dimension is load-bearing — keyed by `name` alone,
+    two replicas that disagree about a version overwrite each other on every pass and emit an
+    unbounded stream of `framework_discovered` events for an unchanged fleet. The audit chain
+    carries the immutable history.
     """
 
     __tablename__ = "discovered_framework"
 
+    observer: Mapped[str] = mapped_column(String(128), primary_key=True)
     name: Mapped[str] = mapped_column(String(64), primary_key=True)
     distribution: Mapped[str] = mapped_column(String(128), nullable=False)
     version: Mapped[str] = mapped_column(String(64), nullable=False)
