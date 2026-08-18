@@ -159,6 +159,63 @@ def test_the_negated_numeric_leaf_inverts_correctly(negated_engine) -> None:
     assert negated_engine.evaluate(_policy_input(1.5)).matched == ()
 
 
+@pytest.fixture(scope="module")
+def lte_engine(tmp_path_factory) -> ConstitutionPolicyEngine:
+    """`lte` and `cost.spend_usd` are the halves of this registry entry that the shipped
+    constitution does not use — so nothing else compiles either one."""
+    yaml_text = (
+        _HEADER
+        + """
+  - id: "9.3"
+    title: A small share of budget is only warned about
+    statement: An agent that has used no more than half its budget proceeds with a warning.
+    effect: warn
+    when: {field: cost.budget_used_ratio, op: lte, value: 0.5}
+  - id: "9.4"
+    title: A large absolute spend is opened for review
+    statement: An agent that has spent more than one hundred dollars is opened for review.
+    effect: governance_review
+    when: {field: cost.spend_usd, op: gte, value: 100.0}
+"""
+    )
+    return _compile(yaml_text, tmp_path_factory.mktemp("wasm_budget_lte"))
+
+
+@pytest.fixture(scope="module")
+def negated_lte_engine(tmp_path_factory) -> ConstitutionPolicyEngine:
+    yaml_text = (
+        _HEADER
+        + """
+  - id: "9.5"
+    title: Spending past half the budget is denied
+    statement: An agent that has used more than half its budget may not act.
+    effect: deny
+    when: {not: {field: cost.budget_used_ratio, op: lte, value: 0.5}}
+"""
+    )
+    return _compile(yaml_text, tmp_path_factory.mktemp("wasm_budget_neg_lte"))
+
+
+def test_lte_is_inclusive_at_the_boundary_and_spend_usd_is_a_live_field(lte_engine) -> None:
+    """The other half of the numeric path. `lte` is in the same schema/compiler branch as `gte` and
+    has no consumer in the shipped constitution; `cost.spend_usd` is a registered, emitted field
+    with no consumer either. A field the registry publishes and no test ever compiles is a field an
+    operator can author a principle against and discover is broken in production."""
+    assert select_floor(lte_engine.evaluate(_policy_input(0.5)).matched) is Outcome.warn
+    assert lte_engine.evaluate(_policy_input(0.500001)).matched == ()
+
+    over = lte_engine.evaluate(_policy_input(0.9, spend_usd=150.0))
+    assert select_floor(over.matched) is Outcome.governance_review
+    assert lte_engine.evaluate(_policy_input(0.9, spend_usd=99.99)).matched == ()
+
+
+def test_the_negated_lte_leaf_inverts_to_a_strict_greater_than(negated_lte_engine) -> None:
+    """`not: {op: lte}` compiles to `>`, so the boundary flips from inclusive to exclusive. An
+    off-by-one here denies the one agent sitting exactly on the threshold it was told it could use."""
+    assert negated_lte_engine.evaluate(_policy_input(0.5)).matched == ()  # NOT(<= 0.5) is false AT it
+    assert select_floor(negated_lte_engine.evaluate(_policy_input(0.6)).matched) is Outcome.deny
+
+
 # ---------------------------------------------------------------- the ECON-02 claim, end to end
 
 
@@ -259,9 +316,11 @@ def test_unpriced_spend_never_crosses_the_line(pipeline_with_budget) -> None:
     assert _evaluate(pipeline, tokens).outcome is Outcome.allow
 
 
-def test_overshoot_is_bounded_to_one_action(pipeline_with_budget) -> None:
-    """The honest bound from the design (D-4), asserted rather than asserted-in-prose: the action
-    that CROSSES the line completes, and the very next one is stopped."""
+def test_a_serial_agent_overshoots_by_the_one_action_that_crossed_the_line(
+    pipeline_with_budget,
+) -> None:
+    """The bound in the SERIAL case, asserted rather than asserted-in-prose: the action that crosses
+    the line completes, and the very next one is stopped."""
     pipeline, ledger, tokens = pipeline_with_budget
     ledger.set_budget(AGENT_ID, limit_micro_usd=1_000_000)
     ledger.note_spend(AGENT_ID, 799_999)  # a hair under the 5.2 review band
@@ -269,6 +328,37 @@ def test_overshoot_is_bounded_to_one_action(pipeline_with_budget) -> None:
     assert _evaluate(pipeline, tokens).outcome is Outcome.allow  # the crossing action proceeds
     ledger.note_spend(AGENT_ID, 500_000)  # it cost $0.50 and blew the budget
     assert _evaluate(pipeline, tokens).outcome is Outcome.require_approval  # the NEXT one stops
+
+
+def test_everything_already_in_flight_crosses_the_line_together(pipeline_with_budget) -> None:
+    """The bound this design ACTUALLY provides, pinned where the serial case cannot see it.
+
+    The ledger moves only when a call RETURNS and its cost lands, so every action in flight when the
+    line is crossed was gated on the same pre-crossing reading. An agent that fans out N parallel
+    calls therefore overshoots by N costs, and N is the agent's choice — `asyncio.gather` walks
+    straight through a "bounded to one action" claim. Overshoot is bounded by what is in flight,
+    which is what the module docstring must say and what an operator sizes a limit against.
+    """
+    pipeline, ledger, tokens = pipeline_with_budget
+    ledger.set_budget(AGENT_ID, limit_micro_usd=1_000_000)
+    ledger.note_spend(AGENT_ID, 700_000)  # under the 5.2 band, so only the budget can move these
+
+    async def _fan_out():
+        actions = []
+        for _ in range(8):
+            action = _action()
+            action.identity_token = tokens[AGENT_ID]
+            actions.append(action)
+        return await asyncio.gather(*(pipeline.evaluate(a) for a in actions))
+
+    outcomes = [decision.outcome for decision in asyncio.run(_fan_out())]
+
+    assert outcomes == [Outcome.allow] * 8  # all eight read the SAME pre-crossing posture
+    for _ in range(8):
+        ledger.note_spend(AGENT_ID, 500_000)  # each cost $0.50, each landing after its own gate
+
+    assert ledger.posture_for(AGENT_ID).budget_used_ratio == pytest.approx(4.7)  # not 1.5
+    assert _evaluate(pipeline, tokens).outcome is Outcome.require_approval
 
 
 @pytest.mark.floor_invariant
