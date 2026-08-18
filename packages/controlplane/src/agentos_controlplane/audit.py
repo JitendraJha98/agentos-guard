@@ -133,6 +133,8 @@ EVENT_KINDS = frozenset(
         # 4d secret-gate here can never block a consensus round from being recorded.
         "consensus_vote",
         "consensus_resolved",
+        # DISC-03 (Slice 10c): a framework observed in this deployment. Short identifiers only.
+        "framework_discovered",
     }
 )
 

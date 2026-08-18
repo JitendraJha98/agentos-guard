@@ -522,3 +522,24 @@ class ConsensusVote(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class DiscoveredFramework(Base):
+    """DISC-03 — an agent framework observed in this deployment.
+
+    `name` is the catalogue key (stable), `distribution` the PyPI name actually found, and
+    `version` what was installed at detection time. Keyed by name: the CURRENT observation per
+    framework, with first/last-seen bracketing it; the audit chain carries the immutable history.
+    """
+
+    __tablename__ = "discovered_framework"
+
+    name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    distribution: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
