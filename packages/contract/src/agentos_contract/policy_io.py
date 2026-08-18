@@ -28,6 +28,13 @@ POLICY_INPUT_FIELDS: dict[str, tuple[type, frozenset[str] | str]] = {
     "guardrails.code_exec": (bool, "all"),        # SEC-11 unsafe dynamic code/command execution (ASI05)
     "guardrails.memory_poison": (bool, "all"),    # SEC-09 memory/context poisoning (ASI06)
     "sequence.matched_refs": (list, "all"),
+    # ECON-02 economics fields — the FIRST numeric fields in this registry, so they are also the
+    # first live consumers of the gte/lte operators the schema and compiler have carried since
+    # Phase 3. Added in lockstep with the builder (drift-locked by
+    # test_builder_emits_exactly_the_registry_fields_for_every_type). Scoped "all" because a
+    # runaway agent burns its budget through tool and MCP calls as readily as through the model.
+    "cost.spend_usd": (float, "all"),          # accumulated spend in the agent's budget window
+    "cost.budget_used_ratio": (float, "all"),  # 0.0 when NO budget is configured (not a breach)
     "egress.host": (str, frozenset({"tool_call", "mcp_call"})),
     "memory.operation": (str, frozenset({"memory_access"})),
     "memory.key": (str, frozenset({"memory_access"})),
