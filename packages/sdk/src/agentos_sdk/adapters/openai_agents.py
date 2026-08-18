@@ -23,7 +23,7 @@ import functools
 import inspect
 import json
 from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar
+from typing import Any
 
 from agentos_contract import ActionType, AgentAction, PipelineProtocol
 
@@ -39,8 +39,6 @@ from agentos_sdk.enforce import (
     governed_call,
 )
 from agentos_sdk.normalize import _agent_id_from_token
-
-_T = TypeVar("_T")
 
 
 @covers(ActionType.tool_call)
@@ -116,7 +114,9 @@ def governed_tool(
     return _decorate
 
 
-def _tool_args(fn: Callable[..., Any], args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
+def _tool_args(
+    fn: Callable[..., Any], args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> dict[str, Any]:
     """Bind the call to the tool's own parameter NAMES so the risk stage and the constitution see
     the same field names an operator wrote principles against (a positional argument would
     otherwise be invisible to a `when: field: url` principle).
