@@ -48,7 +48,12 @@ class CostPosture:
 
 
 def _window_start(period: str, now: datetime) -> datetime | None:
-    """The inclusive lower bound of the current window; None for 'total' (all history)."""
+    """The inclusive lower bound of the current window; None for 'total' (all history).
+
+    The window turns over at UTC midnight, not the operator's local midnight — `recorded_at` is
+    stored in UTC, and resolving the boundary against a server's local zone would make the same
+    daily budget reset at a different moment in each region of a fleet.
+    """
     if period == "day":
         return now.replace(hour=0, minute=0, second=0, microsecond=0)
     if period == "month":
@@ -147,17 +152,22 @@ class BudgetLedger:
         one row per agent an operator explicitly budgeted, not one per action."""
         with self._sf() as s:
             rows = s.scalars(select(AgentBudget).order_by(AgentBudget.agent_id)).all()
-            return [
+        out = []
+        for row in rows:
+            # The SAME reading the decision path gets: an operator who cannot see the number the
+            # principle will compare against cannot explain, or unblock, a budget escalation.
+            posture = self.posture_for(row.agent_id)
+            out.append(
                 {
-                    "agent_id": r.agent_id,
-                    "period": r.period,
-                    "limit_micro_usd": r.limit_micro_usd,
-                    "spend_usd": self.posture_for(r.agent_id).spend_usd,
-                    "budget_used_ratio": self.posture_for(r.agent_id).budget_used_ratio,
-                    "version": r.version,
+                    "agent_id": row.agent_id,
+                    "period": row.period,
+                    "limit_micro_usd": row.limit_micro_usd,
+                    "spend_usd": posture.spend_usd,
+                    "budget_used_ratio": posture.budget_used_ratio,
+                    "version": row.version,
                 }
-                for r in rows
-            ]
+            )
+        return out
 
 
 class BudgetReconciler:
