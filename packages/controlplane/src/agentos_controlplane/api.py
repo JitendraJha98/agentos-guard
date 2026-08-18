@@ -23,6 +23,7 @@ from agentos_controlplane.framework_discovery import FrameworkDetector
 from agentos_controlplane.graph import AgentGraphStore
 from agentos_controlplane.inventory import InventoryStore
 from agentos_controlplane.killswitch import EmergencyActiveError, KillSwitchStore
+from agentos_controlplane.merkle import MerkleError, MerkleSealer
 from agentos_controlplane.registry import Registry
 from agentos_controlplane.resources import ConstitutionError, ResourceStore, VersionConflict
 from agentos_controlplane.rogue import RogueDetector
@@ -370,11 +371,13 @@ def build_inventory_router(
     shadow: ShadowAgentStore | None = None,
     rogue: RogueDetector | None = None,
     graph: AgentGraphStore | None = None,
+    sealer: MerkleSealer | None = None,
 ) -> APIRouter:
     """DISC-01/02 — read API over the authoritative agent inventory, plus the DISC-03 framework
-    inventory, the DISC-04 shadow-agent sightings, the DISC-05 rogue-agent findings and the DISC-06
-    live agent graph: further collaborators on the SAME router rather than new ones, so the gated
-    read surface over "what is actually out there" stays one place."""
+    inventory, the DISC-04 shadow-agent sightings, the DISC-05 rogue-agent findings, the DISC-06
+    live agent graph and the AUD-06 sealed audit epochs: further collaborators on the SAME router
+    rather than new ones, so the gated read surface over "what is actually out there" — and what
+    actually happened — stays one place."""
     router = APIRouter()
 
     @router.get("/inventory")
@@ -445,6 +448,24 @@ def build_inventory_router(
         view = graph.view()
         return {"nodes": view.nodes, "edges": view.edges}
 
+    @router.get("/audit/epochs")
+    def list_epochs() -> list[dict]:
+        """AUD-06 — the sealed Merkle epochs and their anchor status."""
+        if sealer is None:
+            raise HTTPException(status_code=404, detail="merkle sealing is not wired")
+        return sealer.list_epochs()
+
+    @router.get("/audit/disclose/{seq}")
+    def disclose(seq: int) -> dict:
+        """AUD-06 — a partial-disclosure bundle for ONE audit record: the record, its inclusion
+        proof, and the anchored root. Gated: which actions an agent took is not public."""
+        if sealer is None:
+            raise HTTPException(status_code=404, detail="merkle sealing is not wired")
+        try:
+            return sealer.disclose(seq)
+        except MerkleError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     return router
 
 
@@ -489,6 +510,8 @@ def create_app(
     rogue_detector: RogueDetector | None = None,
     # DISC-06: likewise appended last.
     graph_store: AgentGraphStore | None = None,
+    # AUD-06: likewise appended last.
+    sealer: MerkleSealer | None = None,
 ) -> FastAPI:
     # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
     # explicit arg -> AGENTOS_API_TOKEN env -> ephemeral random (logged) — never silently open.
@@ -510,11 +533,17 @@ def create_app(
     # shadow-agent route does the same — who is probing the fleet unregistered is never public.
     # DISC-05's rogue-agent route likewise: which agents are outside their declared scope is not
     # public information either. DISC-06's graph route most of all — who talks to whom is a map of
-    # the fleet's blast radius.
+    # the fleet's blast radius. AUD-06's disclosure route likewise: an operator chooses what to
+    # disclose and to whom, so the bundle is never a public endpoint.
     if inventory_store is not None:
         app.include_router(
             build_inventory_router(
-                inventory_store, framework_detector, shadow_store, rogue_detector, graph_store
+                inventory_store,
+                framework_detector,
+                shadow_store,
+                rogue_detector,
+                graph_store,
+                sealer,
             ),
             dependencies=guard,
         )
