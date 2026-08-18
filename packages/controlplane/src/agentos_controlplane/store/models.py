@@ -773,3 +773,31 @@ class CostRecord(Base):
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
     )
+
+
+class AgentBudget(Base):
+    """ECON-02 — an operator-set spending limit for one agent.
+
+    `period` is the window the limit applies over ('day' | 'month' | 'total'); spend is summed from
+    `cost_record` inside the current window. Micro-USD integers for the same reason CostRecord uses
+    them: a budget DECISION must be reproducible, and float money is not.
+
+    A MISSING ROW MEANS NO BUDGET CONFIGURED, which is not the same as a budget of zero. The ledger
+    reports a used-ratio of 0.0 for an unconfigured agent, so an operator who has set no budgets
+    cannot have their whole fleet deadlocked by the mere presence of this feature — absence of a
+    budget is not evidence of a breach.
+
+    `version` counts assignments so an operator can see a limit was RAISED between two decisions:
+    raising a budget is how an over-budget agent is unblocked, and a limit that changes with no
+    trace is the one an incident review cannot reconstruct.
+    """
+
+    __tablename__ = "agent_budget"
+
+    agent_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    period: Mapped[str] = mapped_column(String(16), nullable=False, default="day")
+    limit_micro_usd: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
