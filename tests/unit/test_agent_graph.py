@@ -545,3 +545,49 @@ def test_an_agent_that_only_acted_is_observed(audit, graph) -> None:
 
     node_source = {(n["kind"], n["name"]): n["source"] for n in graph.view().nodes}
     assert node_source[("agent", "a")] == OBSERVED
+
+
+# ------------------------------------------------- the read must be CLOSED over its edges
+
+
+def test_a_bounded_read_never_returns_an_edge_whose_endpoints_are_missing(store, audit) -> None:
+    """REGRESSION: `view()` selected nodes independently of edges, ordered by kind.
+
+    'agent' sorts first, so a full agent budget crowded out every component node while the
+    separately-bounded edge query still returned edges pointing at them — a response carrying
+    edges whose endpoints were absent from `nodes`. That is structurally broken for an operator
+    reading it and for the Phase-13 walker that will traverse it: an edge to a node that does not
+    exist is not a partial view, it is a wrong one. A truncated read must still be a VALID subgraph.
+    """
+    for i in range(12):
+        act(audit, f"agent-{i:02d}", reasons=VERIFIED)
+    graph = AgentGraphStore(store, max_nodes=6)
+    graph.materialize()
+
+    view = graph.view()
+    present = {(n["kind"], n["name"]) for n in view.nodes}
+    assert len(view.nodes) <= 6
+    assert view.edges, "the probe needs edges for the closure assertion to mean anything"
+    for e in view.edges:
+        assert (e["src"]["kind"], e["src"]["name"]) in present
+        assert (e["dst"]["kind"], e["dst"]["name"]) in present
+
+
+def test_declared_components_are_bounded_like_agents(store, audit) -> None:
+    """REGRESSION: `max_nodes` capped the AGENT dimension only.
+
+    A manifest is caller-supplied (`RegisterIn.manifest` is a free-form dict and `declare` bounds
+    nothing), so one agent declaring hundreds of tools minted a node and an edge per tool with no
+    budget at all — capping agents while leaving components open just moved the injection vector
+    one field across. Overflow folds into the shared bucket so the graph still SAYS there is more.
+    """
+    inventory = InventoryStore(store)
+    inventory.declare("declarer", tools=[f"tool-{i:03d}" for i in range(40)])
+    graph = AgentGraphStore(store, inventory=inventory, max_nodes=5)
+    graph.materialize()
+
+    with store() as s:
+        tools = s.scalars(select(GraphNode).where(GraphNode.kind == "tool")).all()
+    names = {t.name for t in tools}
+    assert len(tools) <= 6, f"declared components escaped the budget: {len(tools)} tool nodes"
+    assert OVERFLOW_ID in names, "overflow must be visible, not silently truncated"

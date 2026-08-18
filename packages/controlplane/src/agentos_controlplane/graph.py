@@ -22,6 +22,20 @@ capability map it never earned. So a record is evidence only if the identity sta
 a reason with stage `identity` and code `identity_verified`. Fail-closed: a record that predates the
 reason, a kill-switch deny (which runs AHEAD of identity) and a fail-safe record all draw nothing.
 
+WHAT THAT FILTER DOES **NOT** COVER — state it plainly rather than let the section above imply more
+than it delivers. `identity_verified` authenticates who ACTED. It says nothing about whether the
+`parent_action_id` that record carries was really a delegation TO this caller: that field stays raw
+client input for a caller who IS verified, and registration is the cheapest tier in the fleet (a
+POST behind the shared enrollment token — DISC-04/05 exist precisely because it is cheap). So a
+registered agent can still name another verified agent's action as its parent and draw a `delegates`
+edge it was never granted. The actor half of the boundary is closed; the lineage half is CLAIMED.
+Closing it means cross-checking against an authoritative grant — TRST-04's delegation authority
+already resolves an action to its `Authority`, so the edge should require that the parent's authority
+actually names this child, and skip it otherwise (the same shape as the unresolvable-parent skip
+above). That is deliberately NOT done here: it belongs with the Phase-13 permission calculus that
+consumes these edges, and until then a consumer must treat a `delegates` edge as claimed lineage
+between verified actors, not as proof a delegation was authorized.
+
 ## Hostile identifiers must not bloat, block or ABORT the pass
 
 `graph_node.name` is String(255). SQLite does not enforce that; Postgres — the production target
@@ -192,14 +206,64 @@ class AgentGraphStore:
         table (the shadow / rogue / dashboard `.limit()` precedent). Edges are ordered by
         `observations` so a truncated read keeps the hot paths rather than an arbitrary slice."""
         with self._sf() as s:
-            nodes = [
-                {"kind": n.kind, "name": n.name, "source": n.source}
+            # EDGES FIRST, then exactly the nodes they reference: the returned subgraph must be
+            # CLOSED over its edges. Selecting nodes independently (ordered by kind) let "agent"
+            # sort first and consume the whole budget, so the response carried edges whose
+            # endpoints were absent from `nodes` — structurally broken for an operator reading it
+            # and for the Phase-13 walker that will traverse it.
+            edge_rows = s.scalars(
+                select(GraphEdge)
+                .order_by(
+                    GraphEdge.observations.desc(),
+                    GraphEdge.relation,
+                    GraphEdge.src_name,
+                    GraphEdge.dst_name,
+                )
+                .limit(self._max_edges)
+            ).all()
+            # Admit edges in priority order only while BOTH endpoints still fit the node budget,
+            # so the result is bounded AND closed. Dropping the tail of the edge list is the right
+            # trade: edges are ordered by `observations`, so what survives is the hot subgraph.
+            referenced: set[tuple[str, str]] = set()
+            kept: list[GraphEdge] = []
+            for e in edge_rows:
+                ends = {(e.src_kind, e.src_name), (e.dst_kind, e.dst_name)}
+                if len(referenced | ends) > self._max_nodes:
+                    continue
+                referenced |= ends
+                kept.append(e)
+            edge_rows = kept
+
+            node_rows: list[GraphNode] = []
+            seen: set[tuple[str, str]] = set()
+            if referenced:
+                # Chunked: SQLite bounds the number of bind variables in one statement, and
+                # `referenced` is only bounded by 2x max_edges.
+                names = sorted({name for _, name in referenced})
+                for i in range(0, len(names), 400):
+                    for n in s.scalars(
+                        select(GraphNode).where(GraphNode.name.in_(names[i : i + 400]))
+                    ).all():
+                        key = (n.kind, n.name)
+                        if key in referenced and key not in seen:
+                            seen.add(key)
+                            node_rows.append(n)
+            # Then top up with isolated nodes (declared-but-never-exercised components, agents
+            # with no edges yet) until the budget is spent — they are real fleet members.
+            if len(node_rows) < self._max_nodes:
                 for n in s.scalars(
                     select(GraphNode)
                     .order_by(GraphNode.kind, GraphNode.name)
                     .limit(self._max_nodes)
-                ).all()
-            ]
+                ).all():
+                    key = (n.kind, n.name)
+                    if key not in seen:
+                        seen.add(key)
+                        node_rows.append(n)
+                    if len(node_rows) >= self._max_nodes:
+                        break
+            node_rows.sort(key=lambda n: (n.kind, n.name))
+            nodes = [{"kind": n.kind, "name": n.name, "source": n.source} for n in node_rows]
             edges = [
                 {
                     "src": {"kind": e.src_kind, "name": e.src_name},
@@ -208,16 +272,7 @@ class AgentGraphStore:
                     "observations": e.observations,
                     "source": e.source,
                 }
-                for e in s.scalars(
-                    select(GraphEdge)
-                    .order_by(
-                        GraphEdge.observations.desc(),
-                        GraphEdge.relation,
-                        GraphEdge.src_name,
-                        GraphEdge.dst_name,
-                    )
-                    .limit(self._max_edges)
-                ).all()
+                for e in edge_rows
             ]
             return GraphView(nodes=nodes, edges=edges)
 
@@ -303,9 +358,22 @@ class AgentGraphStore:
             names = self._agent_names(s, {c.agent_id for c in declared})
             nodes: dict[tuple[str, str], str] = {}
             edges: dict[tuple, tuple[str, int]] = {}
+            # The COMPONENT half needs the same budget the agent half already has. A manifest is
+            # caller-supplied (`RegisterIn.manifest` is a free-form dict and `declare` bounds
+            # nothing), so one agent declaring 500 tools previously minted 500 nodes + 500 edges
+            # with no cap at all — capping agents while leaving components open just moved the
+            # injection vector one field across. Overflow folds into a single bucket per kind, so
+            # the graph still SAYS there is more rather than silently truncating.
+            component_budget: set[tuple[str, str]] = set()
             for c in declared:
                 actor = names[c.agent_id]
                 kind, name = bounded(c.kind, _MAX_KIND), bounded(c.name, _MAX_NAME)
+                key = (kind, name)
+                if key not in component_budget:
+                    if len(component_budget) >= self._max_nodes:
+                        name = OVERFLOW_ID
+                        key = (kind, name)
+                    component_budget.add(key)
                 _add_node(nodes, _AGENT, actor, DECLARED)
                 _add_node(nodes, kind, name, DECLARED)
                 _add_edge(edges, (_AGENT, actor, kind, name, "uses"), DECLARED, 0)
