@@ -173,7 +173,7 @@ Two layers, deliberately separate — **`docs/` defines, `.planning/` executes a
 |------|------------|
 | [`docs/`](docs/) | **Design** (authoritative — *what & why*). Start at the [manifesto](docs/architecture/00-manifesto.md). |
 | [`.planning/`](.planning/) | **Execution** (GSD — *how & when*): requirements, roadmap, phase history, research. |
-| [`packages/`](packages/) | The code: `contract` (stable boundary) · `pipeline` (the PDP) · `controlplane` · `sdk`. |
+| [`packages/`](packages/) | The code: `contract` (stable boundary) · `pipeline` (the PDP) · `controlplane` · `constitution` · `sdk` (in-process PEP) · `gateway` (network PEP — governs agents with no SDK in their process). |
 | [`CLAUDE.md`](CLAUDE.md) | Contributor & agent working guidance. |
 
 Each of `docs/` and `.planning/` has its own README explaining the split, so the two never blur.

@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: phase_in_progress
-stopped_at: 2026-08-11 — Phase 9 COMPLETE (6/6 slices) on branch phase-9-runtime-containment-consensus, pending PR into development. Every graduated outcome now has real enforcement (the sandbox/require_consensus approval substitution is retired). Phase 6's OSS-01 (first tagged PyPI release) remains the sole open item across Phases 6-9; Phase 10 not started.
-last_updated: 2026-08-11
-last_activity: 2026-08-11
+stopped_at: 2026-08-18 — Phase 10 COMPLETE (6/6 slices) on branch phase-10-gateway-adapter-graph, pending PR into development. The single-framework, SDK-only ceiling is broken: a network gateway PEP governs agents with no SDK in their process, a second framework adapter (OpenAI Agents SDK) is intercepted, discovery finds frameworks/shadow/rogue agents from evidence, and the live agent graph is materialized. Phase 6's OSS-01 (first tagged PyPI release) remains the sole open item across Phases 6-10; Phase 11 not started.
+last_updated: 2026-08-18
+last_activity: 2026-08-18
 progress:
   total_phases: 14
-  completed_phases: 8
-  total_plans: 49
-  completed_plans: 49
-  percent: 61
+  completed_phases: 9
+  total_plans: 55
+  completed_plans: 55
+  percent: 68
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-01)
 
 **Core value:** Every agent action is intercepted at runtime and returned an explainable, graduated decision grounded in policy + a human-readable constitution, with tamper-evident audit evidence — making unsafe agent behavior structurally impossible rather than merely unlikely.
-**Current focus:** Phase 10 — Gateway PEP, Second Adapter & Live Graph (not started). Phase 9 complete, pending PR.
+**Current focus:** Phase 11 — Merkle Audit, Economics, ABOM & Compliance Export (not started). Phases 9 and 10 complete, both pending PR.
 
 ## Current Position
 
-Phase: 9 COMPLETE (2026-08-11) — branch `phase-9-runtime-containment-consensus`, pending PR into `development`
-Plan: Phase 9 delivered as 6 slices covering all 6 requirements — 9a RUN-03 sandbox/quarantine, 9b RUN-04 privilege rings, 9c RUN-05 resource isolation, 9d RUN-06 circuit breakers, 9e RUN-07 emergency shutdown, 9f POL-09 2-of-3 consensus. Built via the superpowers workflow (spec -> per-slice plan -> subagent implement + two-stage adversarial review + fix + re-review).
-Status: Phases 1–5, 7, 8, 9 complete; Phase 6 ~5/6 (OSS-01 first PyPI release the sole open item). Phase 10 not started.
-Last activity: 2026-08-11
+Phase: 10 COMPLETE (2026-08-18) — branch `phase-10-gateway-adapter-graph`, pending PR into `development`
+Plan: Phase 10 delivered as 6 slices covering all 6 requirements — 10a INT-07 gateway PEP, 10b INT-08 OpenAI Agents SDK adapter, 10c DISC-03 framework discovery, 10d DISC-04 shadow agents, 10e DISC-05 rogue agents, 10f DISC-06 live agent graph. Built via the superpowers workflow (spec -> per-slice plan -> subagent implement + two-stage adversarial review + fix + re-review).
+Status: Phases 1–5, 7, 8, 9, 10 complete; Phase 6 ~5/6 (OSS-01 first PyPI release the sole open item). Phase 11 not started.
+Last activity: 2026-08-18
 
-Progress: [████████████] 8/14 phases fully done (1–5, 7, 8, 9) + Phase 6 ~5/6
+Progress: [█████████████] 9/14 phases fully done (1–5, 7–10) + Phase 6 ~5/6
 
 ## Performance Metrics
 
@@ -107,6 +107,17 @@ Recent decisions affecting current work:
 - [Phase 8]: [8e] ABOM-02 component DIGEST (canonical-JSON sha256) is the load-bearing field — SEC-06 drift + SEC-08 known-bad both consume it. merge_components preserves provenance (unchanged keeps first_seen/version; drift bumps + dates). Raw Phase-5 put_abom path untouched (provenance form under a reserved key).
 - [Phase 8]: [8g] MCP gateway quarantine is STICKY — a rug-pull can't un-poison by serving a clean manifest; only operator release lifts it. Note: `(?m)` inline-flag mid-regex is illegal on Python 3.11+ — use `re.MULTILINE`.
 - [Phase 8]: [8h] SEC-14 is ambiguity-gated (runs only when the deterministic SEC-12 tag is None) and STRICTLY advisory — a probabilistic match becomes an inferred_intent label + advisory risk finding (0.5, sandbox-at-most), NEVER a deterministic policy floor. Follows the POL-04 interpreter precedent: offline HashingEmbedder default (honest lexical proxy, NOT semantic) + pluggable real adapter behind the Embedder Protocol.
+
+- [Phase 9]: [9a] `sandbox` is CONTAINMENT, not an approval path — see the operator-visible behavior change under Blockers.
+
+- [Phase 10]: [10a] INT-07 gateway = a reverse proxy in front of the model/tool endpoint, so an agent in ANY language/framework is governed with no SDK in its process. The governed target IS the forwarded target — resolved once, decided on, then sent — because a proxy that decides on one URL and forwards another has no enforcement at all, only a log.
+- [Phase 10]: [10a] The gateway reuses `governed_call` rather than re-implementing outcomes, so a new PEP form can never drift from the SDK's allow/deny/sandbox/consensus semantics. Upstream faults propagate OUT of the governed callable (the 502 is built outside it) so RUN-06 circuit breakers still see the failure they exist to count.
+- [Phase 10]: [10b] INT-08 = OpenAI Agents SDK adapter, governing the arguments the tool BODY receives (post-parse), not a pre-normalization copy — governing a different value than the one that executes is the same TOCTOU class as 10a's target bug.
+- [Phase 10]: [10b] INT-06 coverage registry became `dict[ActionType, set[str]]` — with two adapters, a single owner per action type would have silently overwritten one PEP's claim and hidden a real gap behind a green check.
+- [Phase 10]: [10c] DISC-03 detection resolves against INSTALLED distributions (`importlib.metadata`), never a stray import name — a false positive puts a framework in the operator's inventory that is not there, which is worse than silence.
+- [Phase 10]: [10d/10e] Discovery output is BOUNDED with visible overflow (`<overflow>`), because every input is attacker-controlled: shadow identities come from unregistered callers and rogue components from caller-supplied manifests. Silent truncation would read as "nothing more to see"; overflow says otherwise.
+- [Phase 10]: [10e] DISC-05 separates "never declared anything" from "declared and exceeded" via observed-class provenance — without it, every agent that has not published a manifest floods the finding stream on first contact and the signal drowns.
+- [Phase 10]: [10f] DISC-06 builds only from IDENTITY-VERIFIED actions and advances a watermark (incremental, not a full rescan). The read returns a subgraph that is bounded AND closed — an edge is admitted only while both endpoints fit the node budget, since a view containing edges to absent nodes is wrong, not partial. **Lineage is CLAIMED, not proven:** `identity_verified` authenticates who ACTED, not that `parent_action_id` names a real delegation; closing that half needs the TRST-04 authority cross-check (Phase 13).
 
 ### Pending Todos
 

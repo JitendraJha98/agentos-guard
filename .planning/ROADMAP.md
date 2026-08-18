@@ -31,7 +31,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 7: Trust, Reputation & Identity Hardening** - Longitudinal reputation, bounded delegation trust chains, agent certificates, and reconciliation loops (completed 2026-07-17)
 - [x] **Phase 8: Full Security Engine & MCP Gateway** - Data-exfil, secret-leakage, tool-poisoning, supply-chain, plus the ASI05/06/07 gap detectors and an MCP security gateway (completed 2026-07-17)
 - [x] **Phase 9: Runtime Containment & Consensus** - Sandbox execution, privilege rings, resource isolation, circuit breakers, emergency shutdown, and 2-of-3 multi-agent consensus
-- [ ] **Phase 10: Gateway PEP, Second Adapter & Live Graph** - Framework-agnostic gateway PEP, a second framework adapter, framework/shadow/rogue discovery, and the live agent graph
+- [x] **Phase 10: Gateway PEP, Second Adapter & Live Graph** - Framework-agnostic gateway PEP, a second framework adapter, framework/shadow/rogue discovery, and the live agent graph (completed 2026-08-18)
 - [ ] **Phase 11: Merkle Audit, Economics, ABOM & Compliance Export** - Merkle DAG audit upgrade, cost/budget governance, Agent Bill of Materials, and one-click EU AI Act + SOC 2 evidence export
 - [ ] **Phase 12: Continuous Adversarial Validation & Rich Dashboard** - Attack-success-rate tracking, scheduled continuous validation, multi-step campaigns, health monitoring, and the rich SLO/graph/attack dashboard
 - [ ] **Phase 13: Constitution Amendments & Conflict Reasoning** - Proposable/ratifiable Constitution amendments, cross-agent transitive-permission conflict resolution, and BFT-backed consensus
@@ -204,7 +204,13 @@ still dated 2026-06-10); do it before Phase 7 planning.
   1. A framework-agnostic network gateway/proxy PEP intercepts actions with no SDK changes, behind the same `evaluate(AgentAction) -> Decision` contract, and at least one additional framework adapter (e.g. CrewAI or OpenAI Agents SDK) intercepts actions.
   2. Framework discovery detects LangChain/LangGraph, CrewAI, AutoGen, OpenAI Agents SDK, MCP, etc.; shadow-agent detection flags agents acting without registration; rogue-agent detection flags agents diverging from declared scope.
   3. A live agent graph materializes agents/tools/MCP/models/memories and delegation edges, with lineage derived from `parent_action_id`.
-**Plans**: TBD
+**Plans**: 6 slices (superpowers workflow; spec `docs/superpowers/specs/2026-08-11-phase-10-gateway-adapter-graph-design.md`)
+- [x] 10a — gateway PEP (INT-07): a `agentos-gateway` reverse proxy that governs traffic with no SDK in the agent process, normalizing HTTP into the same `AgentAction` and enforcing through the one `governed_call` outcome map; the governed target is the forwarded target (no TOCTOU between what was decided and what was sent)
+- [x] 10b — OpenAI Agents SDK adapter (INT-08): a second real framework intercepted at the tool boundary, governing the arguments the tool body actually receives rather than a pre-normalization copy; INT-06 coverage becomes a set per action type so two adapters can both claim a type
+- [x] 10c — framework discovery (DISC-03): evidence-based detection from INSTALLED distributions (`importlib.metadata`), persisted + audited idempotently so a scheduled scan cannot bloat the chain — no guessing, so the inventory is true
+- [x] 10d — shadow agents (DISC-04): agents acting without registration, detected from audit evidence with a bounded, overflow-visible identity space so an unregistered caller cannot mint unbounded rows
+- [x] 10e — rogue agents (DISC-05): divergence from DECLARED scope, with observed-class provenance separating "never declared" from "declared and exceeded" so the finding stream stays true rather than flooding on first contact
+- [x] 10f — live agent graph (DISC-06): agents/tools/MCP/models/memories plus delegation edges from `parent_action_id`, built incrementally from a watermark over IDENTITY-VERIFIED actions only, and read back as a bounded AND closed subgraph (lineage is honestly labelled CLAIMED — the TRST-04 authority cross-check is Phase-13 work)
 
 ### Phase 11: Merkle Audit, Economics, ABOM & Compliance Export
 **Goal**: Upgrade audit to a Merkle DAG, govern cost/budget as policy through the existing graduated-response engine, and produce exportable EU AI Act + SOC 2 evidence bundles.

@@ -17,8 +17,8 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **INT-04** [P0]: MCP-server calls are intercepted and normalized into an `AgentAction`
 - [x] **INT-05** [P0]: Agent-to-agent delegation is intercepted and normalized into an `AgentAction` with `parent_action_id` lineage
 - [x] **INT-06** [P0]: An interception-coverage check verifies all five action types are hooked and detects un-instrumented paths (no silent gaps)
-- [ ] **INT-07** [P1]: A framework-agnostic network gateway/proxy PEP intercepts actions without SDK changes, behind the same pipeline contract
-- [ ] **INT-08** [P1]: At least one additional framework adapter (e.g. CrewAI or OpenAI Agents SDK) intercepts actions
+- [x] **INT-07** [P1]: A framework-agnostic network gateway/proxy PEP intercepts actions without SDK changes, behind the same pipeline contract
+- [x] **INT-08** [P1]: At least one additional framework adapter (e.g. CrewAI or OpenAI Agents SDK) intercepts actions
 - [ ] **INT-09** [P2]: A Kubernetes sidecar/operator PEP intercepts at the network layer behind the same contract
 
 ### Decision Pipeline
@@ -96,10 +96,10 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 - [x] **DISC-01** [P0]: Agents self-register via the SDK and appear in an authoritative agent inventory
 - [x] **DISC-02** [P0]: The inventory tracks known agents, tools, prompts, and memories
-- [ ] **DISC-03** [P1]: Framework discovery detects LangChain/LangGraph, CrewAI, AutoGen, OpenAI Agents SDK, MCP, etc.
-- [ ] **DISC-04** [P1]: Shadow-agent detection flags agents acting without registration
-- [ ] **DISC-05** [P1]: Rogue-agent detection flags agents diverging from declared scope
-- [ ] **DISC-06** [P1]: A live agent graph materializes agents/tools/MCP/models/memories and delegation edges; lineage derives from `parent_action_id`
+- [x] **DISC-03** [P1]: Framework discovery detects LangChain/LangGraph, CrewAI, AutoGen, OpenAI Agents SDK, MCP, etc.
+- [x] **DISC-04** [P1]: Shadow-agent detection flags agents acting without registration
+- [x] **DISC-05** [P1]: Rogue-agent detection flags agents diverging from declared scope
+- [x] **DISC-06** [P1]: A live agent graph materializes agents/tools/MCP/models/memories and delegation edges; lineage derives from `parent_action_id`
 
 ### Audit
 
@@ -226,8 +226,8 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | INT-04 | Phase 2 | Complete |
 | INT-05 | Phase 2 | Complete |
 | INT-06 | Phase 2 | Complete |
-| INT-07 | Phase 10 | Pending |
-| INT-08 | Phase 10 | Pending |
+| INT-07 | Phase 10 | Complete |
+| INT-08 | Phase 10 | Complete |
 | INT-09 | Phase 14 | Pending |
 | PIPE-01 | Phase 1 | Complete |
 | PIPE-02 | Phase 1 | Complete |
@@ -284,10 +284,10 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | TRST-05 | Phase 14 | Pending |
 | DISC-01 | Phase 5 | Complete |
 | DISC-02 | Phase 5 | Complete |
-| DISC-03 | Phase 10 | Pending |
-| DISC-04 | Phase 10 | Pending |
-| DISC-05 | Phase 10 | Pending |
-| DISC-06 | Phase 10 | Pending |
+| DISC-03 | Phase 10 | Complete |
+| DISC-04 | Phase 10 | Complete |
+| DISC-05 | Phase 10 | Complete |
+| DISC-06 | Phase 10 | Complete |
 | AUD-01 | Phase 1 | Complete |
 | AUD-02 | Phase 4 | Complete |
 | AUD-03 | Phase 4 | Complete |
