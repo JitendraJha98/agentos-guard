@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from agentos_controlplane.approvals import AlreadyResolvedError, ApprovalStore
 from agentos_controlplane.auth import make_require_token, resolve_api_token
 from agentos_controlplane.circuit_breaker import CircuitBreakerStore
+from agentos_controlplane.framework_discovery import FrameworkDetector
 from agentos_controlplane.inventory import InventoryStore
 from agentos_controlplane.killswitch import EmergencyActiveError, KillSwitchStore
 from agentos_controlplane.registry import Registry
@@ -360,8 +361,12 @@ def build_resource_router(resources: ResourceStore, known_bad: "KnownBad | None"
     return router
 
 
-def build_inventory_router(inventory: InventoryStore) -> APIRouter:
-    """DISC-01/02 — read API over the authoritative agent inventory."""
+def build_inventory_router(
+    inventory: InventoryStore, detector: FrameworkDetector | None = None
+) -> APIRouter:
+    """DISC-01/02 — read API over the authoritative agent inventory, plus the DISC-03 framework
+    inventory: a second collaborator on the SAME router rather than a new one, so the gated
+    read surface over "what is actually out there" stays one place."""
     router = APIRouter()
 
     @router.get("/inventory")
@@ -371,6 +376,13 @@ def build_inventory_router(inventory: InventoryStore) -> APIRouter:
     @router.get("/inventory/{agent_id}")
     def get_inventory(agent_id: str) -> list[dict]:
         return [vars(d) for d in inventory.get_inventory(agent_id)]
+
+    @router.get("/discovery/frameworks")
+    def list_frameworks() -> list[dict]:
+        """DISC-03 — the frameworks observed in this deployment."""
+        if detector is None:
+            raise HTTPException(status_code=404, detail="framework discovery is not wired")
+        return detector.list_frameworks()
 
     return router
 
@@ -408,6 +420,8 @@ def create_app(
     registry: Registry | None = None,
     session_factory=None,
     dashboard: bool = False,
+    # DISC-03: appended LAST so no existing positional caller shifts.
+    framework_detector: FrameworkDetector | None = None,
 ) -> FastAPI:
     # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
     # explicit arg -> AGENTOS_API_TOKEN env -> ephemeral random (logged) — never silently open.
@@ -424,8 +438,12 @@ def create_app(
         app.include_router(build_resource_router(resource_store), dependencies=guard)
     # DISC-01/02: the inventory read router rides the same gate; absent an inventory_store the
     # routes are not wired (GET /inventory -> 404), keeping existing create_app callers working.
+    # DISC-03: the framework-discovery read route rides this SAME router and gate; absent a
+    # framework_detector it answers 404 rather than opening an ungated surface.
     if inventory_store is not None:
-        app.include_router(build_inventory_router(inventory_store), dependencies=guard)
+        app.include_router(
+            build_inventory_router(inventory_store, framework_detector), dependencies=guard
+        )
     # RUN-06: the breaker router rides the same gate; absent a breaker_store the /circuit routes are
     # not wired (GET /circuit -> 404), keeping existing create_app callers working.
     if breaker_store is not None:
