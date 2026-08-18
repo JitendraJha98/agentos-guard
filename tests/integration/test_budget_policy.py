@@ -331,17 +331,37 @@ def test_a_serial_agent_overshoots_by_the_one_action_that_crossed_the_line(
 
 
 def test_everything_already_in_flight_crosses_the_line_together(pipeline_with_budget) -> None:
-    """The bound this design ACTUALLY provides, pinned where the serial case cannot see it.
+    """The bound this design ACTUALLY provides: overshoot is bounded by what is IN FLIGHT.
 
     The ledger moves only when a call RETURNS and its cost lands, so every action in flight when the
     line is crossed was gated on the same pre-crossing reading. An agent that fans out N parallel
     calls therefore overshoots by N costs, and N is the agent's choice — `asyncio.gather` walks
-    straight through a "bounded to one action" claim. Overshoot is bounded by what is in flight,
-    which is what the module docstring must say and what an operator sizes a limit against.
+    straight through a "bounded to one action" claim. That is what the module docstring says and what
+    an operator must size a limit against.
+
+    What this test does and does not discriminate, stated exactly, because the previous version
+    claimed more than it delivered. Asserting eight allows establishes nothing: starting under both
+    bands they are trivially true, and the arithmetic after them is just eight manual `note_spend`
+    calls. Replacing `gather` with a serial loop also changes nothing — and that is not a weakness,
+    it is the property: a snapshot ledger reads the same posture either way.
+
+    The discriminating assertion is on the READINGS. Eight gates, one distinct value. That fails
+    immediately against a RESERVATION-based ledger (one that debits at gate time rather than at
+    settle time), which is the alternative design this bound rules out — verified by mutating
+    `posture_for` to reserve as it reads, which turns this test red.
     """
     pipeline, ledger, tokens = pipeline_with_budget
     ledger.set_budget(AGENT_ID, limit_micro_usd=1_000_000)
     ledger.note_spend(AGENT_ID, 700_000)  # under the 5.2 band, so only the budget can move these
+    readings: list[float] = []
+    real_posture_for = ledger.posture_for
+
+    def _recording(agent_id: str):
+        posture = real_posture_for(agent_id)
+        readings.append(posture.budget_used_ratio)
+        return posture
+
+    ledger.posture_for = _recording
 
     async def _fan_out():
         actions = []
@@ -353,7 +373,10 @@ def test_everything_already_in_flight_crosses_the_line_together(pipeline_with_bu
 
     outcomes = [decision.outcome for decision in asyncio.run(_fan_out())]
 
-    assert outcomes == [Outcome.allow] * 8  # all eight read the SAME pre-crossing posture
+    assert outcomes == [Outcome.allow] * 8
+    assert len(readings) == 8, "every action must be gated on its own reading"
+    assert set(readings) == {0.7}, "all eight gated on the SAME pre-crossing posture"
+    del ledger.posture_for
     for _ in range(8):
         ledger.note_spend(AGENT_ID, 500_000)  # each cost $0.50, each landing after its own gate
 

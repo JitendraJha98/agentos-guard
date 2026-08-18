@@ -313,6 +313,13 @@ def test_the_window_rolls_over_in_memory_without_waiting_for_a_reconciler(store,
     monkeypatch.undo()  # the day turns over; nothing else happens
 
     assert ledger.posture_for("a1").budget_used_ratio == 0.0
+    # ...and the NEXT spend must start from zero, not re-admit yesterday. `note_spend` carries its
+    # own half of the rollover, and reading it through `posture_for` alone left that half untested:
+    # a mutant that dropped the window check there reported 5.1 instead of 0.1 here, so the agent
+    # would be over budget again on its second action of the day, every day.
+    ledger.note_spend("a1", 100_000)
+
+    assert ledger.posture_for("a1").budget_used_ratio == 0.1
 
 
 # --------------------------------------------------------- what the ledger refuses to carry
@@ -324,13 +331,20 @@ def test_the_ledger_tracks_only_the_agents_an_operator_budgeted(store) -> None:
     a full GROUP BY against the same database the AuditWriter appends to, computing a figure whose
     ratio is 0.0 either way. An unbudgeted agent's spend changes no decision, so it is not carried."""
     ledger = BudgetLedger(store)
+    # One budgeted agent ALONGSIDE the unbudgeted crowd. With no budgets at all the reload runs no
+    # query, so the `IN (budgeted)` restriction it is supposed to pin is never reached — the test
+    # passed with that clause deleted. A guard needs the shape a real deployment has: some budgets,
+    # a much larger fleet.
+    ledger.set_budget("budgeted", limit_micro_usd=10_000_000, period="day")
+    _seed_cost(store, "budgeted", 3_000_000)
     for i in range(50):
         _seed_cost(store, f"unbudgeted-{i}", 1_000_000)
         ledger.note_spend(f"unbudgeted-{i}", 1_000_000)
 
     ledger.reload()
 
-    assert ledger._spend == {}
+    assert set(ledger._spend) == {"budgeted"}, "reload must aggregate only the budgeted agents"
+    assert ledger.posture_for("budgeted").spend_usd == 3.0
     assert ledger.posture_for("unbudgeted-0") == CostPosture(spend_usd=0.0, budget_used_ratio=0.0)
 
 
