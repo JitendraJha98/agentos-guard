@@ -36,6 +36,7 @@ class names) instead of importing the control plane's RedactionError type.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone
@@ -194,6 +195,11 @@ class CircuitBreakerLookup(Protocol):
     async def record_failure(self, agent_id: str, target: str) -> None: ...
 
     async def record_success(self, agent_id: str, target: str) -> None: ...
+
+
+# DISC-04: how long a sighting may take before the deny returns without it. Observation is
+# best-effort; the deny is not, and the caller that triggers it is unauthenticated by definition.
+SHADOW_REPORT_TIMEOUT_S = 0.25
 
 
 class ShadowReporter(Protocol):
@@ -404,18 +410,34 @@ class Pipeline:
             # Audited even on deny — evidence exists before enforcement (PIPE-03/AUD-01).
             # A RedactionError retries payload-free HERE (the deny stands); any other
             # append failure falls to the outer fail-safe, which inherits the deny floor.
-            await self._append_with_redaction_fallback(action, decision)
-            # DISC-04: the deny already happened; record the sighting so an unregistered actor is
-            # VISIBLE rather than being one deny among thousands. Observation only — never a second
-            # deny path, and never allowed to break governance: a failure here must not turn a clean
-            # deny into a fail-safe, so it is swallowed rather than left to the outer handler.
-            if self._shadow is not None:
-                try:
-                    await self._shadow.record(action.agent_id, action.type.value)
-                except Exception:
-                    logging.getLogger(__name__).warning(
-                        "shadow-agent sighting not recorded for action %s", action.id
-                    )
+            try:
+                await self._append_with_redaction_fallback(action, decision)
+            finally:
+                # DISC-04: the deny already happened; record the sighting so an unregistered actor
+                # is VISIBLE rather than being one deny among thousands. Observation only — never a
+                # second deny path, and never allowed to break governance.
+                #
+                # In a `finally` because the append above can REFUSE this very action:
+                # `action.agent_id` is attacker-chosen and goes raw into the hash-covered decision
+                # body, so an id shaped like a credential trips the AUD-04 fail-closed gate. Left
+                # after a successful append, an attacker could name itself after a secret and
+                # thereby block its own sighting — and the shadow row is the one evidence channel
+                # that can survive a refused decision record. The decision record still goes FIRST.
+                #
+                # Bounded and swallowed: a failure here must not turn a clean deny into a fail-safe,
+                # and neither must a wedged store — the caller of an identity deny is by definition
+                # unauthenticated, so it must not be able to stall the deny path. `TimeoutError`
+                # is an `Exception`, so the same handler covers both.
+                if self._shadow is not None:
+                    try:
+                        await asyncio.wait_for(
+                            self._shadow.record(action.agent_id, action.type.value),
+                            timeout=SHADOW_REPORT_TIMEOUT_S,
+                        )
+                    except Exception:
+                        logging.getLogger(__name__).warning(
+                            "shadow-agent sighting not recorded for action %s", action.id
+                        )
             return decision  # TERMINAL — no later stages
         trust = ident.trust_score
         # OBS-03 cardinality guard: identity is now verified, so action.agent_id is a

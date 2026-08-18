@@ -45,7 +45,9 @@ ALLOWED_URL = "https://api.example.com/data"  # in the test constitution's egres
 class _Stack:
     """The pipeline and the app over ONE store and ONE ShadowAgentStore instance."""
 
-    def __init__(self, constitution_wasm, *, wire_shadow: bool = True) -> None:
+    def __init__(
+        self, constitution_wasm, *, wire_shadow: bool = True, max_rows: int = 1000
+    ) -> None:
         engine = create_engine(
             "sqlite+pysqlite:///:memory:",
             poolclass=StaticPool,
@@ -58,7 +60,9 @@ class _Stack:
         # ONE AuditWriter per store (the chain-head cache): the pipeline and the shadow store
         # share the same appender rather than opening a second one.
         audit = AuditWriter(self.store, signer=registry.identity)
-        self.shadow = ShadowAgentStore(self.store, audit) if wire_shadow else None
+        self.shadow = (
+            ShadowAgentStore(self.store, audit, max_rows=max_rows) if wire_shadow else None
+        )
         self.pipeline = Pipeline(
             identity=IdentityStage(registry.identity),
             policy=ConstitutionPolicyEngine(
@@ -167,6 +171,47 @@ def test_hostile_claimed_id_is_bounded_in_the_api_response(stack) -> None:
     rows = stack.sightings()
     assert len(rows) == 1
     assert len(rows[0]["claimed_agent_id"]) == 255
+    assert verify_chain(stack.store).ok
+
+
+@pytest.mark.parametrize(
+    "canary",
+    [
+        "AKIAIOSFODNN7EXAMPLE",
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r-wW1gFWFOEjXk",
+        "aB3xQ9zL7mK2pW5vT8nR4jY6hC1gF0dS",
+    ],
+)
+def test_a_credential_shaped_claimed_id_cannot_erase_itself(constitution_wasm, canary) -> None:
+    """The full attack over the REAL writer: `agent_id` goes raw into the hash-covered DECISION
+    body, so an id shaped like a credential trips AUD-04's fail-closed gate — and so does the
+    fail-safe's own record. Without the sighting the actor is denied and leaves NO evidence
+    anywhere. The shadow row is the one channel that survives a refused decision record, which is
+    exactly when it is worth having."""
+    stack = _Stack(constitution_wasm)
+
+    decision = stack.act(agent_id=canary, token=None)
+
+    assert decision.outcome is Outcome.deny
+    assert [r["claimed_agent_id"] for r in stack.sightings()] == [canary]
+    events = stack.shadow_events()
+    assert len(events) == 1
+    assert events[0]["claimed_agent_id"] == "<secret-like>"  # the chain carries the digest, not it
+    assert verify_chain(stack.store).ok
+
+
+def test_an_id_rotating_prober_cannot_grow_the_table_without_bound(constitution_wasm) -> None:
+    """The per-attempt cap bounds one id; the caller picks the id. Past the cap the sightings fold
+    into one `<overflow>` row, so the API response and the chain both stay finite."""
+    stack = _Stack(constitution_wasm, max_rows=3)
+
+    for i in range(12):
+        assert stack.act(agent_id=f"ghost-{i}", token=None).outcome is Outcome.deny
+
+    rows = stack.sightings()
+    assert len(rows) == 4  # 3 tracked ids + the bucket
+    assert len(stack.shadow_events()) == 4
+    assert [r["attempts"] for r in rows if r["claimed_agent_id"] == "<overflow>"] == [9]
     assert verify_chain(stack.store).ok
 
 

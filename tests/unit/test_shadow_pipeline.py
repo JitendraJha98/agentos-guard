@@ -6,9 +6,15 @@ VISIBLE — otherwise the probe is one deny among thousands. It is strictly OBSE
   * it runs only where identity ALREADY failed, so nothing is added to the allowed hot path;
   * it never becomes a second deny path and never appends a reason — the decision an operator sees
     is byte-for-byte the identity deny it was before;
-  * a reporter that RAISES must still yield that clean identity deny. Degrading a real enforcement
-    outcome into a fail-safe `control_plane_failure` because a *bookkeeping* call threw would let
-    observation weaken governance, which is exactly backwards.
+  * a reporter that RAISES — or one that HANGS — must still yield that clean identity deny.
+    Degrading a real enforcement outcome into a fail-safe `control_plane_failure` because a
+    *bookkeeping* call threw would let observation weaken governance, which is exactly backwards;
+    and so would letting a wedged store stall a deny that an unauthenticated caller triggers.
+
+The sighting is also reported when the DECISION record is REFUSED. The claimed id is embedded raw
+in the hash-covered decision body, so an id shaped like a credential trips the AUD-04 fail-closed
+gate — and the shadow row is then the ONLY evidence channel that can survive, which is precisely
+when it matters most.
 
 `shadow=None` (the default) leaves behaviour unchanged (backward compat).
 """
@@ -16,6 +22,7 @@ VISIBLE — otherwise the probe is one deny among thousands. It is strictly OBSE
 from __future__ import annotations
 
 import asyncio
+import time
 from uuid import UUID, uuid4
 
 from agentos_contract import ActionType, AgentAction, Outcome, RiskFinding
@@ -90,17 +97,35 @@ class FakeAuditWriter:
 
 class StubShadowReporter:
     """A structural ShadowReporter. `raises=True` models the store being down / the chain
-    refusing the append — the failure mode that must NOT reach the decision."""
+    refusing the append; `hangs_s` models a wedged DB connection — the two failure modes that must
+    NOT reach the decision."""
 
-    def __init__(self, raises: bool = False) -> None:
+    def __init__(self, raises: bool = False, hangs_s: float = 0.0) -> None:
         self.calls: list[tuple[str, str]] = []
         self._raises = raises
+        self._hangs_s = hangs_s
 
     async def record(self, claimed_agent_id: str, action_type: str) -> bool:
         self.calls.append((claimed_agent_id, action_type))
+        if self._hangs_s:
+            await asyncio.sleep(self._hangs_s)
         if self._raises:
             raise RuntimeError("shadow store unavailable")
         return True
+
+
+class SecretLeakError(Exception):
+    """Shaped like the audit writer's AUD-04 error (the runner detects it structurally, by class
+    name, so this stands in for the real one without importing the control plane)."""
+
+
+class RefusingAuditWriter(FakeAuditWriter):
+    """The AUD-04 gate refusing the DECISION record — what a claimed id shaped like a credential
+    does, since `action.agent_id` is embedded RAW in the hash-covered decision body."""
+
+    async def append(self, action: AgentAction, decision) -> UUID:
+        await super().append(action, decision)
+        raise SecretLeakError("secret-like content in audit body")
 
 
 def _action(agent_id: str = "ghost-agent", token: str | None = "forged") -> AgentAction:
@@ -224,6 +249,44 @@ def test_reporting_happens_after_the_deny_is_audited() -> None:
     asyncio.run(pipeline.evaluate(_action()))
 
     assert order == ["decision", "sighting"]
+
+
+def test_the_sighting_is_reported_even_when_the_decision_record_is_refused() -> None:
+    """A hostile id must not be able to block its OWN sighting. `action.agent_id` goes RAW into the
+    hash-covered decision body, so an id shaped like a credential (`AKIA…`, a JWT, an opaque
+    high-entropy token) trips the AUD-04 fail-closed gate. Reported only AFTER a successful append,
+    the sighting was never reached — the actor was denied and left NO evidence anywhere, which is
+    the exact attack the shadow row exists to defeat."""
+    reporter = StubShadowReporter()
+    canary = "AKIAIOSFODNN7EXAMPLE"
+    pipeline = Pipeline(
+        identity=FakeIdentityStage(ok=False, detail="unknown agent"),
+        policy=SpyPolicyEngine(),
+        scorers=[SpyScorer()],
+        audit=RefusingAuditWriter(),
+        shadow=reporter,
+    )
+
+    decision = asyncio.run(pipeline.evaluate(_action(agent_id=canary)))
+
+    assert reporter.calls == [(canary, "tool_call")]  # the sighting still landed
+    assert decision.outcome is Outcome.deny  # and the refused record still fails closed
+
+
+def test_a_hanging_reporter_cannot_stall_the_deny() -> None:
+    """Availability is the other way observation could degrade enforcement: a wedged DB connection
+    behind `record` would make an identity deny — triggered by a caller an attacker controls —
+    never return. The sighting is best-effort and bounded; the deny is not negotiable."""
+    reporter = StubShadowReporter(hangs_s=30.0)
+    pipeline, *_ = _build(identity_ok=False, shadow=reporter)
+
+    started = time.monotonic()
+    decision = asyncio.run(pipeline.evaluate(_action()))
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 5.0
+    assert decision.outcome is Outcome.deny
+    assert [r.code for r in decision.reasons] == ["forged_or_unknown_identity"]
 
 
 def test_claimed_id_is_passed_through_untouched_for_the_store_to_bound() -> None:

@@ -11,6 +11,10 @@ is what the tests below pin:
     operator reads it in a dashboard where a terminal escape would be a payload);
   * only the FIRST sighting is audited — a flood from one id must not let an unregistered caller
     grow the hash chain at will;
+  * the number of DISTINCT ids is capped too — per-attempt bounding alone leaves an id-rotating
+    prober one new row + one new chain record per probe;
+  * the ROW is keyed by the digest of the full raw id, so two attackers whose ids sanitize alike
+    are two rows with two events, not one;
   * the hash-covered audit body never carries the RAW id: it carries the bounded sanitized id plus
     a digest of the FULL raw string, so truncation cannot merge two attackers into one record and a
     secret-bearing id can never trip the AUD-04 gate and block its own evidence.
@@ -24,10 +28,12 @@ import re
 
 import pytest
 from sqlalchemy import create_engine, select
+from sqlalchemy.pool import StaticPool
 
 from agentos_controlplane.audit import AuditWriter
 from agentos_controlplane.audit_verify import verify_chain
 from agentos_controlplane.shadow import (
+    OVERFLOW_ID,
     ShadowAgentStore,
     claimed_id_digest,
     sanitize_claimed_id,
@@ -38,7 +44,13 @@ from agentos_controlplane.store.models import AuditRecord, ShadowAgent
 
 @pytest.fixture
 def store():
-    engine = create_engine("sqlite+pysqlite:///:memory:")
+    # StaticPool + check_same_thread=False: the store does its DB work in a worker thread
+    # (`asyncio.to_thread`), so the in-memory database must be the SAME one there.
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
     create_all(engine)
     return create_session_factory(engine)
 
@@ -60,13 +72,19 @@ def _events(store, kind: str = "shadow_agent_detected") -> list[dict]:
 def test_shadow_agent_row_round_trips(store) -> None:
     """The table exists and defaults a first sighting to one attempt."""
     with store() as s:
-        s.add(ShadowAgent(claimed_agent_id="ghost", action_type="tool_call"))
+        s.add(
+            ShadowAgent(
+                claimed_id_digest=claimed_id_digest("ghost"),
+                claimed_agent_id="ghost",
+                action_type="tool_call",
+            )
+        )
         s.commit()
 
     with store() as s:
-        row = s.get(ShadowAgent, "ghost")
+        row = s.get(ShadowAgent, claimed_id_digest("ghost"))
         assert row is not None
-        assert (row.action_type, row.attempts) == ("tool_call", 1)
+        assert (row.claimed_agent_id, row.action_type, row.attempts) == ("ghost", "tool_call", 1)
         assert row.first_seen_at is not None and row.last_seen_at is not None
 
 
@@ -97,8 +115,8 @@ def test_first_sighting_records_and_audits(store, shadow) -> None:
 
     assert first is True
     with store() as s:
-        row = s.get(ShadowAgent, "ghost")
-        assert (row.action_type, row.attempts) == ("tool_call", 1)
+        row = s.get(ShadowAgent, claimed_id_digest("ghost"))
+        assert (row.claimed_agent_id, row.action_type, row.attempts) == ("ghost", "tool_call", 1)
     bodies = _events(store)
     assert len(bodies) == 1
     assert bodies[0]["claimed_agent_id"] == "ghost"
@@ -116,7 +134,7 @@ def test_repeat_sightings_count_but_append_only_once(store, shadow) -> None:
         asyncio.run(shadow.record("ghost", "mcp_call"))
 
     with store() as s:
-        row = s.get(ShadowAgent, "ghost")
+        row = s.get(ShadowAgent, claimed_id_digest("ghost"))
         assert row.attempts == 22
         assert row.action_type == "mcp_call"  # the LATEST attempt's shape
     assert len(_events(store)) == 1  # still exactly one chain entry
@@ -151,16 +169,98 @@ def test_empty_claimed_id_aggregates_under_a_placeholder(store, shadow) -> None:
 
 
 def test_truncation_cannot_merge_two_attackers(store, shadow) -> None:
-    """Two DIFFERENT ids sharing the first 255 chars collapse to one ROW (bounded storage) but
-    must never collapse in the EVIDENCE: the digest covers the FULL raw string."""
+    """Two DIFFERENT ids sharing the first 255 chars are TWO rows and TWO events.
+
+    The row is keyed by the digest of the FULL raw id, not by the lossy display text. Keyed by
+    the display text they shared one row, and because only a first sighting is audited the second
+    attacker's digest never reached the chain at all — the digest defence was defeated by the very
+    collision it exists to survive.
+    """
     shared = "a" * 255
     asyncio.run(shadow.record(shared + "-attacker-one", "tool_call"))
     asyncio.run(shadow.record(shared + "-attacker-two", "tool_call"))
 
     digests = [b["claimed_id_digest"] for b in _events(store)]
-    assert len(digests) == 1  # same bounded row -> only the first sighting audited
-    assert digests[0] == claimed_id_digest(shared + "-attacker-one")
-    assert claimed_id_digest(shared + "-attacker-one") != claimed_id_digest(shared + "-attacker-two")
+    assert digests == [
+        claimed_id_digest(shared + "-attacker-one"),
+        claimed_id_digest(shared + "-attacker-two"),
+    ]
+    assert len(shadow.list_shadow_agents()) == 2
+
+
+def test_ids_that_sanitize_identically_stay_two_incidents(store, shadow) -> None:
+    """EVERY disallowed character maps to the same `?`, so a fleet with non-Latin agent ids (or an
+    attacker who knows that) would otherwise collapse into one indistinguishable row."""
+    for raw in ("агент", "エージェン", "中文测试啊", "!!!!!"):
+        asyncio.run(shadow.record(raw, "tool_call"))
+
+    rows = shadow.list_shadow_agents()
+    assert [r["claimed_agent_id"] for r in rows] == ["?????"] * 4  # same DISPLAY text
+    assert len({r["claimed_id_digest"] for r in rows}) == 4  # four distinct rows
+    assert len({b["claimed_id_digest"] for b in _events(store)}) == 4  # four distinct events
+
+
+def test_distinct_ids_are_capped_into_one_overflow_bucket(store, audit) -> None:
+    """The per-attempt cap bounds ONE id; nothing bounded the number of ids. An id-rotating prober
+    bought one new row AND one new tamper-evident chain record per probe — the same unbounded
+    growth the first-sighting rule exists to prevent, one dimension over."""
+    shadow = ShadowAgentStore(store, audit, max_rows=5)
+
+    for i in range(20):
+        asyncio.run(shadow.record(f"ghost-{i}", "tool_call"))
+
+    rows = shadow.list_shadow_agents()
+    assert len(rows) == 6  # 5 tracked ids + 1 bucket
+    assert len(_events(store)) == 6  # and the chain grew by exactly as much
+    overflow = [r for r in rows if r["claimed_agent_id"] == OVERFLOW_ID]
+    assert len(overflow) == 1
+    assert overflow[0]["attempts"] == 15  # the operator still sees HOW MUCH was folded away
+    assert verify_chain(store).ok
+
+
+def test_list_shadow_agents_is_bounded_at_the_query(store, audit) -> None:
+    """The route materializes every selected row into ONE JSON response, so the bound belongs on
+    the query too — not only on the write path that a pre-cap table never went through."""
+    shadow = ShadowAgentStore(store, audit, max_rows=5)
+    with store() as s:
+        for i in range(60):
+            s.add(
+                ShadowAgent(
+                    claimed_id_digest=f"{i:016x}",
+                    claimed_agent_id=f"ghost-{i}",
+                    action_type="tool_call",
+                )
+            )
+        s.commit()
+
+    assert len(shadow.list_shadow_agents()) == 6
+
+
+def test_a_refused_chain_append_leaves_no_row_and_is_retried(store, audit) -> None:
+    """The chain entry is written BEFORE the row (the 10c discipline). Committing the row first
+    meant one transient append failure marked the id as already-seen forever, so its
+    `shadow_agent_detected` event was NEVER written — silent evidence loss."""
+
+    class FlakyAudit:
+        def __init__(self, real) -> None:
+            self._real = real
+            self.fail_next = True
+
+        async def append_event(self, kind, body):
+            if self.fail_next:
+                self.fail_next = False
+                raise RuntimeError("chain unavailable")
+            return await self._real.append_event(kind, body)
+
+    shadow = ShadowAgentStore(store, FlakyAudit(audit))
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(shadow.record("ghost", "tool_call"))
+    assert shadow.list_shadow_agents() == []  # nothing claims the id was seen
+
+    assert asyncio.run(shadow.record("ghost", "tool_call")) is True  # still FIRST -> retried
+    assert len(_events(store)) == 1
+    assert shadow.list_shadow_agents()[0]["attempts"] == 1
 
 
 @pytest.mark.parametrize(
@@ -206,12 +306,55 @@ def test_list_shadow_agents_shape_and_ordering(store, shadow) -> None:
     assert [r["claimed_agent_id"] for r in rows] == ["second", "first"]  # newest sighting first
     assert set(rows[0]) == {
         "claimed_agent_id",
+        "claimed_id_digest",
         "action_type",
         "attempts",
         "first_seen_at",
         "last_seen_at",
     }
+    # The digest is what tells two rows apart when their display text collides.
+    assert rows[0]["claimed_id_digest"] == claimed_id_digest("second")
     assert rows[0]["first_seen_at"] and rows[0]["last_seen_at"]
+
+
+def test_concurrent_sightings_of_one_id_still_append_exactly_one_event(store, shadow) -> None:
+    """The first-sighting cap must survive CONCURRENCY, or it is not a cap: an attacker fires N
+    governed actions at once under one claimed id, every one of them reads "no row yet", and the
+    flood buys N chain records after all — the cap defeated by the very off-the-loop DB work that
+    keeps it from blocking enforcement."""
+
+    async def main() -> None:
+        await asyncio.gather(*(shadow.record("ghost", "tool_call") for _ in range(10)))
+
+    asyncio.run(main())
+
+    assert len(_events(store)) == 1
+    assert shadow.list_shadow_agents()[0]["attempts"] == 10
+
+
+def test_recording_does_not_block_the_event_loop(store, shadow) -> None:
+    """`record` is `async` but its DB work is SYNCHRONOUS. Run inline it holds the event loop for
+    the whole write, so an unauthenticated flood of unregistered actions queues every other
+    governed agent's decision behind attacker-driven writes — observation degrading enforcement by
+    availability rather than by exception."""
+
+    async def main() -> int:
+        ticks = 0
+
+        async def ticker() -> None:
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0)
+                ticks += 1
+
+        task = asyncio.create_task(ticker())
+        await asyncio.sleep(0)  # let the ticker reach its loop
+        before = ticks
+        await shadow.record("ghost", "tool_call")
+        task.cancel()
+        return ticks - before
+
+    assert asyncio.run(main()) > 0  # the loop kept running DURING the write
 
 
 def test_sanitize_and_digest_are_independent_of_each_other() -> None:

@@ -560,11 +560,17 @@ class ShadowAgent(Base):
     stored to give an operator something to recognise, never trusted — the action itself was
     already denied at stage 1 (IDN-02), and this row exists so a flood of such denies reads as one
     incident instead of vanishing into routine noise.
+
+    The KEY is `claimed_id_digest` (sha256 of the FULL raw id), not that display text: sanitizing
+    is lossy — every disallowed character maps to `?` and anything past 255 chars is dropped — so
+    keying by it would merge distinct attackers into one row. The store also uses the key for its
+    `<overflow>` bucket, which no real digest can collide with.
     """
 
     __tablename__ = "shadow_agent"
 
-    claimed_agent_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    claimed_id_digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    claimed_agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
     action_type: Mapped[str] = mapped_column(String(64), nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     first_seen_at: Mapped[datetime] = mapped_column(
