@@ -550,3 +550,26 @@ class DiscoveredFramework(Base):
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class ShadowAgent(Base):
+    """DISC-04 — an actor that ACTED without being registered.
+
+    `claimed_agent_id` is ATTACKER-CONTROLLED: it is whatever an unverified caller put in its
+    token, so it is bounded to 255 chars and sanitized before it ever reaches this row. It is
+    stored to give an operator something to recognise, never trusted — the action itself was
+    already denied at stage 1 (IDN-02), and this row exists so a flood of such denies reads as one
+    incident instead of vanishing into routine noise.
+    """
+
+    __tablename__ = "shadow_agent"
+
+    claimed_agent_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    action_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )

@@ -135,6 +135,10 @@ EVENT_KINDS = frozenset(
         "consensus_resolved",
         # DISC-03 (Slice 10c): a framework observed in this deployment. Short identifiers only.
         "framework_discovered",
+        # DISC-04 (Slice 10d): an unregistered actor was seen acting. The claimed id is
+        # attacker-controlled, so the body carries a BOUNDED, sanitized identifier + a digest —
+        # never the raw string, which could otherwise trip the AUD-04 gate and block the record.
+        "shadow_agent_detected",
     }
 )
 
