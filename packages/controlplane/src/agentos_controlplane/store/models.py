@@ -579,3 +579,28 @@ class ShadowAgent(Base):
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class RogueFinding(Base):
+    """DISC-05 — a REGISTERED agent used a component it never declared.
+
+    Advisory evidence, not a verdict: the manifest may simply be stale, so this records a
+    divergence for an operator to judge and adds no deny path. `resolved` lets that operator
+    acknowledge a finding without deleting the history the audit chain already carries.
+
+    UNIQUE on (agent_id, kind, name) so a scheduled sweep of an unchanged fleet writes nothing —
+    the idempotence that keeps a repeat scan from bloating the table or the hash chain is enforced
+    by the schema, not only by the detector's read-before-write.
+    """
+
+    __tablename__ = "rogue_finding"
+    __table_args__ = (UniqueConstraint("agent_id", "kind", "name", name="uq_rogue_finding"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)  # tool|memory|mcp|model|...
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    resolved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

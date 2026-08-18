@@ -139,6 +139,10 @@ EVENT_KINDS = frozenset(
         # attacker-controlled, so the body carries a BOUNDED, sanitized identifier + a digest —
         # never the raw string, which could otherwise trip the AUD-04 gate and block the record.
         "shadow_agent_detected",
+        # DISC-05 (Slice 10e): a REGISTERED agent used a component it never declared. Short
+        # identifiers only. ADVISORY — an observation, not a decision: the control plane surfaces
+        # the divergence and an operator decides, because a manifest can simply be stale.
+        "rogue_agent_detected",
     }
 )
 
