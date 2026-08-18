@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from agentos_controlplane.approvals import AlreadyResolvedError, ApprovalStore
 from agentos_controlplane.auth import make_require_token, resolve_api_token
 from agentos_controlplane.circuit_breaker import CircuitBreakerStore
+from agentos_controlplane.economics import CostRecorder
 from agentos_controlplane.framework_discovery import FrameworkDetector
 from agentos_controlplane.graph import AgentGraphStore
 from agentos_controlplane.inventory import InventoryStore
@@ -372,12 +373,13 @@ def build_inventory_router(
     rogue: RogueDetector | None = None,
     graph: AgentGraphStore | None = None,
     sealer: MerkleSealer | None = None,
+    cost: CostRecorder | None = None,
 ) -> APIRouter:
     """DISC-01/02 — read API over the authoritative agent inventory, plus the DISC-03 framework
     inventory, the DISC-04 shadow-agent sightings, the DISC-05 rogue-agent findings, the DISC-06
-    live agent graph and the AUD-06 sealed audit epochs: further collaborators on the SAME router
-    rather than new ones, so the gated read surface over "what is actually out there" — and what
-    actually happened — stays one place."""
+    live agent graph, the AUD-06 sealed audit epochs and the ECON-01 cost roll-up: further
+    collaborators on the SAME router rather than new ones, so the gated read surface over "what is
+    actually out there" — and what actually happened, and what it cost — stays one place."""
     router = APIRouter()
 
     @router.get("/inventory")
@@ -471,6 +473,25 @@ def build_inventory_router(
         except MerkleError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @router.get("/economics/costs")
+    def cost_totals() -> list[dict]:
+        """ECON-01 — per-agent cost roll-up. Gated: what an agent costs is commercial information.
+
+        Tokens and dollars are reported side by side with the count of actions each covers, because
+        the dollar sum omits every unpriced action and an operator reading it as the whole bill
+        would under-count exactly the models they have not supplied rates for.
+        """
+        if cost is None:
+            raise HTTPException(status_code=404, detail="cost attribution is not wired")
+        return cost.totals()
+
+    @router.get("/economics/costs/{agent_id}")
+    def cost_for_agent(agent_id: str) -> list[dict]:
+        """ECON-01 — the actions behind one agent's total (the per-ACTION half of the requirement)."""
+        if cost is None:
+            raise HTTPException(status_code=404, detail="cost attribution is not wired")
+        return cost.for_agent(agent_id)
+
     return router
 
 
@@ -517,6 +538,8 @@ def create_app(
     graph_store: AgentGraphStore | None = None,
     # AUD-06: likewise appended last.
     sealer: MerkleSealer | None = None,
+    # ECON-01: likewise appended last.
+    cost: CostRecorder | None = None,
 ) -> FastAPI:
     # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
     # explicit arg -> AGENTOS_API_TOKEN env -> ephemeral random (logged) — never silently open.
@@ -539,7 +562,8 @@ def create_app(
     # DISC-05's rogue-agent route likewise: which agents are outside their declared scope is not
     # public information either. DISC-06's graph route most of all — who talks to whom is a map of
     # the fleet's blast radius. AUD-06's disclosure route likewise: an operator chooses what to
-    # disclose and to whom, so the bundle is never a public endpoint.
+    # disclose and to whom, so the bundle is never a public endpoint. ECON-01's cost roll-up too:
+    # what an agent spends maps onto which workloads a deployment runs and how heavily.
     if inventory_store is not None:
         app.include_router(
             build_inventory_router(
@@ -549,6 +573,7 @@ def create_app(
                 rogue_detector,
                 graph_store,
                 sealer,
+                cost,
             ),
             dependencies=guard,
         )
