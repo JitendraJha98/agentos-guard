@@ -196,6 +196,17 @@ class CircuitBreakerLookup(Protocol):
     async def record_success(self, agent_id: str, target: str) -> None: ...
 
 
+class ShadowReporter(Protocol):
+    """DISC-04 seam: report an actor that acted WITHOUT being registered (ShadowAgentStore
+    satisfies it). Observation only — the identity stage has already denied the action; this
+    exists so the attempt is visible instead of being one deny among thousands.
+
+    It is handed the RAW claimed id: bounding, sanitizing and digesting belong to the store (one
+    place), and truncating here would destroy the full string its digest needs."""
+
+    async def record(self, claimed_agent_id: str, action_type: str) -> bool: ...
+
+
 class CardVerifierProtocol(Protocol):
     """The injected SEC-10/ASI07 seam (control-plane AgentCardVerifier satisfies it).
 
@@ -247,6 +258,7 @@ class Pipeline:
         intent_classifier: "IntentSimilarityClassifier | None" = None,
         privilege: "PrivilegeLookup | None" = None,
         breaker: "CircuitBreakerLookup | None" = None,
+        shadow: "ShadowReporter | None" = None,
     ) -> None:
         self._identity = identity
         self._policy = policy
@@ -292,6 +304,10 @@ class Pipeline:
         # RUN-06: the circuit-breaker lookup (in-memory, hot-path) AND the signal sink. None
         # default: stage 1f never runs, nothing is recorded, and behavior is unchanged.
         self._breaker = breaker
+        # DISC-04: the shadow-agent reporter, fed ONLY from the stage-1 identity short-circuit.
+        # None default: nothing is reported and behavior is unchanged (backward compat). It never
+        # runs on the allowed path — an unregistered actor is the only thing it ever sees.
+        self._shadow = shadow
         # RUN-04 x TRST-04: when BOTH are wired the ring must be chain-capped like trust, or a
         # ring-0 principal reaches a gated target through a ring-3 delegate. Auto-wired here so
         # that cannot depend on the operator remembering a second seam.
@@ -389,6 +405,17 @@ class Pipeline:
             # A RedactionError retries payload-free HERE (the deny stands); any other
             # append failure falls to the outer fail-safe, which inherits the deny floor.
             await self._append_with_redaction_fallback(action, decision)
+            # DISC-04: the deny already happened; record the sighting so an unregistered actor is
+            # VISIBLE rather than being one deny among thousands. Observation only — never a second
+            # deny path, and never allowed to break governance: a failure here must not turn a clean
+            # deny into a fail-safe, so it is swallowed rather than left to the outer handler.
+            if self._shadow is not None:
+                try:
+                    await self._shadow.record(action.agent_id, action.type.value)
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "shadow-agent sighting not recorded for action %s", action.id
+                    )
             return decision  # TERMINAL — no later stages
         trust = ident.trust_score
         # OBS-03 cardinality guard: identity is now verified, so action.agent_id is a
