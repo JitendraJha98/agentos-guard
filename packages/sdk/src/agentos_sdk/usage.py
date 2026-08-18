@@ -36,7 +36,24 @@ def _reported_by(obj: object) -> Usage | None:
     directly, which meant any tool or MCP result shaped like usage wrote the ledger: a `count_tokens`
     tool billed its own answer, and an attacker-influenced MCP response could post a negative row.
     A provider reports usage under `usage`/`usage_metadata`; a tool return value is not a provider.
+
+    Narrowing to a named holder was not enough on its own. A hostile result supplies
+    `{"usage": {...}, "response_metadata": {"model_name": "gpt-4o"}}` just as easily as a bare pair,
+    and `_model` then reads the served model off that same untrusted object — so the forged row came
+    out fully PRICED, with the operator's rate version pinned beside it, and rode into the
+    hash-chained `cost_recorded` event as evidence. Refusing negatives stopped budget EVASION but
+    left unbounded INFLATION: one prompt-injected MCP server could drain the budget of every agent
+    that called it, and post a fabricated dollar figure to any chargeback report.
+
+    So the container check below is the real boundary. Every shipped PEP path hands this seam a
+    TYPED object — `AIMessage`, `ModelResponse`, `agents.RunResult`, the gateway's mapped
+    `Response` — whereas JSON decoded from an untrusted tool or MCP service arrives as a plain
+    `dict` or `list`. Being a plain container is not proof of hostility, but it is proof that
+    nothing in this process vouched for the shape, and usage we cannot attribute to a provider is
+    not usage.
     """
+    if isinstance(obj, (dict, list, tuple, set, str, bytes, bytearray)):
+        return None
     for holder in (
         _field(obj, "usage_metadata"),  # LangChain AIMessage
         _field(obj, "usage"),  # OpenAI Agents RunResult / Anthropic Message / gateway mapper

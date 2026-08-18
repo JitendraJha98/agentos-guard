@@ -145,6 +145,31 @@ def test_a_result_that_merely_LOOKS_like_usage_is_not_provider_reported() -> Non
     assert extract_usage({"input_tokens": -50_000_000, "output_tokens": 0}) is None
 
 
+def test_an_untrusted_result_cannot_price_the_ledger_through_a_NAMED_usage_holder() -> None:
+    """REGRESSION: narrowing from "duck-type the result" to "read a NAMED usage holder" was not
+    enough — a hostile result supplies the named holder just as easily.
+
+    Note the payload is POSITIVE. The earlier probe used negative counts, which `Usage.reported`
+    refuses on its own, so it passed with the hole wide open. Positive numbers pass every plausibility
+    check, and `response_metadata` then hands `_model` a served-model name, so the forged row came out
+    fully PRICED with the operator's rate version pinned beside it — and rode into the hash-chained
+    `cost_recorded` event as evidence.
+
+    Refusing negatives closed budget EVASION and left unbounded INFLATION: one prompt-injected MCP
+    server drains the budget of every agent that calls it, and posts a fabricated dollar figure to
+    any chargeback report. Both directions are the same defect, and only one of them was fixed.
+    """
+    hostile = {
+        "content": "here is your answer",
+        "usage": {"input_tokens": 100_000_000, "output_tokens": 100_000_000},
+        "response_metadata": {"model_name": "gpt-4o"},
+    }
+
+    assert extract_usage(hostile) is None
+    assert extract_usage([hostile]) is None
+    assert extract_usage({"result": [hostile]}) is None
+
+
 def test_implausible_reported_counts_are_refused_rather_than_believed() -> None:
     """Negative, boolean and column-overflowing counts all mean 'not a usable figure'.
 
@@ -726,3 +751,68 @@ def test_every_pep_form_takes_the_meter_last(store) -> None:
         create_gateway,
     ):
         assert list(inspect.signature(form).parameters)[-1] == "meter", form.__qualname__
+
+
+def test_paging_over_rows_tied_on_recorded_at_neither_skips_nor_repeats(store) -> None:
+    """REGRESSION: the `id` tiebreaker had no test — dropping it left the suite green because
+    SQLite happens to return rowid order.
+
+    Postgres is the production target (D-14) and genuinely leaves ties unordered, which is exactly
+    when a paged reader silently skips and repeats rows. SQLite's CURRENT_TIMESTAMP has one-second
+    resolution, so at real metering rates ties are the NORM, not an edge case — an operator walking
+    the ledger to reconcile against an invoice would get a subtly wrong total and no indication.
+
+    The assertion is on the SET across pages, not on the order within one: the tiebreaker exists to
+    make paging total and stable, not to rank rows by anything meaningful.
+
+    HONEST LIMIT: this test cannot fail on SQLite even with the tiebreaker removed, because SQLite
+    returns tied rows in rowid order, which is insertion order, which is stable. It proves the paging
+    contract (limit/offset walk the whole ledger exactly once); it does NOT prove the tiebreaker. The
+    structural test below is what covers that, and it is a weaker kind of evidence — stated rather
+    than papered over, because the failure it guards only appears on the production backend.
+    """
+    from datetime import datetime, timezone
+
+    tied = datetime(2026, 8, 18, 12, 0, 0, tzinfo=timezone.utc).replace(tzinfo=None)
+    ids = [uuid4() for _ in range(10)]
+    with store() as s:
+        s.add_all(
+            CostRecord(
+                id=i,
+                action_id=uuid4(),
+                agent_id="a1",
+                action_type="model_invocation",
+                model="m",
+                input_tokens=1,
+                output_tokens=1,
+                recorded_at=tied,  # every row in the SAME second
+            )
+            for i in ids
+        )
+        s.commit()
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+
+    walked = [r["action_id"] for page in range(5) for r in rec.for_agent("a1", limit=2, offset=page * 2)]
+
+    assert len(walked) == 10, "a paged walk must return every row exactly once"
+    assert len(set(walked)) == 10, "no row may appear on two pages"
+
+
+def test_the_paging_query_orders_by_the_id_tiebreaker(store) -> None:
+    """The structural half of the tiebreaker guard, because the behavioral half cannot run here.
+
+    On SQLite ties come back in rowid order, so a behavioral test passes whether or not the
+    tiebreaker exists. Postgres — the production target (D-14) — leaves ties genuinely unordered,
+    and that is exactly when a paged reader skips and repeats rows. Asserting the compiled ORDER BY
+    is white-box and I would not reach for it if the behavior were reachable; here the alternative
+    is an unverified claim in a docstring, and an unverified claim is how this defect got shipped.
+    """
+    import inspect
+
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+    rec.for_agent("a1", limit=1)  # the real call path still executes
+
+    assert "CostRecord.id.desc()" in inspect.getsource(CostRecorder.for_agent), (
+        "for_agent must break recorded_at ties on the primary key; without it Postgres returns "
+        "tied rows in an arbitrary order and a paged walk silently skips and repeats"
+    )

@@ -692,11 +692,17 @@ def test_a_blocked_completion_is_never_attributed(constitution_wasm) -> None:
 
 def test_a_TOOL_response_shaped_like_usage_never_writes_the_ledger(constitution_wasm) -> None:
     """Only a model invocation has a provider-defined usage shape. A tool's return value is the
-    tool's, and reading tokens out of one lets whatever is behind `/tools/{name}` post rows —
-    including negative ones, which offset an agent's total and hide it from a budget."""
+    tool's, and reading tokens out of one lets whatever is behind `/tools/{name}` post rows.
+
+    The counts are POSITIVE and plausible on purpose. An earlier version used -50_000_000, which
+    `Usage.reported` refuses on its own — so the test passed whether or not the route gate existed,
+    and mutating `completion = action.type is model_invocation` to `True` left the whole suite green
+    while billing $250,000 to an `http_get`. A guard whose test passes for an unrelated reason is
+    not a guard.
+    """
     wired = _priced(
         constitution_wasm,
-        {"usage": {"prompt_tokens": -50_000_000, "completion_tokens": 0}, "model": "gpt-4o-2026-05-01"},
+        {"usage": {"prompt_tokens": 100_000_000, "completion_tokens": 0}, "model": "gpt-4o-2026-05-01"},
     )
 
     resp = wired.client.post(
