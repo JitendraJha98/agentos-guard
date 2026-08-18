@@ -14,7 +14,7 @@ correlator populates it.
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 from urllib.parse import urlsplit
 
 from agentos_contract import ActionType, AgentAction
@@ -35,7 +35,6 @@ def _host(action: AgentAction) -> str:
     return urlsplit(url).hostname or ""
 
 
-@runtime_checkable
 class CostPostureLike(Protocol):
     """ECON-02: the accumulated-spend reading, typed structurally so this package keeps its single
     internal dependency on `agentos-contract` and never imports the control plane. The concrete

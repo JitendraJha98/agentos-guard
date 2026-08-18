@@ -66,7 +66,10 @@ principles:
     # require_approval rather than deny: a hard stop on a budget boundary strands work that may be
     # one call from completing, with no way forward but an operator editing policy. Approval keeps a
     # human in the loop and records WHO authorized the overspend. An operator who wants a hard stop
-    # changes one word here — which is the point of expressing this as policy.
+    # changes one word here — which is the point of expressing this as policy. Note what that word
+    # also changes: POL-13 temporary exceptions apply only to a DENY floor, so `require_approval`
+    # here is unwaivable, while `deny` brings the budget floor within reach of a human-ratified
+    # exception. Both are consistent; the second is a different, deliberate trade.
     when: {field: cost.budget_used_ratio, op: gte, value: 1.0}
     remediation:
       - Raise the agent's budget, or approve this action explicitly.

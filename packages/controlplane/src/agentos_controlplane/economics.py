@@ -61,6 +61,13 @@ class PriceBook:
             raise ValueError(
                 f"price book version must be at most {_VERSION_MAX} characters; got {len(version)}"
             )
+        for model, rate in (rates or {}).items():
+            if rate[0] < 0 or rate[1] < 0:
+                # A negative rate is a typo with a governance consequence, not just a wrong bill:
+                # ECON-02's ledger sums these, so every priced action would REFUND budget and an
+                # agent would spend its way back under its limit. Refused at construction for the
+                # same reason as an over-long version — a startup error beats a silent one.
+                raise ValueError(f"price book rates must not be negative; {model!r} has {rate}")
         self._rates = dict(rates or {})
         self.version = version or "unset"
 

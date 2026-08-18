@@ -15,6 +15,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.exc import StaleDataError
 
 from agentos_controlplane.approvals import AlreadyResolvedError, ApprovalStore
 from agentos_controlplane.auth import make_require_token, resolve_api_token
@@ -539,7 +541,15 @@ def build_inventory_router(
             ) from exc
         if limit < 0 or period not in {"day", "month", "total"}:
             raise HTTPException(status_code=422, detail="invalid limit or period")
-        budget.set_budget(agent_id, limit_micro_usd=limit, period=period)
+        try:
+            budget.set_budget(agent_id, limit_micro_usd=limit, period=period)
+        except (StaleDataError, IntegrityError) as exc:
+            # 409, not 500 and not a silent overwrite: another operator moved this budget between
+            # our read and our write. The caller retries against the value that actually won —
+            # a lost raise is an agent that stays blocked, or keeps spending, for no logged reason.
+            raise HTTPException(
+                status_code=409, detail="budget changed concurrently; re-read and retry"
+            ) from exc
         return {"agent_id": agent_id, "limit_micro_usd": limit, "period": period}
 
     return router

@@ -324,6 +324,19 @@ def test_an_over_long_version_is_refused_at_startup_not_at_every_insert() -> Non
         PriceBook({"gpt-4o": (2.5, 10.0)}, version="2026-08-19-corrected-after-vendor-notice")
 
 
+def test_a_negative_rate_is_refused_because_it_would_refund_budget() -> None:
+    """A misplaced minus is the reachable path into ECON-02's ledger: negative costs SUM, so every
+    priced action would credit the agent and an agent already over its limit would spend its way
+    back under one. Caught where it is still a typo rather than where it is an unexplainable bill."""
+    with pytest.raises(ValueError, match="must not be negative"):
+        PriceBook({"gpt-4o": (-2.5, 10.0)}, version="2026-08")
+
+    with pytest.raises(ValueError, match="must not be negative"):
+        PriceBook({"gpt-4o": (2.5, -10.0)}, version="2026-08")
+
+    PriceBook({"free-tier": (0.0, 0.0)}, version="2026-08")  # a zero rate is a real, priced rate
+
+
 # --- recording: attribution + audit -------------------------------------------
 
 

@@ -13,6 +13,7 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.pool import StaticPool
 
 from agentos_contract import ActionType, AgentAction, Decision, Outcome, Reason, Usage
@@ -180,15 +181,39 @@ def test_setting_a_budget_makes_it_readable_with_the_spend_against_it(client) ->
 
 def test_the_read_route_reports_the_ratio_the_constitution_will_see(client, budget) -> None:
     """The number on the route and the number in the decision are the SAME reading — an operator who
-    cannot see what the principle will compare against cannot explain a budget block."""
+    cannot see what the principle will compare against cannot explain a budget block.
+
+    The $7.50 the `cost` fixture already COMMITTED for a1 is part of that reading. It used to read
+    as $0.00 here, because the ledger only ever held what this process had noted: /economics/costs
+    and /economics/budgets reported different money for the same agent with nothing to explain the
+    gap, and the decision path — reading the same empty cache — allowed for the same reason.
+    """
     client.put("/economics/budgets/a1", json={"limit_micro_usd": 4_000_000})
     budget.note_spend("a1", 3_000_000)
 
     row = client.get("/economics/budgets").json()[0]
 
-    assert row["spend_usd"] == 3.0
-    assert row["budget_used_ratio"] == pytest.approx(0.75)
+    assert row["spend_usd"] == 10.5  # $7.50 committed to cost_record + $3.00 noted in this process
+    assert row["budget_used_ratio"] == pytest.approx(2.625)
     assert row["budget_used_ratio"] == budget.posture_for("a1").budget_used_ratio
+
+
+def test_a_budget_write_that_lost_a_race_is_a_conflict_and_not_a_500(
+    client, budget, monkeypatch
+) -> None:
+    """`AgentBudget.version` is a `version_id_col`, so a raise that lost a race raises rather than
+    silently vanishing. The route has to turn that into the answer an operator can act on: 409 says
+    "re-read and retry", a 500 says "the control plane is broken" and invites neither."""
+
+    def _lost_the_race(*args, **kwargs):
+        raise StaleDataError("UPDATE expected to update 1 row(s); 0 were matched.")
+
+    monkeypatch.setattr(budget, "set_budget", _lost_the_race)
+
+    resp = client.put("/economics/budgets/a1", json={"limit_micro_usd": 9_000_000})
+
+    assert resp.status_code == 409
+    assert "retry" in resp.json()["detail"]
 
 
 def test_raising_a_budget_bumps_the_version(client) -> None:

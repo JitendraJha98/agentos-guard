@@ -33,7 +33,7 @@ POLICY_INPUT_FIELDS: dict[str, tuple[type, frozenset[str] | str]] = {
     # Phase 3. Added in lockstep with the builder (drift-locked by
     # test_builder_emits_exactly_the_registry_fields_for_every_type). Scoped "all" because a
     # runaway agent burns its budget through tool and MCP calls as readily as through the model.
-    "cost.spend_usd": (float, "all"),          # accumulated spend in the agent's budget window
+    "cost.spend_usd": (float, "all"),          # spend inside the agent's window; 0.0 if unbudgeted
     "cost.budget_used_ratio": (float, "all"),  # 0.0 when NO budget is configured (not a breach)
     "egress.host": (str, frozenset({"tool_call", "mcp_call"})),
     "memory.operation": (str, frozenset({"memory_access"})),

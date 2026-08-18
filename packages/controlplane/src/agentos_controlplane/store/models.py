@@ -789,7 +789,12 @@ class AgentBudget(Base):
 
     `version` counts assignments so an operator can see a limit was RAISED between two decisions:
     raising a budget is how an over-budget agent is unblocked, and a limit that changes with no
-    trace is the one an incident review cannot reconstruct.
+    trace is the one an incident review cannot reconstruct. It is SQLAlchemy's `version_id_col`, so
+    that trace is also a guard: every UPDATE is emitted as `... WHERE agent_id = :id AND
+    version = :current`, and a row already advanced by a concurrent writer matches zero rows ->
+    StaleDataError. Same reasoning as TrustProfile — an atomic SQL-level guard that survives the
+    Postgres target (distinct connections, READ COMMITTED), not a non-atomic Python read-then-write
+    in which one of two concurrent raises silently vanishes.
     """
 
     __tablename__ = "agent_budget"
@@ -801,3 +806,5 @@ class AgentBudget(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+    __mapper_args__ = {"version_id_col": version}
