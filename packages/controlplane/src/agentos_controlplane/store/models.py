@@ -353,9 +353,10 @@ class Abom(Base):
 
 class InventoryComponent(Base):
     """DISC-01/02 — an authoritative inventory row: one component (a tool/prompt/memory/etc.) tied to
-    an agent. `source` is 'declared' (registration manifest, authoritative) or 'observed' (reconciled
-    from activity). Unique on (agent_id, kind, name) so declare+observe of the same component
-    reconcile into ONE row."""
+    an agent. `source` is 'declared' (registration manifest, authoritative), 'observed' (this exact
+    component was used) or 'observed_class' (the class-level placeholder `enrich_from_audit` writes,
+    where name == kind, because the audit body omits the per-action target). Unique on (agent_id,
+    kind, name) so declare+observe of the same component reconcile into ONE row."""
 
     __tablename__ = "inventory_component"
     __table_args__ = (UniqueConstraint("agent_id", "kind", "name", name="uq_inventory_component"),)
@@ -591,6 +592,12 @@ class RogueFinding(Base):
     UNIQUE on (agent_id, kind, name) so a scheduled sweep of an unchanged fleet writes nothing —
     the idempotence that keeps a repeat scan from bloating the table or the hash chain is enforced
     by the schema, not only by the detector's read-before-write.
+
+    An agent names its own components, so `agent_id`/`kind`/`name` are caller text: the detector
+    bounds and sanitizes them to these widths BEFORE they reach the row (SQLite does not enforce
+    String(n), and on Postgres an over-long value would fail the INSERT and abort the sweep), and a
+    value it had to alter carries a digest of the original so two components cannot merge into one
+    finding.
     """
 
     __tablename__ = "rogue_finding"

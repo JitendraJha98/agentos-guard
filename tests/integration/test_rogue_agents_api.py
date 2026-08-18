@@ -25,7 +25,8 @@ from agentos_controlplane.api import create_app
 from agentos_controlplane.approvals import ApprovalStore
 from agentos_controlplane.audit import AuditWriter
 from agentos_controlplane.audit_verify import verify_chain
-from agentos_controlplane.inventory import InventoryStore
+from agentos_controlplane.inventory import OBSERVED_CLASS, InventoryStore
+from agentos_controlplane.reconcile import GraphReconciler
 from agentos_controlplane.registry import Registry
 from agentos_controlplane.rogue import RogueDetector
 from agentos_controlplane.store.engine import create_all, create_session_factory
@@ -136,6 +137,31 @@ def test_undeclared_component_is_flagged_and_declared_one_is_not(stack) -> None:
     ]
     assert "http_get" not in {r["name"] for r in rows}
     assert len(stack.rogue_events()) == 1
+    assert verify_chain(stack.store).ok
+
+
+def test_the_real_observation_path_does_not_flag_a_compliant_agent(stack) -> None:
+    """The false positive this whole feature lives or dies on, driven by the REAL writer.
+
+    Every other test here seeds the inventory with `observe(agent, 'tool', 'http_get')` — per-tool
+    fidelity that NO production path emits. The only production writer is
+    `GraphReconciler.reconcile()` -> `InventoryStore.enrich_from_audit()`, and because the audit
+    body omits the per-action target it records a CLASS-level placeholder ('tool','tool'). Compared
+    against the manifest's per-tool names it can never reconcile, so a fully compliant agent making
+    exactly one governed call produced a `rogue_finding` row and a permanent chain record.
+    """
+    assert stack.act(agent_id=AGENT_ID, token=stack.token, target="http_get").outcome is (
+        Outcome.allow
+    )
+
+    assert GraphReconciler(stack.inventory).reconcile() >= 1
+    observed = {(c.kind, c.name, c.source) for c in stack.inventory.get_inventory(AGENT_ID)}
+    assert ("tool", "tool", OBSERVED_CLASS) in observed  # the class-level row really was written
+    assert ("tool", "http_get", "declared") in observed  # ...alongside the manifest's own row
+
+    assert asyncio.run(stack.detector.scan()) == []
+    assert stack.findings() == []
+    assert stack.rogue_events() == []
     assert verify_chain(stack.store).ok
 
 

@@ -11,6 +11,13 @@ action_type + a redacted payload only — see audit.py), so `enrich_from_audit` 
 CAPABILITY-CLASS level (tool/memory/mcp/model/delegation, one row per agent per class) and skips
 event records (their body carries a "kind"). The `observe()` seam itself is full-fidelity — precise
 per-tool observation is wired in Slice 5d where the SDK still holds the full AgentAction.
+
+That difference in FIDELITY is recorded, not left implicit: a class-level row is `observed_class`,
+a full-fidelity one is `observed`. They are not comparable to a manifest in the same way — a
+class-level row is named after its class ("tool"), which can never equal a manifest's per-tool name
+("http_get"), so treating the two as one source made DISC-05 flag every declaring agent in the
+fleet for doing exactly what it declared. Precedence is declared > observed > observed_class and a
+row is never downgraded, so the placeholder cannot mask a later, genuine sighting either.
 """
 
 from __future__ import annotations
@@ -21,6 +28,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from agentos_controlplane.store.models import AuditRecord, InventoryComponent
+
+# `source` values, in PRECEDENCE order (see `_upsert` — a row is never downgraded):
+DECLARED = "declared"  # the registration manifest — authoritative
+OBSERVED = "observed"  # full fidelity: THIS component was used
+OBSERVED_CLASS = "observed_class"  # class-level placeholder (name == kind), see the module docstring
+_RANK = {OBSERVED_CLASS: 0, OBSERVED: 1, DECLARED: 2}
 
 # action_type -> inventory capability class (audit body omits per-action target -> class-level).
 _KIND_BY_ACTION = {
@@ -55,14 +68,14 @@ class InventoryStore:
         )
         with self._sf() as s:
             for kind, name in items:
-                self._upsert(s, agent_id, kind, name, source="declared")
+                self._upsert(s, agent_id, kind, name, source=DECLARED)
             s.commit()
 
     def observe(self, agent_id: str, kind: str, name: str) -> None:
-        """Upsert an observed row; reconcile with a declared row of the same key (declared wins;
-        last_seen_at always bumped)."""
+        """Upsert a FULL-FIDELITY observed row (this exact component was used); reconcile with a
+        declared row of the same key (declared wins; last_seen_at always bumped)."""
         with self._sf() as s:
-            self._upsert(s, agent_id, kind, name, source="observed")
+            self._upsert(s, agent_id, kind, name, source=OBSERVED)
             s.commit()
 
     def enrich_from_audit(self, audit_session_factory: sessionmaker[Session] | None = None) -> int:
@@ -81,8 +94,18 @@ class InventoryStore:
                 klass = _KIND_BY_ACTION.get(body.get("action_type"))
                 if agent_id and klass:
                     seen.append((agent_id, klass))
-        for agent_id, klass in seen:
-            self.observe(agent_id, klass, klass)  # class-level name
+        with self._sf() as s:
+            # `seen` holds one entry per RECORD, so it repeats a (agent, class) pair as often as
+            # the agent acted; the ROW is the same one. Deduped here rather than left to the
+            # session's autoflush, so a second insert of the same key can never reach the unique
+            # constraint.
+            for agent_id, klass in dict.fromkeys(seen):
+                # Class-level NAME and class-level SOURCE: the row says "this agent used a tool",
+                # not "this agent used http_get". Marked `observed_class` so a consumer comparing
+                # against a manifest (DISC-05) cannot mistake the placeholder for evidence that an
+                # undeclared component was used.
+                self._upsert(s, agent_id, klass, klass, source=OBSERVED_CLASS)
+            s.commit()
         return len(seen)
 
     def list_inventory(self) -> list[ComponentData]:
@@ -115,9 +138,10 @@ class InventoryStore:
         if row is None:
             s.add(InventoryComponent(agent_id=agent_id, kind=kind, name=name, source=source))
             return
-        # declared is authoritative: never downgrade declared -> observed; always bump last_seen.
-        if source == "declared":
-            row.source = "declared"
+        # Never downgrade: declared (the manifest) beats a full-fidelity observation, which beats
+        # the class-level placeholder. Always bump last_seen.
+        if _RANK[source] > _RANK.get(row.source, -1):
+            row.source = source
         row.last_seen_at = func.now()
 
     @staticmethod
