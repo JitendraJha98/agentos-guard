@@ -9,11 +9,11 @@ store, not here, so every writer is audited identically.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
@@ -34,7 +34,14 @@ from agentos_controlplane.resources import ConstitutionError, ResourceStore, Ver
 from agentos_controlplane.rogue import RogueDetector
 from agentos_controlplane.shadow import ShadowAgentStore
 from agentos_controlplane.supply_chain import KnownBad, SupplyChainChecker
+from agentos_controlplane.validation import ValidationStore
 from agentos_controlplane.store.models import ApprovalRequest, GovernanceReview
+
+# TEST-07: the longest `days` window the trend route accepts. Not a tidiness bound —
+# `datetime.now() - timedelta(days=999999999)` raises OverflowError, so an unbounded `days` turns
+# one query parameter into a 500 on a gated operator route. Ten years is past any plausible
+# retention, so anything beyond it is a typo rather than a question.
+_MAX_WINDOW_DAYS = 3650
 
 
 class ResolveRequest(BaseModel):
@@ -381,6 +388,8 @@ def build_inventory_router(
     budget: BudgetLedger | None = None,
     # CMP-06: appended last, like every collaborator before it.
     session_factory=None,
+    # TEST-07: likewise appended last.
+    validation: ValidationStore | None = None,
 ) -> APIRouter:
     """DISC-01/02 — read API over the authoritative agent inventory, plus the DISC-03 framework
     inventory, the DISC-04 shadow-agent sightings, the DISC-05 rogue-agent findings, the DISC-06
@@ -624,6 +633,43 @@ def build_inventory_router(
             ) from exc
         return {"agent_id": agent_id, "limit_micro_usd": limit, "period": period}
 
+    @router.get("/validation/trend")
+    def validation_trend(
+        agent_id: str | None = None,
+        days: int | None = Query(default=None, ge=1, le=_MAX_WINDOW_DAYS),
+    ) -> list[dict]:
+        """TEST-07 — attack-success-rate per agent and attack class, over a window.
+
+        Gated: how well an agent's guard is holding, broken down by attack class, is a map of where
+        to attack it. A read-only route over what the EVALUATE-ONLY harness already produced — it
+        starts no run and executes no attack payload (spec D-1).
+
+        Every row carries `total` and `runs` beside the rate, because this is the surface a
+        dashboard reads and a dashboard is exactly where a rate gets plotted without its
+        denominator. An `attack_success_rate` of null means the window contained runs that tested
+        nothing; it is not a zero.
+
+        `days` is validated rather than coerced. A negative window would put `since` in the FUTURE
+        and answer 200 with an empty trend — indistinguishable from "this guard has never been
+        validated" — and an unbounded one raises OverflowError building the timedelta. Both are 422:
+        a window that means something other than what was asked for is worse than a refusal.
+        """
+        if validation is None:
+            raise HTTPException(status_code=404, detail="validation tracking is not wired")
+        since = None if days is None else datetime.now(timezone.utc) - timedelta(days=days)
+        return validation.trend(agent_id=agent_id, since=since)
+
+    @router.get("/validation/runs/{agent_id}")
+    def validation_runs(agent_id: str) -> list[dict]:
+        """TEST-07 — the runs behind one agent's trend, newest first, with the attacks that slipped.
+
+        The diagnosis half: a trend that moves tells an operator something broke, and only the run
+        and its attack ids tell them what. Identifiers and counts only — never an attack payload.
+        """
+        if validation is None:
+            raise HTTPException(status_code=404, detail="validation tracking is not wired")
+        return validation.runs_for(agent_id)
+
     return router
 
 
@@ -676,6 +722,8 @@ def create_app(
     cost: CostRecorder | None = None,
     # ECON-02: likewise appended last.
     budget: BudgetLedger | None = None,
+    # TEST-07: likewise appended last.
+    validation: ValidationStore | None = None,
 ) -> FastAPI:
     # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
     # explicit arg -> AGENTOS_API_TOKEN env -> ephemeral random (logged) — never silently open.
@@ -703,7 +751,9 @@ def create_app(
     # budget routes need the gate most of all — they WRITE, and raising a budget is how an
     # over-budget agent is unblocked, so an ungated one would be a governance bypass. CMP-06's
     # export is the same call as AUD-06's disclosure taken in bulk: a curated statement of who did
-    # what, addressed to one recipient the operator chose.
+    # what, addressed to one recipient the operator chose. TEST-07's validation trend belongs here
+    # for the same reason as DISC-06's graph: how well an agent's guard is holding, per attack
+    # class, is a map of where to attack it.
     if inventory_store is not None:
         app.include_router(
             build_inventory_router(
@@ -716,6 +766,7 @@ def create_app(
                 cost,
                 budget,
                 session_factory,
+                validation,
             ),
             dependencies=guard,
         )
