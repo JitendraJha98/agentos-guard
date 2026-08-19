@@ -13,6 +13,11 @@ compliance claim is worse than no claim."""
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+
+# Rows per round trip while streaming the audit log for SOC 2 counts — memory bound, not a result
+# bound (the count itself is never clipped).
+_SCAN_CHUNK = 1000
 
 # OWASP Top 10 for Agentic Applications (2026)
 OWASP_AGENTIC = {
@@ -91,6 +96,72 @@ RISK_CLASSIFICATION_SOURCE = (
     "operator-declared, never inferred; 'undeclared' means no operator has declared one for this "
     "agent's deployment, not that it is low risk"
 )
+
+
+# SOC 2 = AICPA Trust Services Criteria (TSP section 100, 2017 criteria). Family names and point
+# references verified 2026-08-19 against the TSP section 100 text itself. Only points the cited
+# records actually bear on are listed: CC6.2 (registering and authorizing users before issuing
+# credentials) is deliberately absent because agent enrollment and certificate issuance are not
+# written as audit EVENTS, and citing a point nothing here evidences is the same failure as citing
+# an event kind nothing writes.
+#
+# Each criterion names the AUDIT EVIDENCE we can actually produce: event kinds and decision outcomes
+# already written by the shipped pipeline. NOTHING HERE ASSERTS A CONTROL EXISTS — the numbers come
+# from the log or they are zero, and a zero is reported as a zero.
+#
+# A record may back more than one criterion (a privilege-ring assignment is both an access
+# authorization and a configuration change), so the per-criterion totals are not a partition of the
+# log and do not sum to it.
+SOC2_CRITERIA: dict[str, dict] = {
+    "CC6": {
+        "name": "Logical and Physical Access Controls",
+        "criteria": ("CC6.1", "CC6.3"),
+        "evidence": (
+            "privilege-ring assignments, human authorization rulings, time-boxed exceptions, "
+            "multi-party consensus, and the per-action decisions that refused or gated access"
+        ),
+        "event_kinds": (
+            "privilege_ring_set",
+            "approval_resolved",
+            "approval_timed_out",
+            "exception_granted",
+            "consensus_resolved",
+        ),
+        "outcomes": ("deny", "require_approval"),
+    },
+    "CC7": {
+        "name": "System Operations",
+        "criteria": ("CC7.2", "CC7.4"),
+        "evidence": (
+            "anomaly detections (shadow/rogue agents, resource-budget breaches) and the "
+            "containment actions taken in response (sandboxing, breakers, kill switches, "
+            "fleet-wide emergency stop and its explicit resume)"
+        ),
+        "event_kinds": (
+            "shadow_agent_detected",
+            "rogue_agent_detected",
+            "resource_limit_exceeded",
+            "sandbox_executed",
+            "circuit_tripped",
+            "circuit_reset",
+            "kill_switch_set",
+            "kill_switch_cleared",
+            "emergency_shutdown",
+            "emergency_resume",
+        ),
+        "outcomes": (),
+    },
+    "CC8": {
+        "name": "Change Management",
+        "criteria": ("CC8.1",),
+        "evidence": (
+            "operator changes to enforcement configuration — privilege-ring assignments and "
+            "resource budgets — each audited with the operator who made it"
+        ),
+        "event_kinds": ("privilege_ring_set", "resource_limit_set"),
+        "outcomes": (),
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -384,6 +455,89 @@ LIVE_DETECTOR_CONTROLS = frozenset(
         "MemoryPoisoningScorer",
     }
 )
+
+
+def _as_utc_naive(moment: datetime | None) -> datetime | None:
+    """A range bound in the form the audit column stores.
+
+    `audit_record.created_at` is filled by the server's `now()` and read back UTC-naive on the
+    SQLite backend, so an aware bound is CONVERTED to UTC (never truncated — a caller in UTC+14
+    asking for "yesterday" must not have its offset dropped) and a naive bound is taken as already
+    UTC. Reading a naive bound as local time would shift every operator's window by their own
+    offset and silently change the counts an auditor reads."""
+    if moment is None or moment.tzinfo is None:
+        return moment
+    return moment.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def derive_soc2_evidence(session_factory, start=None, end=None) -> dict:
+    """CMP-05 — count the audit evidence backing each Trust Services criterion over a time range.
+
+    DERIVED, NOT ASSERTED: every number comes from the log. A zero means the log contains no such
+    record in this window, which is itself evidence — of a quiet period, or of a control that never
+    fired — and an auditor is entitled to tell those apart from the range and the totals. So every
+    criterion is returned even when all its counts are zero: omitting it would read as "not
+    applicable", which is a different claim.
+
+    Two kinds of record are counted. Lifecycle EVENTS carry a `kind`; per-action DECISIONS carry an
+    `outcome` and no kind, and are the access-control evidence with by far the most volume. The
+    presence of `kind` is the discriminator, so an event body that happens to mention an outcome is
+    still counted as the event it is.
+
+    The scan is deliberately UNBOUNDED over the range. Every other bulk read in this codebase is
+    capped, because a clipped page is still a usable page — here a clipped count is a WRONG count,
+    reported to someone who cannot see that it was clipped. `yield_per` keeps the memory bounded
+    instead. `end` is inclusive.
+    """
+    from sqlalchemy import select
+
+    from agentos_controlplane.store.models import AuditRecord
+
+    counts = {
+        name: dict.fromkeys(criterion["event_kinds"] + criterion["outcomes"], 0)
+        for name, criterion in SOC2_CRITERIA.items()
+    }
+    by_kind: dict[str, list[str]] = {}
+    by_outcome: dict[str, list[str]] = {}
+    for name, criterion in SOC2_CRITERIA.items():
+        for kind in criterion["event_kinds"]:
+            by_kind.setdefault(kind, []).append(name)
+        for outcome in criterion["outcomes"]:
+            by_outcome.setdefault(outcome, []).append(name)
+
+    stmt = select(AuditRecord.body)
+    if start is not None:
+        stmt = stmt.where(AuditRecord.created_at >= _as_utc_naive(start))
+    if end is not None:
+        stmt = stmt.where(AuditRecord.created_at <= _as_utc_naive(end))
+    with session_factory() as s:
+        for (body,) in s.execute(stmt).yield_per(_SCAN_CHUNK):
+            body = body or {}
+            key = body.get("kind")
+            criteria = by_kind.get(key) if key is not None else None
+            if key is None:
+                key = body.get("outcome")
+                criteria = by_outcome.get(key) if key is not None else None
+            for name in criteria or ():
+                counts[name][key] += 1
+
+    window = {
+        "start": start.isoformat() if start is not None else None,
+        "end": end.isoformat() if end is not None else None,
+    }
+    return {
+        name: {
+            "name": criterion["name"],
+            "criteria": list(criterion["criteria"]),
+            "evidence": criterion["evidence"],
+            "event_kinds": list(criterion["event_kinds"]),
+            "outcomes": list(criterion["outcomes"]),
+            "counts": counts[name],
+            "total": sum(counts[name].values()),
+            "range": window,
+        }
+        for name, criterion in SOC2_CRITERIA.items()
+    }
 
 
 def _eu_article_entry(article: str, name: str) -> dict:
