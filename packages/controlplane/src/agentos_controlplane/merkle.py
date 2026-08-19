@@ -99,6 +99,32 @@ def merkle_root(leaves: list[str]) -> str:
     return _levels(leaves)[-1][0]
 
 
+def inclusion_proofs(leaves: list[str], indices) -> dict[int, Proof]:
+    """Proofs for SEVERAL leaves of one tree, keyed by index, building the tree exactly once.
+
+    `inclusion_proof` rebuilds every level per call, which is right for one disclosure and wrong for
+    an evidence export: CMP-06 emits a proof for every disclosed record, so 5000 records against a
+    100k-leaf epoch would be 5x10^8 leaf hashes and turn a one-click export into an hours-long one.
+    The tree is identical for every index, so it is built once and walked per index.
+    """
+    levels = _levels(leaves)
+    proofs: dict[int, Proof] = {}
+    for index in indices:
+        if not 0 <= index < len(leaves):
+            raise MerkleError(f"index {index} out of range for {len(leaves)} leaves")
+        proof: Proof = []
+        position = index
+        for level in levels[:-1]:
+            if position % 2:
+                proof.append(("left", level[position - 1]))
+            elif position + 1 < len(level):
+                proof.append(("right", level[position + 1]))
+            # else: promoted node — it has no sibling at this level, so it contributes nothing
+            position //= 2
+        proofs[index] = proof
+    return proofs
+
+
 def inclusion_proof(leaves: list[str], index: int) -> Proof:
     """The sibling path proving `leaves[index]` is in the tree: [(side, hash), ...] bottom-up,
     where `side` is where the SIBLING sits relative to the running hash.
@@ -106,18 +132,11 @@ def inclusion_proof(leaves: list[str], index: int) -> Proof:
     A promoted node contributes NO entry at its level — it has no sibling there — which is why the
     path can be shorter than the tree is tall, and why the verifier has to climb rather than assume
     one entry per level.
+
+    Delegates to the batch form rather than repeating the walk: two implementations of one path
+    shape is how a proof and its verifier drift apart.
     """
-    if not 0 <= index < len(leaves):
-        raise MerkleError(f"index {index} out of range for {len(leaves)} leaves")
-    proof: Proof = []
-    for level in _levels(leaves)[:-1]:
-        if index % 2:
-            proof.append(("left", level[index - 1]))
-        elif index + 1 < len(level):
-            proof.append(("right", level[index + 1]))
-        # else: promoted node — it has no sibling at this level, so it contributes nothing
-        index //= 2
-    return proof
+    return inclusion_proofs(leaves, (index,))[index]
 
 
 def verify_inclusion(

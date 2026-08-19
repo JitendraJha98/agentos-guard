@@ -20,6 +20,7 @@ from agentos_controlplane.merkle import (
     MerkleSealer,
     epoch_message,
     inclusion_proof,
+    inclusion_proofs,
     leaf_hash,
     merkle_root,
     node_hash,
@@ -160,6 +161,28 @@ def test_an_index_past_the_last_leaf_is_refused_by_the_bound_not_by_luck() -> No
 def test_inclusion_proof_rejects_an_out_of_range_index() -> None:
     with pytest.raises(MerkleError):
         inclusion_proof(["00", "11"], 5)
+
+
+@pytest.mark.parametrize("n", [1, 2, 3, 5, 8, 9, 17])
+def test_batching_proofs_changes_the_cost_and_not_the_path(n: int) -> None:
+    """CMP-06 asks for a proof per disclosed record, so the batch form exists to build the tree once
+    instead of once per index. It must be the SAME path: a batch proof that differed from the single
+    one would verify against the same root right up until it did not, and only in bulk exports."""
+    leaves = [f"{i:02x}" * 32 for i in range(n)]
+    root = merkle_root(leaves)
+
+    batched = inclusion_proofs(leaves, range(n))
+
+    assert batched == {i: inclusion_proof(leaves, i) for i in range(n)}
+    for i in range(n):
+        assert verify_inclusion(leaves[i], i, batched[i], root, n)
+
+
+def test_batching_rejects_an_out_of_range_index_rather_than_skipping_it() -> None:
+    """A silently missing proof would become a record exported with `inclusion: null` — reported as
+    "not sealed yet" when the truth is that we asked the tree for the wrong leaf."""
+    with pytest.raises(MerkleError):
+        inclusion_proofs(["00", "11"], [0, 5])
 
 
 @pytest.fixture()
