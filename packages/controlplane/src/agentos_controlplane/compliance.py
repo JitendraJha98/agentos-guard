@@ -1,7 +1,15 @@
-"""CMP-01/02/03 — map shipped controls to OWASP Agentic Top 10 (2026) + NIST AI RMF, and point
-EU AI Act Art. 12 / Art. 26 claims at concrete evidence. Dependency-light: this module holds only
-strings + the export logic (no pipeline import); the coverage TEST enforces that every live control
-is mapped. Taxonomy verified 2026-07-10 (OWASP Top 10 for Agentic Applications, 2026 / NIST AI RMF 1.0)."""
+"""CMP-01/02/03/04/05 — map shipped controls to OWASP Agentic Top 10 (2026), NIST AI RMF, the EU AI
+Act article set a high-risk deployment actually faces, and the SOC 2 Trust Services Criteria.
+Dependency-light: this module holds only strings + the export logic (no pipeline import); the
+coverage TEST enforces that every live control is mapped. Taxonomy verified 2026-07-10 (OWASP Top 10
+for Agentic Applications, 2026 / NIST AI RMF 1.0).
+
+EVERY STRING BELOW IS EVIDENCE, NEVER A CONFORMITY CLAIM (spec D-8). "Here are the controls bearing
+on Art. 14 and the records behind them" — never "this system is Art. 14 compliant". Conformity is a
+determination made by a notified body, an auditor, or the deployer's own counsel; a tool that
+pre-empts it manufactures false assurance about someone else's legal exposure. The mapping lives in
+ONE module on purpose: a second mapping file is a second thing to forget to update, and a stale
+compliance claim is worse than no claim."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -20,9 +28,45 @@ OWASP_AGENTIC = {
     "ASI10": "Rogue Agents",
 }
 NIST_RMF = {"GOVERN", "MAP", "MEASURE", "MANAGE"}
+# EU AI Act = Regulation (EU) 2024/1689. Headings verified article-by-article on 2026-08-19 against
+# the European Commission's own AI Act Service Desk (ai-act-service-desk.ec.europa.eu), and quoted
+# as the Act words them rather than paraphrased — a paraphrase in a bundle handed to a regulator is
+# where a mapping starts describing obligations that do not exist. Anything that could not be
+# confirmed there is ABSENT rather than approximated: Art. 73 (serious incident reporting) is
+# omitted because notifying a market surveillance authority is an act this control plane does not
+# perform, and listing it would imply we evidence something toward it.
 EU_AI_ACT = {
-    "Art.12": "Record-keeping / automatic logging",
-    "Art.26": "Deployer obligations & human oversight",
+    "Art.5": "Prohibited AI practices",
+    "Art.6": "Classification rules for high-risk AI systems",
+    "Art.9": "Risk management system",
+    "Art.10": "Data and data governance",
+    "Art.11": "Technical documentation",
+    "Art.12": "Record-keeping",
+    "Art.13": "Transparency and provision of information to deployers",
+    "Art.14": "Human oversight",
+    "Art.15": "Accuracy, robustness and cybersecurity",
+    "Art.26": "Obligations of deployers of high-risk AI systems",
+    "Art.72": (
+        "Post-market monitoring by providers and post-market monitoring plan for high-risk AI "
+        "systems"
+    ),
+}
+
+# The articles we LIST but evidence NOTHING toward, and why. Listing them empty is deliberate: a
+# silently missing article reads as an oversight, an explicitly empty one is a statement, and both
+# of these are articles where inventing a control would be exactly the overreach D-8 forbids.
+EU_ARTICLE_NOTES = {
+    "Art.5": (
+        "No control here bears on this article. Prohibited practices are about what a system is "
+        "USED for — the purpose a deployer puts it to — not about controls a runtime can "
+        "implement. Pointing a shipped control at Art. 5 would be a claim about a deployment "
+        "nothing here can observe."
+    ),
+    "Art.6": (
+        "No control here bears on this article. Classification is a legal determination about a "
+        "deployment's use case; it is operator-declared (see risk_classifications) and never "
+        "inferred from anything this control plane measures."
+    ),
 }
 
 # CMP-04 — the risk tiers an OPERATOR may declare for a deployment (Art. 6 / Annex III).
@@ -66,7 +110,7 @@ CONTROL_MAPPINGS: tuple[ControlMapping, ...] = (
         "SEC-01 prompt-injection detector",
         ("ASI01",),
         ("MEASURE",),
-        ("Art.12",),
+        ("Art.9", "Art.12", "Art.15"),
         "risk findings on the Decision + audit record",
     ),
     ControlMapping(
@@ -74,7 +118,7 @@ CONTROL_MAPPINGS: tuple[ControlMapping, ...] = (
         "SEC-02 PII guardrail",
         ("ASI02",),
         ("MEASURE", "MANAGE"),
-        ("Art.12",),
+        ("Art.10", "Art.12"),
         "risk findings + fail-closed redaction (AUD-04)",
     ),
     ControlMapping(
@@ -82,7 +126,7 @@ CONTROL_MAPPINGS: tuple[ControlMapping, ...] = (
         "SEC-02 unsafe-content guardrail",
         ("ASI01",),
         ("MEASURE",),
-        ("Art.12",),
+        ("Art.9", "Art.12", "Art.15"),
         "risk findings on the Decision",
     ),
     ControlMapping(
@@ -90,7 +134,7 @@ CONTROL_MAPPINGS: tuple[ControlMapping, ...] = (
         "SEC-02 format/schema guardrail",
         ("ASI02",),
         ("MEASURE",),
-        ("Art.12",),
+        ("Art.12", "Art.15"),
         "risk findings on the Decision",
     ),
     ControlMapping(
@@ -98,7 +142,7 @@ CONTROL_MAPPINGS: tuple[ControlMapping, ...] = (
         "SEC-12 intent-class tags",
         ("ASI01",),
         ("MAP", "MEASURE"),
-        ("Art.12",),
+        ("Art.9", "Art.12"),
         "Decision.inferred_intent + audit record",
     ),
     ControlMapping(
@@ -106,7 +150,7 @@ CONTROL_MAPPINGS: tuple[ControlMapping, ...] = (
         "SEC-13 sequence/lineage intent",
         ("ASI01", "ASI02"),
         ("MEASURE",),
-        ("Art.12",),
+        ("Art.9", "Art.12"),
         "sequence reasons + parent_action_id lineage",
     ),
     ControlMapping(
@@ -114,23 +158,23 @@ CONTROL_MAPPINGS: tuple[ControlMapping, ...] = (
         "POL-01/03 deterministic constitution floor",
         ("ASI02", "ASI10"),
         ("GOVERN", "MANAGE"),
-        ("Art.12",),
-        "policy/constitution version on every Decision",
+        ("Art.9", "Art.11", "Art.12"),
+        "policy/constitution version pinned on every Decision",
     ),
     ControlMapping(
         "graduated_response",
         "POL-06 graduated outcomes",
         ("ASI02", "ASI09"),
         ("MANAGE",),
-        (),
-        "the outcome + reasons on every Decision",
+        ("Art.9", "Art.13"),
+        "the outcome + explainable reasons (principle refs, evidence) + remediation on every Decision",
     ),
     ControlMapping(
         "approvals",
         "POL-07 require_approval workflow",
         ("ASI09",),
         ("MANAGE",),
-        ("Art.26",),
+        ("Art.14", "Art.26"),
         "ApprovalRequest records + resolutions (audited)",
     ),
     ControlMapping(
@@ -138,7 +182,7 @@ CONTROL_MAPPINGS: tuple[ControlMapping, ...] = (
         "POL-13 human-ratified time-boxed allow",
         ("ASI09",),
         ("MANAGE",),
-        ("Art.26",),
+        ("Art.14", "Art.26"),
         "temporary_exception records (human-granted)",
     ),
     ControlMapping(
@@ -146,7 +190,7 @@ CONTROL_MAPPINGS: tuple[ControlMapping, ...] = (
         "POL-14 async non-blocking review",
         ("ASI09",),
         ("MANAGE",),
-        ("Art.26",),
+        ("Art.14", "Art.26"),
         "GovernanceReview records",
     ),
     ControlMapping(
@@ -154,7 +198,7 @@ CONTROL_MAPPINGS: tuple[ControlMapping, ...] = (
         "RUN-01/02 operator kill switch",
         ("ASI08", "ASI10"),
         ("MANAGE",),
-        ("Art.26",),
+        ("Art.14", "Art.26"),
         "kill_switch state + audited toggles",
     ),
     ControlMapping(
@@ -162,7 +206,7 @@ CONTROL_MAPPINGS: tuple[ControlMapping, ...] = (
         "IDN-01/02 signed identity + verification",
         ("ASI03",),
         ("GOVERN",),
-        (),
+        ("Art.15",),
         "EdDSA token verification; forged -> deny (audited)",
     ),
     ControlMapping(
@@ -170,7 +214,7 @@ CONTROL_MAPPINGS: tuple[ControlMapping, ...] = (
         "INT-06 no-silent-gaps coverage",
         ("ASI10",),
         ("MEASURE",),
-        (),
+        ("Art.12", "Art.15"),
         "coverage registry + bypass-attempt fail-closed",
     ),
     ControlMapping(
@@ -178,7 +222,7 @@ CONTROL_MAPPINGS: tuple[ControlMapping, ...] = (
         "AUD-01/02/03 hash-chained decision records + provenance",
         ("ASI08", "ASI10"),
         ("GOVERN", "MEASURE"),
-        ("Art.12",),
+        ("Art.12", "Art.26"),
         "append-only hash chain; action->decision->principles->outcome + versions",
     ),
     ControlMapping(
@@ -194,7 +238,7 @@ CONTROL_MAPPINGS: tuple[ControlMapping, ...] = (
         "AUD-05 CI chain verifier + checkpoint anchoring",
         ("ASI08",),
         ("MEASURE",),
-        ("Art.12",),
+        ("Art.12", "Art.26", "Art.72"),
         "audit_verify re-derivation + RFC-3161 checkpoints",
     ),
     ControlMapping(
@@ -202,8 +246,125 @@ CONTROL_MAPPINGS: tuple[ControlMapping, ...] = (
         "AUD-04 fail-closed redaction + secret scan",
         ("ASI02", "ASI06"),
         ("MANAGE",),
-        ("Art.12",),
+        ("Art.10", "Art.12"),
         "redacted payload; no write if redaction fails",
+    ),
+    # --- Phase-8 guardrail detectors. Live in `enrich()` but never re-exported from
+    # `agentos_pipeline.risk.__all__`, which is why the CMP-01/02 coverage lock discovers the
+    # scorers enrichment actually RUNS rather than only the ones the package advertises.
+    ControlMapping(
+        "SecretLeakScorer",
+        "SEC-05 secret & credential detector",
+        ("ASI03",),
+        ("MEASURE", "MANAGE"),
+        ("Art.10", "Art.12", "Art.15"),
+        "risk findings carrying pattern ids only (never the secret) + the AUD-04 body gate",
+    ),
+    ControlMapping(
+        "ExfiltrationScorer",
+        "SEC-04 data-exfiltration detector",
+        ("ASI02",),
+        ("MEASURE",),
+        ("Art.10", "Art.12", "Art.15"),
+        "risk findings on the sensitive-data + outbound-destination conjunction",
+    ),
+    ControlMapping(
+        "CodeExecutionScorer",
+        "SEC-11 unsafe code-execution detector",
+        ("ASI05",),
+        ("MEASURE",),
+        ("Art.12", "Art.15"),
+        "risk findings on the Decision",
+    ),
+    ControlMapping(
+        "MemoryPoisoningScorer",
+        "SEC-09 memory-poisoning detector",
+        ("ASI06",),
+        ("MEASURE",),
+        ("Art.12", "Art.15"),
+        "risk findings on the Decision",
+    ),
+    ControlMapping(
+        "merkle_evidence",
+        "AUD-06 Merkle inclusion proofs + anchored epoch roots",
+        ("ASI08", "ASI10"),
+        ("GOVERN", "MEASURE"),
+        ("Art.12",),
+        "RFC-6962 inclusion proof per record, checkable against an RFC-3161-anchored epoch root "
+        "without disclosing any other record. Proves INCLUSION, not completeness",
+    ),
+    ControlMapping(
+        "abom",
+        "ABOM-01/02 agent bill of materials with per-component provenance",
+        ("ASI04",),
+        ("GOVERN", "MAP"),
+        ("Art.11",),
+        "per-component digest, source and version + the window each definition was in force",
+    ),
+    ControlMapping(
+        "sandbox",
+        "RUN-03 quarantined sandbox execution",
+        ("ASI05",),
+        ("MANAGE",),
+        ("Art.15",),
+        "sandbox_run rows + sandbox_executed audit events",
+    ),
+    ControlMapping(
+        "privilege_rings",
+        "RUN-04 privilege rings / least privilege",
+        ("ASI03",),
+        ("GOVERN", "MANAGE"),
+        ("Art.15", "Art.26"),
+        "privilege_ring_set events + the per-action ring deny on the Decision",
+    ),
+    ControlMapping(
+        "resource_governor",
+        "RUN-05 per-execution resource budgets",
+        ("ASI08",),
+        ("MANAGE",),
+        ("Art.15",),
+        "resource_limit_set + resource_limit_exceeded events",
+    ),
+    ControlMapping(
+        "circuit_breaker",
+        "RUN-06 automatic circuit breakers",
+        ("ASI08",),
+        ("MANAGE",),
+        ("Art.15",),
+        "circuit_tripped / circuit_reset events + breaker state",
+    ),
+    ControlMapping(
+        "emergency_shutdown",
+        "RUN-07 fleet-wide emergency stop + explicit resume",
+        ("ASI08", "ASI10"),
+        ("MANAGE",),
+        ("Art.14", "Art.26"),
+        "emergency_shutdown / emergency_resume events + the incident row",
+    ),
+    ControlMapping(
+        "consensus",
+        "POL-09 multi-party consensus on high-stakes actions",
+        ("ASI09",),
+        ("GOVERN", "MANAGE"),
+        ("Art.14",),
+        "consensus_vote per voter + the consensus_resolved round record",
+    ),
+    ControlMapping(
+        "shadow_detection",
+        "DISC-04 shadow (unregistered) agent detection",
+        ("ASI10",),
+        ("MEASURE",),
+        ("Art.72",),
+        "shadow_agent_detected events (bounded, sanitized claimed id + digest)",
+    ),
+    ControlMapping(
+        "rogue_detection",
+        "DISC-05 undeclared-component (rogue) detection",
+        ("ASI04", "ASI10"),
+        ("MEASURE",),
+        ("Art.72",),
+        "rogue_agent_detected events — ADVISORY: an undeclared component is an observation an "
+        "operator adjudicates, not a decision, because a manifest can simply be stale",
     ),
 )
 
@@ -217,15 +378,42 @@ LIVE_DETECTOR_CONTROLS = frozenset(
         "FormatViolationScorer",
         "IntentScorer",
         "SequenceCorrelator",
+        "SecretLeakScorer",
+        "ExfiltrationScorer",
+        "CodeExecutionScorer",
+        "MemoryPoisoningScorer",
     }
 )
 
 
+def _eu_article_entry(article: str, name: str) -> dict:
+    """One article's entry: its heading, the controls bearing on it, and — when there are none —
+    the note saying so.
+
+    An article with no controls and no note is the failure this shape exists to prevent: a heading
+    with nothing under it reads as an oversight, and an auditor cannot tell "we forgot" from "there
+    is genuinely nothing to show". Every article therefore ends up in exactly one of two states,
+    and both of them are statements."""
+    entry = {
+        "name": name,
+        "controls": [m.control for m in CONTROL_MAPPINGS if article in m.eu_ai_act],
+    }
+    note = EU_ARTICLE_NOTES.get(article)
+    if note is not None:
+        entry["note"] = note
+    return entry
+
+
 def export_compliance_evidence(session_factory=None, public_key_pem=None) -> dict:
-    """CMP-03 — a one-call evidence bundle: the control->framework mapping grouped by framework, plus
-    pointers to the CONCRETE evidence backing EU Art. 12 (record-keeping) / Art. 26 (human oversight)
-    claims. When a store is supplied, include LIVE evidence: audit-record count, checkpoint count, and
-    whether the chain currently verifies (AUD-05) — the record-keeping proof itself."""
+    """CMP-03/04 — a one-call evidence bundle: the control->framework mapping grouped by framework,
+    the EU AI Act article set with the controls bearing on each (and an explicit note where nothing
+    does), and pointers to the CONCRETE evidence behind the Art. 12 / Art. 26 claims. When a store
+    is supplied, include LIVE evidence: audit-record count, checkpoint count, whether the chain
+    currently verifies (AUD-05) — the record-keeping proof itself — and the operator-declared risk
+    classification of every registered agent.
+
+    EVIDENCE, NOT A CONFORMITY CLAIM (D-8). The `eu_ai_act` section carries its disclaimer inside
+    itself rather than beside itself, so the articles cannot be extracted and forwarded alone."""
     controls = [
         {
             "control": m.control,
@@ -245,8 +433,7 @@ def export_compliance_evidence(session_factory=None, public_key_pem=None) -> dic
         fn: [m.control for m in CONTROL_MAPPINGS if fn in m.nist_rmf] for fn in sorted(NIST_RMF)
     }
     by_eu = {
-        art: {"name": name, "controls": [m.control for m in CONTROL_MAPPINGS if art in m.eu_ai_act]}
-        for art, name in EU_AI_ACT.items()
+        art: _eu_article_entry(art, name) for art, name in EU_AI_ACT.items()
     }
     eu_section: dict = {"articles": by_eu, "disclaimer": EU_AI_ACT_DISCLAIMER}
     bundle = {
@@ -254,7 +441,7 @@ def export_compliance_evidence(session_factory=None, public_key_pem=None) -> dic
         "eu_ai_act": eu_section,
         "controls": controls,
         "evidence": {
-            "eu_art12_record_keeping": "hash-chained, per-record-signed, fail-closed-redacted audit log (AUD-01/03/04/08)",
+            "eu_art12_record_keeping": "hash-chained, per-record-signed, fail-closed-redacted audit log (AUD-01/03/04/08) + Merkle inclusion proofs against anchored epoch roots (AUD-06)",
             "eu_art26_human_oversight": "require_approval + temporary_exception + governance_review + kill switch (POL-07/13/14, RUN-01/02)",
         },
     }

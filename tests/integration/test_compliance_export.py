@@ -29,7 +29,12 @@ def test_bundle_has_all_three_framework_sections():
         assert isinstance(controls, list)
 
     eu = fw["eu_ai_act"]
-    assert set(eu) == {"Art.12", "Art.26"}
+    # CMP-04 widened Phase 6's minimal Art.12/26 pointer to the article set a high-risk deployment
+    # actually faces. Art.5 and Art.6 are here as explicit NON-claims (see the mapping tests).
+    assert set(eu) == {
+        "Art.5", "Art.6", "Art.9", "Art.10", "Art.11", "Art.12", "Art.13", "Art.14", "Art.15",
+        "Art.26", "Art.72",
+    }
     assert len(eu["Art.12"]["controls"]) >= 1  # record-keeping backed by >=1 control
     assert len(eu["Art.26"]["controls"]) >= 1  # human oversight backed by >=1 control
 

@@ -10,6 +10,7 @@ capabilities are all represented.
 
 import inspect
 
+import agentos_pipeline.enrichment as _enrichment_mod
 import agentos_pipeline.risk as _risk_pkg
 import agentos_pipeline.sequence as _sequence_mod
 import pytest
@@ -40,6 +41,10 @@ def _discover_live_detectors() -> dict[str, type]:
 
       * risk package — every EXPORTED (``__all__``) class implementing the RiskScorer
         surface (``score`` + ``inline``);
+      * enrichment's guardrail tier — the scorers `enrich()` actually RUNS. The Phase-8
+        detectors (SEC-04/05/09/11) are wired there without being re-exported from
+        ``risk.__all__``, so a package-exports-only discovery declared them absent and
+        four live detectors sat unmapped. What runs is the authority on what is live;
       * sequence module — every public class DEFINED there (SequenceCorrelator has
         ``observe()``, not ``score()``, so it is not a RiskScorer and is discovered
         structurally rather than by the scorer surface).
@@ -49,6 +54,8 @@ def _discover_live_detectors() -> dict[str, type]:
         obj = getattr(_risk_pkg, name)
         if _has_risk_scorer_surface(obj):
             found[obj.__name__] = obj
+    for scorer in _enrichment_mod._GUARDRAIL_SCORERS:
+        found[type(scorer).__name__] = type(scorer)
     for _name, obj in inspect.getmembers(_sequence_mod, inspect.isclass):
         if obj.__module__ == _sequence_mod.__name__ and not obj.__name__.startswith("_"):
             found[obj.__name__] = obj
@@ -145,7 +152,83 @@ def test_p0_audit_and_identity_capabilities_are_mapped():
         assert key in _CONTROL_KEYS, f"missing P0 capability mapping: {key}"
 
 
-# --- (e) CMP-04: the OPERATOR-DECLARED risk classification -----------------
+# --- (e) CMP-04: the widened EU AI Act article mapping ---------------------
+
+
+def test_each_article_we_list_has_a_control_behind_it_or_says_it_has_none():
+    """A silently empty article reads as an oversight — an auditor sees a heading with nothing
+    under it and cannot tell whether we forgot or whether there is genuinely nothing to show. An
+    explicitly empty one is a statement."""
+    for art, entry in export_compliance_evidence()["eu_ai_act"]["articles"].items():
+        assert entry["controls"] or entry.get("note"), f"{art} is silently empty"
+
+
+def test_article_5_is_a_non_claim_about_use_rather_than_a_borrowed_control():
+    """Prohibited practices are about what a system is USED for, not about controls a runtime can
+    implement. Pointing any shipped control at Art. 5 would be a claim about a deployment we
+    cannot observe."""
+    entry = export_compliance_evidence()["eu_ai_act"]["articles"]["Art.5"]
+
+    assert entry["controls"] == []
+    assert "prohibited" in entry["name"].lower()
+    assert "use" in entry["note"].lower()
+
+
+def test_article_6_defers_classification_to_the_operator_rather_than_evidencing_it():
+    """Art. 6 is where a tool would be most tempted to infer a customer's regulatory class."""
+    entry = export_compliance_evidence()["eu_ai_act"]["articles"]["Art.6"]
+
+    assert entry["controls"] == []
+    assert "declared" in entry["note"].lower()
+
+
+def test_the_bundle_never_claims_conformity():
+    """D-8, asserted mechanically over the SERIALIZED bundle. The single largest reputational risk
+    in this phase is emitting something a customer forwards to a regulator as a certificate, and a
+    reviewer reading strings one at a time is exactly how that ships."""
+    import json
+
+    blob = json.dumps(export_compliance_evidence()).lower()
+
+    for forbidden in (
+        "is compliant",
+        "fully compliant",
+        "certified",
+        "conformity assessment passed",
+        "guarantees compliance",
+        "compliance certificate",
+        "attests compliance",
+    ):
+        assert forbidden not in blob, forbidden
+    assert "not a conformity assessment" in blob
+    assert "not a claim of compliance" in blob
+
+
+def test_merkle_inclusion_proofs_are_cited_under_record_keeping():
+    """AUD-06 landed in Slice 11a; Art. 12 is the article where it earns its keep — it is what
+    lets a deployer evidence ONE record to an auditor without disclosing the rest of the log."""
+    bundle = export_compliance_evidence()
+    assert "merkle_evidence" in bundle["eu_ai_act"]["articles"]["Art.12"]["controls"]
+
+    evidence = {m["control"]: m["evidence"] for m in bundle["controls"]}
+    assert "inclusion proof" in evidence["merkle_evidence"].lower()
+
+
+def test_human_oversight_cites_the_oversight_controls_that_actually_ship():
+    """CMP-04 names human oversight explicitly, and Art. 14 is where it lives."""
+    controls = set(export_compliance_evidence()["eu_ai_act"]["articles"]["Art.14"]["controls"])
+
+    assert {"approvals", "temporary_exception", "governance_review", "kill_switch"} <= controls
+
+
+def test_the_disclaimer_travels_inside_the_article_section():
+    """So the articles cannot be lifted out of the bundle and forwarded on their own."""
+    section = export_compliance_evidence()["eu_ai_act"]
+
+    assert "articles" in section and "disclaimer" in section
+
+
+# --- (f) CMP-04: the OPERATOR-DECLARED risk classification -----------------
 
 
 @pytest.fixture
