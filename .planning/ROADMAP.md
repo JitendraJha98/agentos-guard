@@ -33,7 +33,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 9: Runtime Containment & Consensus** - Sandbox execution, privilege rings, resource isolation, circuit breakers, emergency shutdown, and 2-of-3 multi-agent consensus
 - [x] **Phase 10: Gateway PEP, Second Adapter & Live Graph** - Framework-agnostic gateway PEP, a second framework adapter, framework/shadow/rogue discovery, and the live agent graph (completed 2026-08-18)
 - [x] **Phase 11: Merkle Audit, Economics & Compliance Export** - Merkle DAG audit upgrade with inclusion proofs, cost/budget governance through the graduated engine, and one-click EU AI Act + SOC 2 evidence export (completed 2026-08-19)
-- [ ] **Phase 12: Continuous Adversarial Validation & Rich Dashboard** - Attack-success-rate tracking, scheduled continuous validation, multi-step campaigns, health monitoring, and the rich SLO/graph/attack dashboard
+- [x] **Phase 12: Continuous Adversarial Validation & Rich Dashboard** - Attack-success-rate tracking, scheduled continuous validation, multi-step campaigns, health monitoring, the query-time evidence graph, and the rich SLO/graph/attack dashboard (completed 2026-08-19)
 - [ ] **Phase 13: Constitution Amendments & Conflict Reasoning** - Proposable/ratifiable Constitution amendments, cross-agent transitive-permission conflict resolution, and BFT-backed consensus
 - [ ] **Phase 14: Self-Play, ZK Proofs, Decentralized Identity & Rust Hot Path** - Continuous self-play + runtime patching + threat intel, zero-knowledge compliance proofs, SPIFFE/mTLS + portable reputation (optional pluggable backend, ADR-0007), K8s sidecar/operator, ROI/ABOM impact analysis, and the profile-driven Rust rewrite
 
@@ -243,7 +243,13 @@ still dated 2026-06-10); do it before Phase 7 planning.
   1. Attack-success-rate is tracked over time per agent/attack class, continuous validation re-runs suites against the live agent on a schedule, and multi-step adversarial simulations run campaign-style attacks.
   2. Agent health monitoring tracks liveness/error-rate/circuit-breaker state per agent, and conversation tracing reconstructs a full conversation across tools and delegations over a forensic evidence graph that joins the audit log with the materialized agent graph at query time — no separate graph DB (AUD-09).
   3. The dashboard adds the live agent graph, per-agent SLOs/violations, and attack visualization.
-**Plans**: TBD
+**Plans**: 6 slices (superpowers workflow; spec `docs/superpowers/specs/2026-08-19-phase-12-validation-forensics-dashboard-design.md`)
+- [x] 12a — attack-success-rate over time (TEST-07): counts stored and the rate derived, so `n` travels with every rate a caller can obtain — 1-of-2 and 250-of-500 are both "50%" and are not the same claim. Attack classes never average together, and an empty history is an empty trend rather than 0.0
+- [x] 12b — continuous validation on a schedule (TEST-08): re-runs the corpus against the LIVE decision path under the existing reconciler loop. The review caught that a pass would trip the validated agent's own breaker and floor its reputation — the health check taking the patient offline, on a timer, more reliably the better the guard is
+- [x] 12c — campaign-style multi-step attacks (TEST-09): steps share one `conversation_id` so the SEC-13 correlator actually sees a sequence, and the score is the STEP a campaign was blocked at — stopped at the opening move and stopped after four hostile actions are both "blocked", and only one is good news
+- [x] 12d — agent health (OBS-04): a READ over facts already recorded. Liveness is a timestamp with no verdict key at all, and a governance block is counted apart from an execution failure — folding them makes the best-governed agent look like the sickest, and the fix an operator reaches for is to loosen the guard
+- [x] 12e — evidence graph & conversation tracing (AUD-09, OBS-05): a bounded, cycle-safe walk at query time with no separate graph database, ordered by hash-covered `seq`. Every chain carries the qualifier that lineage is CLAIMED, not proven
+- [x] 12f — rich dashboard (OBS-06, DASH-04): live graph, per-agent SLOs and attack trends, server-rendered with no CDN. The tests assert the RENDERED page, because a template is where a carefully-qualified number gets reduced to a percentage
 **UI hint**: yes
 
 ### Phase 13: Constitution Amendments & Conflict Reasoning

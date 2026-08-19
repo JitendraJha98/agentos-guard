@@ -111,7 +111,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **AUD-06** [P1]: The hash chain is upgraded to a Merkle DAG enabling inclusion proofs and partial disclosure
 - [ ] **AUD-07** [P2]: Zero-knowledge compliance proofs prove properties (e.g. "no PII exfiltrated") without revealing underlying data
 - [x] **AUD-08** [P0]: Each `AuditRecord` carries a detached per-record EdDSA signature (reusing identity keys) so a single record verifies independently of the chain — proving the control plane authored that decision
-- [ ] **AUD-09** [P1]: A forensic "evidence graph" reconstructs causal chains by joining the audit log with the materialized agent graph at query time (`parent_action_id`/`conversation_id`/`trace_id`, Postgres recursive CTEs) — no separate graph database
+- [x] **AUD-09** [P1]: A forensic "evidence graph" reconstructs causal chains by joining the audit log with the materialized agent graph at query time (`parent_action_id`/`conversation_id`/`trace_id`, Postgres recursive CTEs) — no separate graph database
 
 ### Compliance
 
@@ -130,9 +130,9 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **TEST-04** [P0]: Safety assertions use statistical thresholds (e.g. attack-success-rate < X%), not single runs
 - [x] **TEST-05** [P0]: Fixed vulnerabilities are locked by regression tests so they cannot silently return
 - [x] **TEST-06** [P0]: A failing safety test breaks the CI build
-- [ ] **TEST-07** [P1]: Attack-success-rate is tracked over time per agent/attack class
-- [ ] **TEST-08** [P1]: Continuous validation re-runs suites against the live agent on a schedule
-- [ ] **TEST-09** [P1]: Multi-step adversarial simulations run campaign-style attacks
+- [x] **TEST-07** [P1]: Attack-success-rate is tracked over time per agent/attack class
+- [x] **TEST-08** [P1]: Continuous validation re-runs suites against the live agent on a schedule
+- [x] **TEST-09** [P1]: Multi-step adversarial simulations run campaign-style attacks
 - [ ] **TEST-10** [P2]: Continuous adversarial self-play generates novel attacks, scores defenses, and proposes Constitution/policy patches (human-ratified, held-out eval)
 - [ ] **TEST-11** [P2]: A runtime-patching path rolls out ratified defenses; a threat-intel feed imports emerging attack patterns
 
@@ -141,9 +141,9 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **OBS-01** [P0]: Every `AgentAction`/`Decision` is emitted as an OpenTelemetry span to the user's backend
 - [x] **OBS-02** [P0]: `trace_id` correlates an action across pipeline stages and across agents (distributed tracing)
 - [x] **OBS-03** [P0]: Per-agent metrics (action volume, outcome mix, violation counts, p95 pipeline latency) are emitted
-- [ ] **OBS-04** [P1]: Agent health monitoring tracks liveness/error-rate/circuit-breaker state per agent
-- [ ] **OBS-05** [P1]: Conversation tracing reconstructs a full conversation across tools and delegations
-- [ ] **OBS-06** [P1]: Per-agent SLO and violation dashboards with attack visualization
+- [x] **OBS-04** [P1]: Agent health monitoring tracks liveness/error-rate/circuit-breaker state per agent
+- [x] **OBS-05** [P1]: Conversation tracing reconstructs a full conversation across tools and delegations
+- [x] **OBS-06** [P1]: Per-agent SLO and violation dashboards with attack visualization
 
 ### Economics
 
@@ -178,7 +178,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **DASH-01** [P0]: A minimal dashboard shows read-only agent inventory and recent decisions/audit
 - [x] **DASH-02** [P0]: Operators resolve pending `ApprovalRequest`s from the dashboard
 - [x] **DASH-03** [P0]: Operators trigger agent/fleet kill switches from the dashboard
-- [ ] **DASH-04** [P1]: The dashboard adds the live agent graph, per-agent SLOs/violations, and attack visualization
+- [x] **DASH-04** [P1]: The dashboard adds the live agent graph, per-agent SLOs/violations, and attack visualization
 
 ### OSS Distribution & Community
 
@@ -296,7 +296,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | AUD-06 | Phase 11 | Complete |
 | AUD-07 | Phase 14 | Pending |
 | AUD-08 | Phase 4 | Complete |
-| AUD-09 | Phase 12 | Pending |
+| AUD-09 | Phase 12 | Complete |
 | CMP-01 | Phase 6 | Complete |
 | CMP-02 | Phase 6 | Complete |
 | CMP-03 | Phase 6 | Complete |
@@ -309,17 +309,17 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | TEST-04 | Phase 6 | Complete |
 | TEST-05 | Phase 6 | Complete |
 | TEST-06 | Phase 6 | Complete |
-| TEST-07 | Phase 12 | Pending |
-| TEST-08 | Phase 12 | Pending |
-| TEST-09 | Phase 12 | Pending |
+| TEST-07 | Phase 12 | Complete |
+| TEST-08 | Phase 12 | Complete |
+| TEST-09 | Phase 12 | Complete |
 | TEST-10 | Phase 14 | Pending |
 | TEST-11 | Phase 14 | Pending |
 | OBS-01 | Phase 6 | Complete |
 | OBS-02 | Phase 6 | Complete |
 | OBS-03 | Phase 6 | Complete |
-| OBS-04 | Phase 12 | Pending |
-| OBS-05 | Phase 12 | Pending |
-| OBS-06 | Phase 12 | Pending |
+| OBS-04 | Phase 12 | Complete |
+| OBS-05 | Phase 12 | Complete |
+| OBS-06 | Phase 12 | Complete |
 | ECON-01 | Phase 11 | Complete |
 | ECON-02 | Phase 11 | Complete |
 | ECON-03 | Phase 11 | Complete |
@@ -339,7 +339,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | DASH-01 | Phase 5 | Complete |
 | DASH-02 | Phase 5 | Complete |
 | DASH-03 | Phase 5 | Complete |
-| DASH-04 | Phase 12 | Pending |
+| DASH-04 | Phase 12 | Complete |
 | OSS-01 | Phase 6 | Pending |
 | OSS-02 | Phase 6 | Complete |
 | PERF-01 | Phase 14 | Pending |

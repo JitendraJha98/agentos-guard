@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: phase_in_progress
-stopped_at: 2026-08-19 — Phase 11 COMPLETE (6/6 slices), still on branch phase-10-gateway-adapter-graph (the operator asked Phase 11 to continue there), pending PR into development. The audit log is now selectively provable (Merkle inclusion proofs + partial disclosure), agent spend is governed by the SAME graduated engine as everything else rather than a parallel enforcer, and both become evidence a third party can verify without trusting us. Phase 6's OSS-01 (first tagged PyPI release) remains the sole open item across Phases 6-11; Phase 12 not started.
+stopped_at: 2026-08-19 — Phase 12 COMPLETE (6/6 slices), still on branch phase-10-gateway-adapter-graph (the operator asked Phases 11 and 12 to continue there), pending PR into development. Red-team moved from a one-shot CI claim to a continuous one with trends, campaigns exercise the SEC-13 correlator no single-shot probe can reach, health and the query-time evidence graph give an operator something to read before and after a failure, and all of it surfaces on the console. Phase 6's OSS-01 (first tagged PyPI release) remains the sole open item across Phases 6-12; Phase 13 not started.
 last_updated: 2026-08-19
 last_activity: 2026-08-19
 progress:
   total_phases: 14
-  completed_phases: 10
-  total_plans: 61
-  completed_plans: 61
-  percent: 75
+  completed_phases: 11
+  total_plans: 67
+  completed_plans: 67
+  percent: 82
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-01)
 
 **Core value:** Every agent action is intercepted at runtime and returned an explainable, graduated decision grounded in policy + a human-readable constitution, with tamper-evident audit evidence — making unsafe agent behavior structurally impossible rather than merely unlikely.
-**Current focus:** Phase 12 — Continuous Adversarial Validation & Rich Dashboard (not started). Phases 9, 10 and 11 complete; all pending PR.
+**Current focus:** Phase 13 — Constitution Amendments & Conflict Reasoning (not started). Phases 9-12 complete; all pending PR.
 
 ## Current Position
 
-Phase: 11 COMPLETE (2026-08-19) — branch `phase-10-gateway-adapter-graph` (Phase 11 continued there at the operator's request), pending PR into `development`
+Phase: 12 COMPLETE (2026-08-19) — branch `phase-10-gateway-adapter-graph` (Phases 11 and 12 continued there at the operator's request), pending PR into `development`
 Plan: Phase 11 delivered as 6 slices covering all 7 requirements — 11a AUD-06 Merkle audit, 11b ECON-01 cost attribution, 11c ECON-02 budget as policy, 11d ECON-03 GPU/downstream attribution, 11e CMP-04/05 EU AI Act + SOC 2, 11f CMP-06 evidence export. Built via the superpowers workflow (spec -> per-slice plan -> subagent implement + two-stage adversarial review + fix + re-review). EVERY slice came back NOT APPROVED on its first review pass; the findings were real and the reasoning is recorded in the commit messages.
-Status: Phases 1–5, 7, 8, 9, 10, 11 complete; Phase 6 ~5/6 (OSS-01 first PyPI release the sole open item). Phase 12 not started.
+Status: Phases 1–5, 7–12 complete; Phase 6 ~5/6 (OSS-01 first PyPI release the sole open item). Phase 13 not started.
 Last activity: 2026-08-19
 
-Progress: [██████████████] 10/14 phases fully done (1–5, 7–11) + Phase 6 ~5/6
+Progress: [███████████████] 11/14 phases fully done (1–5, 7–12) + Phase 6 ~5/6
 
 ## Performance Metrics
 
@@ -127,6 +127,13 @@ Recent decisions affecting current work:
 - [Phase 11]: [11e] EVIDENCE, NEVER CONFORMITY (D-8). Risk classification is operator-declared because the same agent is high-risk in a hiring pipeline and minimal-risk summarizing notes — guessing harms in both directions. Every citation was verified against primary sources (EUR-Lex consolidated OJ; the AICPA TSP 100 PDF) and anything unverifiable was DROPPED. Every "Art." in a section — key or list value — requires the disclaimer in that same section; the earlier key-only guard had a documented blind spot and something was duly threaded through it.
 - [Phase 11]: [11f] CMP-06 is the payoff: a bundle verifiable STANDALONE against an anchored root, so an auditor gets the records they are entitled to and learns nothing about the rest. Its counters say what was actually CHECKED (records_anchor_verified, records_externally_anchored, records_signature_verified) rather than what was promised — the HTTP route holds no public key, so it checks no signatures, and the artifact now says so instead of claiming otherwise.
 
+- [Phase 12]: [12a] A rate is a lossy summary of two numbers and the lost one says whether to believe it, so counts are stored and `n` travels with every rate a caller can obtain. An empty history is an empty trend, never 0.0 — that is the claim "every attack was blocked".
+- [Phase 12]: [12b] Validation ASKS the guard, it never ATTACKS through it. Every probe goes through evaluate() and nothing invokes a handler: an executing probe on a timer, against a deployment whose guard has a hole, would PERFORM the exfiltration it was checking for. The review also found the loop would trip the validated agent's own breaker and floor its reputation — the health check taking the patient offline, more reliably the better the guard is — so the probe identity is now a separate required principal.
+- [Phase 12]: [12c] Campaign steps share one conversation_id, which is the key the SEC-13 correlator windows on; without it a campaign silently degrades into N single-shot probes that merely run in order. The score is the STEP it was blocked at, because "blocked" collapses the opening move being caught with four hostile actions having already run.
+- [Phase 12]: [12d] Health is a READ over facts already recorded — a health writer would be a second source that can disagree with the audit log, discovered while diagnosing an incident. Idle is not dead (a timestamp, no verdict) and a governance deny is not an error (counted apart, with the denominator named): folding them makes the best-governed agent look like the sickest and the operator's fix is to loosen the guard.
+- [Phase 12]: [12e] AUD-09 joins at query time with NO separate graph database, and an iterative walk rather than a recursive CTE — both backends support WITH RECURSIVE but the JSON extraction differs, and a query that works on SQLite and breaks on Postgres is worse than an honest loop. parent_action_id is caller-supplied, so a cycle is assertable and an unbounded walk hangs the tool an operator reaches for DURING an incident. Lineage is CLAIMED, not proven, and every chain says so in its payload (TRST-04 cross-check is Phase 13).
+- [Phase 12]: [12f] A template is where a carefully-qualified number gets reduced to a percentage, so the dashboard tests assert the RENDERED page: the failure rate with its denominator, no liveness verdict, "n/a" rather than 0% for unmeasured, and "no validation runs yet" rather than 0%. Graph layout is deterministic so a refresh cannot be mistaken for a topology change.
+
 ### Pending Todos
 
 [From .planning/todos/pending/ — ideas captured during sessions]
@@ -136,6 +143,9 @@ None yet.
 ### Blockers/Concerns
 
 [Issues that affect future work]
+
+- **Two guards shipped with tests that could not fail, both caught by mutation rather than by review (Phase 12).** 12f's dangling-edge probe seeded 5 agents and never reached the 60-node page budget; its health probe asserted a percentage the fixture cannot produce. Both passed against the mutant. The lesson is now house practice: a security or honesty guard is not done until a mutant of it turns the suite red.
+- **The harness OOMs (`0xC0000409`) under this workflow, and a crash leaves live pytest processes behind.** Two orphans (one at 144s CPU) inflated the suite from 94s to 379s and manufactured 20 failures + 43 errors that looked like a broken `api.py` — nothing was wrong with it. After any crash: `Get-Process python*`, kill, then re-run before trusting a timing-sensitive result. Mitigation on the harness side is `NODE_OPTIONS=--max-old-space-size=8192`; on the agent side, one workflow at a time rather than parallel waves.
 
 - **Undeclared package dependency (pre-existing since Phase 9, found independently by two Phase-11 reviewers):** `packages/controlplane/src/agentos_controlplane/resource_governor.py` imports `agentos_sdk.enforce.ResourceLimits` while `packages/controlplane/pyproject.toml` declares only `agentos-contract`. So "the control plane cannot import from the SDK" is a convention, not a fact, and the control plane is not installable standalone. Phase 11 added no new edge (its `Usage` went to `agentos-contract`, the seam both sides already share). Left alone deliberately as out of scope, but it should be tracked and closed.
 - **Phase 11 carry-overs, disclosed rather than silently deferred:** `BudgetReconciler` is wired by no composition root (this repo has none — the Phase-7 reconcilers are operator-wired too), so a multi-process deployment gets no budget convergence until an operator builds the loop. `MerkleSealer.seal()` likewise has no scheduled caller, so the epoch table stays empty and `/audit/disclose` 404s until an operator drives it. The evidence-export route passes no operator public key, so its self-verification checks no signatures — reported honestly as `records_signature_verified: 0` rather than hidden behind a green `chain_verifies`.
