@@ -208,20 +208,13 @@ def test_the_store_backed_bundle_never_claims_conformity(registry, assert_no_con
     assert_no_conformity_claim(json.dumps(export_compliance_evidence(registry._session_factory)))
 
 
-# An object keyed BY article is an article map or an article-keyed claim — the forwardable shape.
-# A control that merely TAGS articles in a list value is not, which is why the pattern matches keys.
-_ARTICLE_KEYED = re.compile(r"^(Art\.\d+$|eu_art\d+_)")
-
-
-def _keys_by_article(node) -> bool:
-    return isinstance(node, dict) and any(_ARTICLE_KEYED.match(k) for k in node)
-
-
-def _contains_article_keyed_object(node) -> bool:
-    if _keys_by_article(node):
-        return True
-    children = node.values() if isinstance(node, dict) else node if isinstance(node, list) else ()
-    return any(_contains_article_keyed_object(c) for c in children)
+# The discriminator is deliberately BLUNT: any occurrence of "Art." anywhere in a section, in a key
+# or in a list value. The previous version matched article-shaped KEYS only, on the theory that an
+# article map is the forwardable shape while a control merely TAGGING articles is not. That theory
+# was wrong, and the exemption it carved was where the defect shipped: `controls` tagged sixty
+# articles in list values and the guard could not see any of them. A control->article table with an
+# evidence column is precisely the compliance-mapping deliverable a customer pastes into an audit
+# response. A guard with a documented blind spot invites something to be threaded through it.
 
 
 def test_no_liftable_section_carries_articles_without_the_disclaimer():
@@ -231,19 +224,22 @@ def test_no_liftable_section_carries_articles_without_the_disclaimer():
     A second, disclaimer-free copy of the article map shipped under `frameworks` for exactly this
     reason — the old guard only checked that ONE section had both keys, and the whole-bundle
     conformity scan passed because the disclaimer was present somewhere. Neither could see a
-    duplicate."""
+    duplicate. `controls` then shipped sixty article TAGS past the successor guard, which matched
+    article-shaped keys and so was blind to a list value.
+    """
     bundle = export_compliance_evidence()
 
-    lifted = 0
+    carrying = 0
     for key, section in bundle.items():
-        if not _contains_article_keyed_object(section):
+        blob = json.dumps(section, ensure_ascii=False)
+        if "Art." not in blob:
             continue
-        lifted += 1
-        assert EU_AI_ACT_DISCLAIMER in json.dumps(section, ensure_ascii=False), (
-            f"bundle[{key!r}] can be lifted out with EU AI Act articles and no statement of what "
-            "it is not"
+        carrying += 1
+        assert EU_AI_ACT_DISCLAIMER in blob, (
+            f"bundle[{key!r}] can be lifted out carrying EU AI Act article references and no "
+            "statement of what they are not"
         )
-    assert lifted == 1, f"the article map must appear in exactly one section, found {lifted}"
+    assert carrying == 1, f"articles must appear in exactly one section, found {carrying}"
 
 
 def test_the_articles_are_reachable_only_through_the_disclaimed_section():

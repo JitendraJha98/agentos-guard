@@ -641,17 +641,27 @@ def export_compliance_evidence(session_factory=None, public_key_pem=None) -> dic
     currently verifies (AUD-05) — the record-keeping proof itself — and the operator-declared risk
     classification of every registered agent.
 
-    EVIDENCE, NOT A CONFORMITY CLAIM (D-8). Everything article-keyed lives under `eu_ai_act`, which
-    carries its disclaimer inside itself rather than beside itself — so no sub-object a consumer
-    would plausibly lift (`frameworks`, `evidence`) contains an article reference at all, and the
-    article map cannot be extracted and forwarded without the statement of what it is not."""
+    EVIDENCE, NOT A CONFORMITY CLAIM (D-8). Every article reference in this bundle — keyed OR
+    tagged, in a key or in a list value — lives under `eu_ai_act`, which carries its disclaimer
+    inside itself rather than beside itself. So no sub-object a consumer would plausibly lift
+    contains an article reference at all, and the article map cannot be extracted and forwarded
+    without the statement of what it is not.
+
+    That sentence used to name `frameworks` and `evidence` and quietly omit `controls`, which
+    carried sixty article tags and no disclaimer — four times the article density of the disclaimed
+    section, in the exact shape a customer pastes into an audit response. The guarantee is now the
+    blunt one and the test enforces it bluntly: no "Art." anywhere outside the disclaimed section."""
     controls = [
         {
             "control": m.control,
             "name": m.name,
             "owasp": list(m.owasp),
             "nist_rmf": list(m.nist_rmf),
-            "eu_ai_act": list(m.eu_ai_act),
+            # No `eu_ai_act` here, deliberately. A control->article table with an evidence column IS
+            # the compliance-mapping deliverable, and undisclaimed it reads as a self-assessment of
+            # conformity. Nothing is lost: `by_eu` is built from these same tuples, so the
+            # article->control direction is fully preserved where the disclaimer travels, and
+            # control->article is its inverse.
             "evidence": m.evidence,
         }
         for m in CONTROL_MAPPINGS

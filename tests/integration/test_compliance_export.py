@@ -48,7 +48,12 @@ def test_bundle_has_controls_list_and_evidence_pointers():
     b = export_compliance_evidence()
     assert isinstance(b["controls"], list) and b["controls"]
     sample = b["controls"][0]
-    assert {"control", "name", "owasp", "nist_rmf", "eu_ai_act", "evidence"} <= set(sample)
+    # No `eu_ai_act` key by design (D-8). A control->article table with an evidence column is the
+    # compliance-mapping deliverable a customer pastes into an audit response, and undisclaimed it
+    # reads as a self-assessment of conformity. The article->control direction survives under the
+    # disclaimed `eu_ai_act` section; this is its inverse, so nothing is lost.
+    assert {"control", "name", "owasp", "nist_rmf", "evidence"} <= set(sample)
+    assert "eu_ai_act" not in sample
     # Article-keyed pointers sit inside the disclaimed section, not beside it under a generic key.
     ptr = b["eu_ai_act"]["evidence_pointers"]
     assert ptr["eu_art12_record_keeping"]  # concrete Art.12 evidence pointer
