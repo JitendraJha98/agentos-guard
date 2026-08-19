@@ -32,7 +32,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 8: Full Security Engine & MCP Gateway** - Data-exfil, secret-leakage, tool-poisoning, supply-chain, plus the ASI05/06/07 gap detectors and an MCP security gateway (completed 2026-07-17)
 - [x] **Phase 9: Runtime Containment & Consensus** - Sandbox execution, privilege rings, resource isolation, circuit breakers, emergency shutdown, and 2-of-3 multi-agent consensus
 - [x] **Phase 10: Gateway PEP, Second Adapter & Live Graph** - Framework-agnostic gateway PEP, a second framework adapter, framework/shadow/rogue discovery, and the live agent graph (completed 2026-08-18)
-- [ ] **Phase 11: Merkle Audit, Economics, ABOM & Compliance Export** - Merkle DAG audit upgrade, cost/budget governance, Agent Bill of Materials, and one-click EU AI Act + SOC 2 evidence export
+- [x] **Phase 11: Merkle Audit, Economics & Compliance Export** - Merkle DAG audit upgrade with inclusion proofs, cost/budget governance through the graduated engine, and one-click EU AI Act + SOC 2 evidence export (completed 2026-08-19)
 - [ ] **Phase 12: Continuous Adversarial Validation & Rich Dashboard** - Attack-success-rate tracking, scheduled continuous validation, multi-step campaigns, health monitoring, and the rich SLO/graph/attack dashboard
 - [ ] **Phase 13: Constitution Amendments & Conflict Reasoning** - Proposable/ratifiable Constitution amendments, cross-agent transitive-permission conflict resolution, and BFT-backed consensus
 - [ ] **Phase 14: Self-Play, ZK Proofs, Decentralized Identity & Rust Hot Path** - Continuous self-play + runtime patching + threat intel, zero-knowledge compliance proofs, SPIFFE/mTLS + portable reputation (optional pluggable backend, ADR-0007), K8s sidecar/operator, ROI/ABOM impact analysis, and the profile-driven Rust rewrite
@@ -212,7 +212,7 @@ still dated 2026-06-10); do it before Phase 7 planning.
 - [x] 10e — rogue agents (DISC-05): divergence from DECLARED scope, with observed-class provenance separating "never declared" from "declared and exceeded" so the finding stream stays true rather than flooding on first contact
 - [x] 10f — live agent graph (DISC-06): agents/tools/MCP/models/memories plus delegation edges from `parent_action_id`, built incrementally from a watermark over IDENTITY-VERIFIED actions only, and read back as a bounded AND closed subgraph (lineage is honestly labelled CLAIMED — the TRST-04 authority cross-check is Phase-13 work)
 
-### Phase 11: Merkle Audit, Economics, ABOM & Compliance Export
+### Phase 11: Merkle Audit, Economics & Compliance Export
 **Goal**: Upgrade audit to a Merkle DAG, govern cost/budget as policy through the existing graduated-response engine, and produce exportable EU AI Act + SOC 2 evidence bundles.
 **Mode:** mvp
 **Depends on**: Phase 10
@@ -221,7 +221,18 @@ still dated 2026-06-10); do it before Phase 7 planning.
   1. The hash chain is upgraded to a Merkle DAG enabling inclusion proofs and partial disclosure.
   2. Token/API/GPU cost is attributed to each agent/action, and token/budget limits are expressed as policy so over-budget actions are denied or escalated by the graduated-response engine (no parallel budget enforcer).
   3. A full EU AI Act mapping and SOC 2 control evidence are derived from the audit log, and a one-click export produces evidence bundles per framework and time range.
-**Plans**: TBD
+
+> The phase title previously read "ABOM". That was stale: ABOM-01/02 shipped in Phase 8 and ABOM-03
+> is Phase 14, so this phase's requirement set contains no ABOM item. Corrected at close-out rather
+> than honored by inventing scope to match it.
+
+**Plans**: 6 slices (superpowers workflow; spec `docs/superpowers/specs/2026-08-18-phase-11-merkle-economics-compliance-design.md`)
+- [x] 11a — Merkle DAG, inclusion proofs, partial disclosure (AUD-06): an RFC-6962 tree over the existing `record_hash` leaves, so the chain is untouched and the tree is additive; epochs are contiguous and anchored, and `verify_bundle` — not `verify_inclusion` — is what an auditor runs. A root proves INCLUSION, never completeness
+- [x] 11b — cost attribution (ECON-01): usage is REPORTED, never inferred; unrecognized usage records nothing rather than zero, an unpriced model keeps its tokens with a null cost, and usage is refused from any result a provider did not vouch for
+- [x] 11c — budget as policy (ECON-02): spend enters as policy input and the CONSTITUTION denies or escalates — proven by deleting the principle and requiring the block to disappear. Overshoot is bounded by what is in flight, and that bound is asserted rather than claimed
+- [x] 11d — GPU & downstream attribution (ECON-03): capability-gated NVML behind the RUN-05 precedent, every GPU figure carrying the label saying what it measured, and `provider` taken from the action's own target — never a vendor inferred from it
+- [x] 11e — EU AI Act mapping + SOC 2 evidence (CMP-04/05): eleven articles and three criteria, every citation verified against primary sources and anything unverifiable dropped. Risk classification is operator-declared; the bundle emits evidence and never conformity
+- [x] 11f — one-click evidence export (CMP-06): per framework and per time range, verifiable STANDALONE against an anchored root — the payoff for 11a, and what makes the artifact evidence rather than an extract
 
 ### Phase 12: Continuous Adversarial Validation & Rich Dashboard
 **Goal**: Move red-team from one-shot CI to continuous validation with trend tracking and campaign-style attacks, backed by health monitoring, conversation tracing, and a rich operator dashboard.

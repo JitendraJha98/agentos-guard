@@ -108,7 +108,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **AUD-03** [P0]: Each `AuditRecord` carries the exact policy/constitution version (policy evidence)
 - [x] **AUD-04** [P0]: Sensitive payloads are redacted at write time per policy; redaction fails closed (no write if redaction fails)
 - [x] **AUD-05** [P0]: A verifier (runnable in CI) detects any retroactive edit by re-validating the hash chain; chain checkpoints are externally anchored/signed
-- [ ] **AUD-06** [P1]: The hash chain is upgraded to a Merkle DAG enabling inclusion proofs and partial disclosure
+- [x] **AUD-06** [P1]: The hash chain is upgraded to a Merkle DAG enabling inclusion proofs and partial disclosure
 - [ ] **AUD-07** [P2]: Zero-knowledge compliance proofs prove properties (e.g. "no PII exfiltrated") without revealing underlying data
 - [x] **AUD-08** [P0]: Each `AuditRecord` carries a detached per-record EdDSA signature (reusing identity keys) so a single record verifies independently of the chain — proving the control plane authored that decision
 - [ ] **AUD-09** [P1]: A forensic "evidence graph" reconstructs causal chains by joining the audit log with the materialized agent graph at query time (`parent_action_id`/`conversation_id`/`trace_id`, Postgres recursive CTEs) — no separate graph database
@@ -118,9 +118,9 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **CMP-01** [P0]: Each detector/policy maps to OWASP Agentic Top 10 categories
 - [x] **CMP-02** [P0]: Policy + audit evidence maps to NIST AI RMF (Govern/Map/Measure/Manage)
 - [x] **CMP-03** [P0]: Minimal logging + human-oversight evidence supports EU AI Act Art. 12 / Art. 26 claims at launch (obligations bind 2026-08-02)
-- [ ] **CMP-04** [P1]: Full EU AI Act mapping (risk classification, logging, human oversight) is produced
-- [ ] **CMP-05** [P1]: SOC 2 control evidence (access, change, monitoring) is derived from the audit log
-- [ ] **CMP-06** [P1]: One-click export produces evidence bundles per framework and time range
+- [x] **CMP-04** [P1]: Full EU AI Act mapping (risk classification, logging, human oversight) is produced
+- [x] **CMP-05** [P1]: SOC 2 control evidence (access, change, monitoring) is derived from the audit log
+- [x] **CMP-06** [P1]: One-click export produces evidence bundles per framework and time range
 
 ### Testing & Red-Team
 
@@ -147,9 +147,9 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 ### Economics
 
-- [ ] **ECON-01** [P1]: Token/API cost is attributed to each agent/action
-- [ ] **ECON-02** [P1]: Token/budget limits are expressed as policy; over-budget actions are denied/escalated by the graduated-response engine
-- [ ] **ECON-03** [P1]: GPU usage and downstream API consumption are attributed per agent
+- [x] **ECON-01** [P1]: Token/API cost is attributed to each agent/action
+- [x] **ECON-02** [P1]: Token/budget limits are expressed as policy; over-budget actions are denied/escalated by the graduated-response engine
+- [x] **ECON-03** [P1]: GPU usage and downstream API consumption are attributed per agent
 - [ ] **ECON-04** [P2]: ROI analytics present value-vs-cost per agent/workflow
 
 ### ABOM (Supply Chain)
@@ -293,16 +293,16 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | AUD-03 | Phase 4 | Complete |
 | AUD-04 | Phase 4 | Complete |
 | AUD-05 | Phase 4 | Complete |
-| AUD-06 | Phase 11 | Pending |
+| AUD-06 | Phase 11 | Complete |
 | AUD-07 | Phase 14 | Pending |
 | AUD-08 | Phase 4 | Complete |
 | AUD-09 | Phase 12 | Pending |
 | CMP-01 | Phase 6 | Complete |
 | CMP-02 | Phase 6 | Complete |
 | CMP-03 | Phase 6 | Complete |
-| CMP-04 | Phase 11 | Pending |
-| CMP-05 | Phase 11 | Pending |
-| CMP-06 | Phase 11 | Pending |
+| CMP-04 | Phase 11 | Complete |
+| CMP-05 | Phase 11 | Complete |
+| CMP-06 | Phase 11 | Complete |
 | TEST-01 | Phase 6 | Complete |
 | TEST-02 | Phase 6 | Complete |
 | TEST-03 | Phase 6 | Complete |
@@ -320,9 +320,9 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | OBS-04 | Phase 12 | Pending |
 | OBS-05 | Phase 12 | Pending |
 | OBS-06 | Phase 12 | Pending |
-| ECON-01 | Phase 11 | Pending |
-| ECON-02 | Phase 11 | Pending |
-| ECON-03 | Phase 11 | Pending |
+| ECON-01 | Phase 11 | Complete |
+| ECON-02 | Phase 11 | Complete |
+| ECON-03 | Phase 11 | Complete |
 | ECON-04 | Phase 14 | Pending |
 | ABOM-01 | Phase 8 | Complete |
 | ABOM-02 | Phase 8 | Complete |

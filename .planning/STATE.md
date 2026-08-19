@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: phase_in_progress
-stopped_at: 2026-08-18 — Phase 10 COMPLETE (6/6 slices) on branch phase-10-gateway-adapter-graph, pending PR into development. The single-framework, SDK-only ceiling is broken: a network gateway PEP governs agents with no SDK in their process, a second framework adapter (OpenAI Agents SDK) is intercepted, discovery finds frameworks/shadow/rogue agents from evidence, and the live agent graph is materialized. Phase 6's OSS-01 (first tagged PyPI release) remains the sole open item across Phases 6-10; Phase 11 not started.
-last_updated: 2026-08-18
-last_activity: 2026-08-18
+stopped_at: 2026-08-19 — Phase 11 COMPLETE (6/6 slices), still on branch phase-10-gateway-adapter-graph (the operator asked Phase 11 to continue there), pending PR into development. The audit log is now selectively provable (Merkle inclusion proofs + partial disclosure), agent spend is governed by the SAME graduated engine as everything else rather than a parallel enforcer, and both become evidence a third party can verify without trusting us. Phase 6's OSS-01 (first tagged PyPI release) remains the sole open item across Phases 6-11; Phase 12 not started.
+last_updated: 2026-08-19
+last_activity: 2026-08-19
 progress:
   total_phases: 14
-  completed_phases: 9
-  total_plans: 55
-  completed_plans: 55
-  percent: 68
+  completed_phases: 10
+  total_plans: 61
+  completed_plans: 61
+  percent: 75
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-01)
 
 **Core value:** Every agent action is intercepted at runtime and returned an explainable, graduated decision grounded in policy + a human-readable constitution, with tamper-evident audit evidence — making unsafe agent behavior structurally impossible rather than merely unlikely.
-**Current focus:** Phase 11 — Merkle Audit, Economics, ABOM & Compliance Export (not started). Phases 9 and 10 complete, both pending PR.
+**Current focus:** Phase 12 — Continuous Adversarial Validation & Rich Dashboard (not started). Phases 9, 10 and 11 complete; all pending PR.
 
 ## Current Position
 
-Phase: 10 COMPLETE (2026-08-18) — branch `phase-10-gateway-adapter-graph`, pending PR into `development`
-Plan: Phase 10 delivered as 6 slices covering all 6 requirements — 10a INT-07 gateway PEP, 10b INT-08 OpenAI Agents SDK adapter, 10c DISC-03 framework discovery, 10d DISC-04 shadow agents, 10e DISC-05 rogue agents, 10f DISC-06 live agent graph. Built via the superpowers workflow (spec -> per-slice plan -> subagent implement + two-stage adversarial review + fix + re-review).
-Status: Phases 1–5, 7, 8, 9, 10 complete; Phase 6 ~5/6 (OSS-01 first PyPI release the sole open item). Phase 11 not started.
-Last activity: 2026-08-18
+Phase: 11 COMPLETE (2026-08-19) — branch `phase-10-gateway-adapter-graph` (Phase 11 continued there at the operator's request), pending PR into `development`
+Plan: Phase 11 delivered as 6 slices covering all 7 requirements — 11a AUD-06 Merkle audit, 11b ECON-01 cost attribution, 11c ECON-02 budget as policy, 11d ECON-03 GPU/downstream attribution, 11e CMP-04/05 EU AI Act + SOC 2, 11f CMP-06 evidence export. Built via the superpowers workflow (spec -> per-slice plan -> subagent implement + two-stage adversarial review + fix + re-review). EVERY slice came back NOT APPROVED on its first review pass; the findings were real and the reasoning is recorded in the commit messages.
+Status: Phases 1–5, 7, 8, 9, 10, 11 complete; Phase 6 ~5/6 (OSS-01 first PyPI release the sole open item). Phase 12 not started.
+Last activity: 2026-08-19
 
-Progress: [█████████████] 9/14 phases fully done (1–5, 7–10) + Phase 6 ~5/6
+Progress: [██████████████] 10/14 phases fully done (1–5, 7–11) + Phase 6 ~5/6
 
 ## Performance Metrics
 
@@ -119,6 +119,14 @@ Recent decisions affecting current work:
 - [Phase 10]: [10e] DISC-05 separates "never declared anything" from "declared and exceeded" via observed-class provenance — without it, every agent that has not published a manifest floods the finding stream on first contact and the signal drowns.
 - [Phase 10]: [10f] DISC-06 builds only from IDENTITY-VERIFIED actions and advances a watermark (incremental, not a full rescan). The read returns a subgraph that is bounded AND closed — an edge is admitted only while both endpoints fit the node budget, since a view containing edges to absent nodes is wrong, not partial. **Lineage is CLAIMED, not proven:** `identity_verified` authenticates who ACTED, not that `parent_action_id` names a real delegation; closing that half needs the TRST-04 authority cross-check (Phase 13).
 
+- [Phase 11]: [11a] AUD-06 is ADDITIVE — an RFC-6962 tree over `record_hash` values the chain already holds. Replacing the chain would have invalidated the very evidence the phase exists to make provable. `verify_bundle` is what an auditor runs; `verify_inclusion` alone binds only a hash and must never be handed to one. A root proves INCLUSION, not COMPLETENESS: no root can testify that nothing was withheld before sealing (witness quorum, Phase 14).
+- [Phase 11]: [11a] The epoch row is attacker-writable, so the verifier measures it against the chain's own `merkle_epoch_sealed` announcement — and requires that announcement to be SIGNED, because appending is free and only signing is not. Deleting an epoch row is caught too: the chain still announces the epoch, so a missing row is a violation rather than a check that silently did not run.
+- [Phase 11]: [11b] Usage is REPORTED, never inferred. Unrecognized usage records NOTHING (not zero — "free" and "unknown" must not collapse), an unpriced model keeps its tokens with a null cost, and usage is refused from any result a provider did not vouch for: an untrusted tool/MCP result forged $1.25M onto one call in review. Money is integer micro-USD because 11c makes DECISIONS on the sum.
+- [Phase 11]: [11c] ECON-02's claim is proven by DELETING the principle and requiring the over-budget action to become an allow — if anything else still blocked, that would be the parallel enforcer the requirement forbids. Overshoot is bounded by what is IN FLIGHT, not by one action; the gate reads accumulated fact because a call's cost is unknowable before it returns. An agent with no budget row is NOT over budget: absence of a budget is not evidence of a breach.
+- [Phase 11]: [11d] Every GPU figure carries the label saying WHAT IT MEASURED (process | device_shared), and the label travels with the number into the audit body. A device-wide counter cannot be honestly divided among concurrent agents — this is Slice 9c's tracemalloc finding on different hardware. `provider` is the action's own target, never a vendor inferred from it, and it is the first roll-up key an AGENT chooses, so it is ordered by call volume rather than alphabetically.
+- [Phase 11]: [11e] EVIDENCE, NEVER CONFORMITY (D-8). Risk classification is operator-declared because the same agent is high-risk in a hiring pipeline and minimal-risk summarizing notes — guessing harms in both directions. Every citation was verified against primary sources (EUR-Lex consolidated OJ; the AICPA TSP 100 PDF) and anything unverifiable was DROPPED. Every "Art." in a section — key or list value — requires the disclaimer in that same section; the earlier key-only guard had a documented blind spot and something was duly threaded through it.
+- [Phase 11]: [11f] CMP-06 is the payoff: a bundle verifiable STANDALONE against an anchored root, so an auditor gets the records they are entitled to and learns nothing about the rest. Its counters say what was actually CHECKED (records_anchor_verified, records_externally_anchored, records_signature_verified) rather than what was promised — the HTTP route holds no public key, so it checks no signatures, and the artifact now says so instead of claiming otherwise.
+
 ### Pending Todos
 
 [From .planning/todos/pending/ — ideas captured during sessions]
@@ -128,6 +136,10 @@ None yet.
 ### Blockers/Concerns
 
 [Issues that affect future work]
+
+- **Undeclared package dependency (pre-existing since Phase 9, found independently by two Phase-11 reviewers):** `packages/controlplane/src/agentos_controlplane/resource_governor.py` imports `agentos_sdk.enforce.ResourceLimits` while `packages/controlplane/pyproject.toml` declares only `agentos-contract`. So "the control plane cannot import from the SDK" is a convention, not a fact, and the control plane is not installable standalone. Phase 11 added no new edge (its `Usage` went to `agentos-contract`, the seam both sides already share). Left alone deliberately as out of scope, but it should be tracked and closed.
+- **Phase 11 carry-overs, disclosed rather than silently deferred:** `BudgetReconciler` is wired by no composition root (this repo has none — the Phase-7 reconcilers are operator-wired too), so a multi-process deployment gets no budget convergence until an operator builds the loop. `MerkleSealer.seal()` likewise has no scheduled caller, so the epoch table stays empty and `/audit/disclose` 404s until an operator drives it. The evidence-export route passes no operator public key, so its self-verification checks no signatures — reported honestly as `records_signature_verified: 0` rather than hidden behind a green `chain_verifies`.
+- **Postgres remains unverified for Phases 9-11 (D-14, no Docker on this machine).** Migrations 0023-0027 were applied and reverted on SQLite only. Two Phase-11 findings were specifically Postgres-shaped and unobservable locally: a VARCHAR length SQLite does not enforce, and tied-`recorded_at` paging that SQLite happens to order by rowid.
 
 - **OPERATOR-VISIBLE BEHAVIOR CHANGE (Phase 9, Slice 9a — RUN-03): mid-risk actions are no longer approvable.** `sandbox` used to be substituted onto the approval path, so a mid-risk action parked for a human, could be approved, and then executed. It is now enforced through the new `SandboxRunner` seam: the real handler is NEVER awaited, so the action is contained rather than approvable. **Any deployment that wires a coordinator but not a sandbox runner must add one** — `GovernanceMiddleware(pipeline, token, sandbox=QuarantineSandbox(session_factory, audit))` — or every `sandbox` outcome (the default band above `sandbox_at=0.4`, plus every `allow` hardened by low trust) fails closed as a hard `Blocked by agentos-guard` with no approval request and no `sandbox_run` containment record. Wiring shown in `packages/sdk/README.md` and run end-to-end by `agentos_sdk.quickstart`. Contained outcomes now also return `ToolMessage(status="error")`, so a consumer branching on LangChain's tool-failure convention no longer reads a quarantine as a success.
 - **EU AI Act clock (hard external date):** high-risk obligations bind **2026-08-02**. CMP-03 (minimal Art. 12/26 evidence claim) is **delivered** (PR #16 — `agentos_controlplane.compliance.export_compliance_evidence` + CLI). Resolved.
