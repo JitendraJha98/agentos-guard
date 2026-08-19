@@ -22,6 +22,7 @@ from agentos_controlplane.approvals import AlreadyResolvedError, ApprovalStore
 from agentos_controlplane.auth import make_require_token, resolve_api_token
 from agentos_controlplane.circuit_breaker import CircuitBreakerStore
 from agentos_controlplane.budget import BudgetLedger
+from agentos_controlplane.compliance import export_evidence_bundle, parse_time_bound
 from agentos_controlplane.economics import CostRecorder
 from agentos_controlplane.framework_discovery import FrameworkDetector
 from agentos_controlplane.graph import AgentGraphStore
@@ -378,13 +379,15 @@ def build_inventory_router(
     sealer: MerkleSealer | None = None,
     cost: CostRecorder | None = None,
     budget: BudgetLedger | None = None,
+    # CMP-06: appended last, like every collaborator before it.
+    session_factory=None,
 ) -> APIRouter:
     """DISC-01/02 — read API over the authoritative agent inventory, plus the DISC-03 framework
     inventory, the DISC-04 shadow-agent sightings, the DISC-05 rogue-agent findings, the DISC-06
-    live agent graph, the AUD-06 sealed audit epochs, the ECON-01 cost roll-up and the ECON-02
-    budgets: further collaborators on the SAME router rather than new ones, so the gated surface
-    over "what is actually out there" — and what happened, what it cost, and what it may cost —
-    stays one place."""
+    live agent graph, the AUD-06 sealed audit epochs, the ECON-01 cost roll-up, the ECON-02
+    budgets and the CMP-06 evidence export: further collaborators on the SAME router rather than
+    new ones, so the gated surface over "what is actually out there" — and what happened, what it
+    cost, and what it may cost — stays one place."""
     router = APIRouter()
 
     @router.get("/inventory")
@@ -477,6 +480,36 @@ def build_inventory_router(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except MerkleError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.get("/compliance/export/{framework}")
+    def export_bundle(framework: str, start: str | None = None, end: str | None = None) -> dict:
+        """CMP-06 — the one-click evidence bundle: this framework's mapping, the evidence derived
+        for this range, the in-range audit records, and their inclusion proofs against an anchored
+        root.
+
+        Gated like the AUD-06 disclosure route beside it: an evidence bundle is a curated disclosure
+        of who did what, and deciding who receives it is the operator's call rather than a URL's.
+
+        A 422 means this request cannot produce an HONEST bundle — an unparseable bound, an unknown
+        framework, or a store whose contents the mapping refuses to describe. Every one of those is
+        answered with a refusal rather than a smaller bundle, because the alternative to a bad range
+        is the whole log and the alternative to a bad framework is an empty artifact that reads as
+        "no evidence exists". A 409 is the different, louder failure the disclosure route already
+        draws: the records exist and their evidence does not check out.
+        """
+        if session_factory is None:
+            raise HTTPException(status_code=404, detail="evidence export is not wired")
+        try:
+            return export_evidence_bundle(
+                framework,
+                session_factory,
+                start=parse_time_bound(start),
+                end=parse_time_bound(end),
+            )
+        except MerkleIntegrityError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @router.get("/economics/costs")
     def cost_totals(limit: int = 200, offset: int = 0) -> list[dict]:
@@ -612,6 +645,8 @@ def create_app(
     breaker_store: CircuitBreakerStore | None = None,
     api_token: str | None = None,
     registry: Registry | None = None,
+    # Also enables the CMP-06 export route (see build_inventory_router): the store IS the audit log
+    # the bundle is evidence from, so there is no second collaborator to supply for it.
     session_factory=None,
     dashboard: bool = False,
     # DISC-03: appended LAST so no existing positional caller shifts.
@@ -653,7 +688,9 @@ def create_app(
     # disclose and to whom, so the bundle is never a public endpoint. ECON-01's cost roll-up too:
     # what an agent spends maps onto which workloads a deployment runs and how heavily. ECON-02's
     # budget routes need the gate most of all — they WRITE, and raising a budget is how an
-    # over-budget agent is unblocked, so an ungated one would be a governance bypass.
+    # over-budget agent is unblocked, so an ungated one would be a governance bypass. CMP-06's
+    # export is the same call as AUD-06's disclosure taken in bulk: a curated statement of who did
+    # what, addressed to one recipient the operator chose.
     if inventory_store is not None:
         app.include_router(
             build_inventory_router(
@@ -665,6 +702,7 @@ def create_app(
                 sealer,
                 cost,
                 budget,
+                session_factory,
             ),
             dependencies=guard,
         )
