@@ -60,6 +60,13 @@ DISTINCT-agent dimension is capped like the DISC-04 shadow store and the DISC-06
 `max_agents` the remainder folds into the single `<overflow>` bucket, so the counts stay whole and
 the page SAYS there is more instead of truncating silently. The scan itself is bounded by the window
 and streamed in chunks — a memory bound, not a result bound, so no count is ever clipped.
+
+CONTAINED AGENTS CLAIM THE BUDGET FIRST. The cap is spent in scan order, so on a large fleet the
+agents a breaker cut off — the ones this page exists for — are exactly the ones that would lose
+their row, because containment is what made them quiet. They are operator/system state derived from
+real agents rather than attacker-chosen cardinality, so they are seeded into the read before the
+scan begins, and whatever containment still falls past the cap is summed into the `<overflow>` row
+rather than reported there as `0`. `0` would be the positive claim "nothing is holding these back".
 """
 
 from __future__ import annotations
@@ -102,6 +109,20 @@ def _as_utc_naive(moment: datetime) -> datetime:
     return moment if moment.tzinfo is None else moment.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def _iso_utc(moment: datetime) -> str:
+    """The instant, in UTC, whether it was read back naive or aware.
+
+    `created_at` reads back UTC-naive on SQLite and AWARE (in the session's timezone) on the
+    Postgres target, where the column is `DateTime(timezone=True)`. Stamping UTC onto an aware value
+    instead of converting it would move a liveness timestamp by the session offset — an operator in
+    UTC+05:30 would read 23:30 local as 23:30Z, five and a half hours off, on the one field D-5
+    leaves them.
+    """
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc).isoformat()
+    return moment.astimezone(timezone.utc).isoformat()
+
+
 def _identity_verified(body: dict) -> bool:
     """Did the identity stage itself vouch for this record's `agent_id`?
 
@@ -131,6 +152,27 @@ class _Counts:
 
 
 @dataclass(frozen=True)
+class _Containment:
+    """How many of an agent's breakers are OPEN, and how many are HALF_OPEN.
+
+    Two counts rather than one, because they are different statements to an operator: an open
+    breaker refuses, while a half-open one is serving a cooldown between single trials. Reporting a
+    recovering agent as `breakers_open` would say it is cut off when it is executing again — and
+    reporting neither would say nothing is holding back an agent throttled to one action per
+    cooldown.
+    """
+
+    open: int = 0
+    half_open: int = 0
+
+    def __add__(self, other: "_Containment") -> "_Containment":
+        return _Containment(self.open + other.open, self.half_open + other.half_open)
+
+
+_UNCONTAINED = _Containment()
+
+
+@dataclass(frozen=True)
 class AgentHealth:
     """One agent's health over one window. `as_dict` is the ONLY serializer, so a rate can never
     reach a caller without the two counts that produced it."""
@@ -143,6 +185,7 @@ class AgentHealth:
     blocked: int
     resource_limit_breaches: int
     breakers_open: int
+    breakers_half_open: int = 0
     execution_failures: int | None = None
 
     @property
@@ -164,15 +207,14 @@ class AgentHealth:
             # reader knows how far back we looked.
             "window_hours": self.window_hours,
             "last_seen_at": (
-                self.last_seen_at.replace(tzinfo=timezone.utc).isoformat()
-                if self.last_seen_at is not None
-                else None
+                _iso_utc(self.last_seen_at) if self.last_seen_at is not None else None
             ),
             "actions": self.actions,
             "executed": self.executed,
             "blocked": self.blocked,
             "resource_limit_breaches": self.resource_limit_breaches,
             "breakers_open": self.breakers_open,
+            "breakers_half_open": self.breakers_half_open,
             "execution_failures": self.execution_failures,
             "execution_failure_rate": self.execution_failure_rate,
         }
@@ -189,51 +231,72 @@ class HealthStore:
 
     def for_agent(self, agent_id: str, *, window: timedelta = _DEFAULT_WINDOW) -> dict:
         """One agent's health. An agent with no records answers with zeros and a null
-        `last_seen_at` — never an invented timestamp and never a verdict."""
+        `last_seen_at` — never an invented timestamp and never a verdict.
+
+        Cost is O(records in the window), not O(this agent's records): the filter is applied in
+        Python because `agent_id` lives inside the JSON body. Fine for one call on an operator
+        surface; a caller rendering a row PER AGENT should read `fleet()` once instead.
+        """
         counts = self._scan(window, only=agent_id).get(agent_id) or _Counts()
-        return self._row(agent_id, counts, window, self._open_breakers()).as_dict()
+        contained = self._open_breakers().get(agent_id, _UNCONTAINED)
+        return self._row(agent_id, counts, window, contained).as_dict()
 
     def fleet(self, *, window: timedelta = _DEFAULT_WINDOW, limit: int = _MAX_AGENTS) -> list[dict]:
         """Every agent seen acting in the window, plus every agent currently held by a breaker.
 
         The contained ones matter most and are the easiest to lose: an OPEN breaker DENIES, so
         containment itself makes an agent quiet, and a read of the audit log alone would drop
-        exactly the row the operator opened this page for.
-
-        Busiest first, so a truncated read keeps the rows worth looking at.
+        exactly the row the operator opened this page for. So they are SEEDED into the read before
+        the scan and claim the budget first — otherwise a busy fleet spends the whole budget before
+        the scan ever reaches them, and the page reports nothing contained mid-incident.
 
         `limit` is the budget of NAMED agents, applied while the window is streamed. It is not a
         slice of the answer afterwards: trimming rows off the end would throw away the counts they
         carried, which is the silent truncation the `<overflow>` bucket exists to avoid. The bucket
         therefore rides ALONGSIDE the budget rather than inside it.
+
+        Which agents get named is therefore SCAN ORDER (the contained ones, then whoever the window
+        meets first) — not the busiest. The final sort only orders the rows already chosen; it does
+        not select them, and a truncated read is not a top-N.
         """
         budget = max(1, min(int(limit), self._max_agents))
-        counts = self._scan(window, budget=budget)
         breakers = self._open_breakers()
-        rows = [self._row(agent_id, c, window, breakers) for agent_id, c in counts.items()]
-        for agent_id in sorted(breakers):
-            if agent_id not in counts and len(rows) <= budget:
-                rows.append(self._row(agent_id, _Counts(), window, breakers))
+        counts = self._scan(window, budget=budget, seed=sorted(breakers))
+        held = {agent_id: breakers.get(agent_id, _UNCONTAINED) for agent_id in counts}
+        if OVERFLOW_ID in held:
+            # Whatever containment fell past the cap is summed here rather than left at 0: the
+            # bucket's job is to keep the counts whole and say there is more, and `0` on the one
+            # row that folded contained agents would instead claim there is nothing to see.
+            for agent_id, contained in breakers.items():
+                if agent_id not in counts:
+                    held[OVERFLOW_ID] = held[OVERFLOW_ID] + contained
+        rows = [self._row(agent_id, c, window, held[agent_id]) for agent_id, c in counts.items()]
         rows.sort(key=lambda r: (-r.actions, r.agent_id))
         return [r.as_dict() for r in rows]
 
     # ------------------------------------------------------------------------------ internals
 
-    def _open_breakers(self) -> dict[str, int]:
-        """agent_id -> how many of its breakers are open. Both scopes count: an agent-scope breaker
-        contains it everywhere and a tool-scope one contains it on that tool, and an operator
-        reading a health page wants to know that anything is holding it back."""
+    def _open_breakers(self) -> dict[str, _Containment]:
+        """agent_id -> its breaker states. Both scopes count: an agent-scope breaker contains it
+        everywhere and a tool-scope one contains it on that tool, and an operator reading a health
+        page wants to know that anything is holding it back.
+
+        `list_open()` returns every NON-CLOSED breaker, so the two states are separated here rather
+        than summed — see `_Containment`.
+        """
         if self._breakers is None:
             return {}
-        counts: dict[str, int] = {}
+        counts: dict[str, _Containment] = {}
         for row in self._breakers.list_open():
             agent_id = row.get("agent_id")
-            if agent_id:
-                counts[agent_id] = counts.get(agent_id, 0) + 1
+            if not agent_id:
+                continue
+            one = _Containment(half_open=1) if row.get("state") == "half_open" else _Containment(1)
+            counts[agent_id] = counts.get(agent_id, _UNCONTAINED) + one
         return counts
 
     def _row(
-        self, agent_id: str, counts: _Counts, window: timedelta, breakers: dict[str, int]
+        self, agent_id: str, counts: _Counts, window: timedelta, contained: _Containment
     ) -> AgentHealth:
         return AgentHealth(
             agent_id=agent_id,
@@ -243,16 +306,24 @@ class HealthStore:
             executed=counts.executed,
             blocked=counts.blocked,
             resource_limit_breaches=counts.breaches,
-            breakers_open=breakers.get(agent_id, 0),
+            breakers_open=contained.open,
+            breakers_half_open=contained.half_open,
             # Not recoverable from the chain — see the module docstring. Null, deliberately, so
             # nothing downstream substitutes the denial count for it.
             execution_failures=None,
         )
 
     def _scan(
-        self, window: timedelta, only: str | None = None, budget: int | None = None
+        self,
+        window: timedelta,
+        only: str | None = None,
+        budget: int | None = None,
+        seed: list[str] | None = None,
     ) -> dict[str, _Counts]:
         """Stream the window once and accumulate per agent.
+
+        `seed` pre-creates buckets (for the contained agents) so they claim the budget BEFORE the
+        scan can spend it, and so an agent that acts nowhere in the window still gets a row.
 
         One pass over both record shapes: DECISION records (which carry an `outcome`) give the
         activity counts and the liveness fact, and the RUN-05 `resource_limit_exceeded` EVENTS give
@@ -267,6 +338,8 @@ class HealthStore:
             )
         since = _as_utc_naive(datetime.now(timezone.utc) - window)
         acc: dict[str, _Counts] = {}
+        for agent_id in seed or ():
+            _bucket(acc, agent_id, budget)
         stmt = (
             select(AuditRecord.body, AuditRecord.created_at)
             .where(AuditRecord.created_at >= since)
@@ -284,20 +357,29 @@ class HealthStore:
                     # and it needs no identity filter: it is raised at the execution site, after a
                     # PERMITTED decision, so identity has already been verified for it.
                     if kind == _BREACH_EVENT:
-                        _bucket(acc, agent_id, budget).breaches += 1
+                        # A breach is raised at the EXECUTION site, so it is direct evidence the
+                        # agent acted — it advances liveness too. Leaving it out produced the one
+                        # row that contradicts itself: "never seen acting" beside "breached a
+                        # resource budget", whenever the two records straddle the window edge.
+                        _touch(_bucket(acc, agent_id, budget), created_at).breaches += 1
                     continue
                 outcome = body.get("outcome")
                 if outcome is None or not _identity_verified(body):
                     continue
-                counts = _bucket(acc, agent_id, budget)
+                counts = _touch(_bucket(acc, agent_id, budget), created_at)
                 counts.actions += 1
                 if outcome in _EXECUTED_OUTCOMES:
                     counts.executed += 1
                 elif outcome in _BLOCKED_OUTCOMES:
                     counts.blocked += 1
-                if counts.last_seen_at is None or created_at > counts.last_seen_at:
-                    counts.last_seen_at = created_at
         return acc
+
+
+def _touch(counts: _Counts, created_at: datetime) -> _Counts:
+    """Advance `last_seen_at` to the latest evidence of this agent acting."""
+    if counts.last_seen_at is None or created_at > counts.last_seen_at:
+        counts.last_seen_at = created_at
+    return counts
 
 
 def _bucket(acc: dict[str, _Counts], agent_id: str, budget: int | None) -> _Counts:

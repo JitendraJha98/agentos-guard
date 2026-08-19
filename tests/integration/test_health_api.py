@@ -137,6 +137,26 @@ def test_three_denials_do_not_arrive_as_a_seventy_five_percent_error_rate(client
     assert a1["executed"] == 1 and a1["blocked"] == 3 and a1["execution_failures"] is None
 
 
+def test_containment_crosses_the_wire_by_STATE_not_as_one_number(store, audit, seeded) -> None:
+    """The dashboard downstream reads these two fields. An open breaker refuses; a half-open one is
+    serving a cooldown between single trials — summing them would tell an operator that a recovering
+    agent is cut off, and dropping the half-open one would say nothing is holding back an agent
+    throttled to one action per cooldown."""
+    breakers = _Breakers(
+        [
+            {"scope": "agent", "agent_id": "a1", "target": "", "state": "open", "opened_at": 1.0},
+            {"scope": "tool", "agent_id": "a2", "target": "http_get", "state": "half_open",
+             "opened_at": 1.0},
+        ]
+    )
+    client = TestClient(_app(store, audit, HealthStore(store, breakers=breakers)))
+
+    rows = {r["agent_id"]: r for r in client.get("/health/agents", headers=AUTH).json()}
+
+    assert (rows["a1"]["breakers_open"], rows["a1"]["breakers_half_open"]) == (1, 0)
+    assert (rows["a2"]["breakers_open"], rows["a2"]["breakers_half_open"]) == (0, 1)
+
+
 def test_the_window_narrows_the_read(client, store) -> None:
     """`hours` has to actually reach the query. A window accepted and ignored shows an operator last
     quarter's activity as if it were this morning's."""

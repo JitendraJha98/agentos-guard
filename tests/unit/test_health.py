@@ -294,6 +294,111 @@ def test_a_contained_agent_appears_even_with_no_activity_in_the_window(store) ->
     assert rows["contained"]["actions"] == 0
 
 
+def test_a_contained_agent_keeps_its_row_on_a_fleet_that_fills_the_budget(store, audit) -> None:
+    """The cap is spent in SCAN ORDER, and containment is what makes an agent quiet — so on a busy
+    fleet the contained agent is precisely the one the budget never reaches. It has to claim its slot
+    BEFORE the scan, or the page reports nothing contained during the incident it exists for."""
+    for i in range(8):
+        seed(audit, f"noisy{i}", ["allow"])
+    breakers = _Breakers(
+        [{"scope": "agent", "agent_id": "contained", "target": "", "state": "open",
+          "opened_at": 1.0}]
+    )
+
+    rows = {r["agent_id"]: r for r in HealthStore(store, breakers=breakers, max_agents=3).fleet()}
+
+    assert rows["contained"]["breakers_open"] == 1
+    assert rows["contained"]["actions"] == 0
+
+
+def test_a_contained_agent_that_is_still_acting_is_not_folded_into_the_overflow_bucket(
+    store, audit
+) -> None:
+    """Same loss, one step later: the agent acts, but eight others acted first, so the budget is
+    gone by the time the scan meets it and its breaker disappears into a bucket."""
+    for i in range(8):
+        seed(audit, f"noisy{i}", ["allow"])
+    seed(audit, "contained", ["deny"])
+    breakers = _Breakers(
+        [{"scope": "tool", "agent_id": "contained", "target": "http_get", "state": "open",
+          "opened_at": 1.0}]
+    )
+
+    rows = {r["agent_id"]: r for r in HealthStore(store, breakers=breakers, max_agents=3).fleet()}
+
+    assert rows["contained"]["breakers_open"] == 1
+    assert rows["contained"]["blocked"] == 1
+
+
+def test_no_open_breaker_is_lost_or_reported_as_zero_when_the_read_is_capped(store) -> None:
+    """More contained agents than the hard cap allows rows. The cap still holds — but the breakers
+    that fold are SUMMED into the bucket, because `0` there is the positive claim "nothing is holding
+    these back" about the one row that is holding contained agents."""
+    breakers = _Breakers(
+        [{"scope": "agent", "agent_id": f"c{i:04d}", "target": "", "state": "open", "opened_at": 1.0}
+         for i in range(600)]
+    )
+
+    rows = HealthStore(store, breakers=breakers, max_agents=10_000).fleet(limit=10_000)
+
+    assert len(rows) <= 501, "max_agents cannot be raised past the hard cap"
+    assert OVERFLOW_ID in {r["agent_id"] for r in rows}
+    assert sum(r["breakers_open"] for r in rows) == 600, "no containment falls off the page"
+
+
+def test_a_half_open_breaker_is_reported_as_half_open_rather_than_as_open(store) -> None:
+    """A half-open breaker is serving a cooldown between single trials — the agent is throttled, not
+    cut off. Counting it as open says "contained" about an agent that is executing again; counting it
+    nowhere says nothing is holding back an agent limited to one action per cooldown."""
+    breakers = _Breakers(
+        [{"scope": "agent", "agent_id": "recovering", "target": "", "state": "half_open",
+          "opened_at": 1.0}]
+    )
+
+    row = HealthStore(store, breakers=breakers).for_agent("recovering")
+
+    assert row["breakers_open"] == 0
+    assert row["breakers_half_open"] == 1
+
+
+def test_a_resource_breach_is_evidence_the_agent_acted(store, audit) -> None:
+    """RUN-05 breaches are raised at the EXECUTION site. A row reading "never seen acting" beside
+    "breached a resource budget" contradicts itself, and it under-reports liveness for exactly the
+    agent that was executing longest — the one whose decision record fell the other side of the
+    window edge."""
+    asyncio.run(
+        audit.append_event(
+            "resource_limit_exceeded",
+            {"action_id": "x", "agent_id": "a1", "action_type": "tool_call",
+             "limit": "wall_s", "budget": 1.0, "observed": 9.0},
+        )
+    )
+
+    health = HealthStore(store).for_agent("a1")
+
+    assert health["resource_limit_breaches"] == 1
+    assert health["last_seen_at"] is not None
+    assert health["actions"] == 0, "an event record is still not an action"
+
+
+def test_an_aware_last_seen_at_is_converted_to_utc_not_relabelled() -> None:
+    """`created_at` reads back naive on SQLite and AWARE on the Postgres target. Stamping UTC onto an
+    aware value moves the instant by the session offset — five and a half hours, on the one field
+    D-5 leaves the operator."""
+    row = AgentHealth(
+        agent_id="a1",
+        window_hours=24.0,
+        last_seen_at=datetime(2026, 8, 19, 23, 30, tzinfo=timezone(timedelta(hours=5, minutes=30))),
+        actions=1,
+        executed=1,
+        blocked=0,
+        resource_limit_breaches=0,
+        breakers_open=0,
+    )
+
+    assert row.as_dict()["last_seen_at"] == "2026-08-19T18:00:00+00:00"
+
+
 def test_the_window_filters(store, audit) -> None:
     """A health page showing last quarter's activity as if it were today's is worse than no health
     page: it reports a dead agent as busy."""
