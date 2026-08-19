@@ -12,6 +12,7 @@ import inspect
 
 import agentos_pipeline.risk as _risk_pkg
 import agentos_pipeline.sequence as _sequence_mod
+import pytest
 from agentos_contract.decision import Outcome
 from agentos_controlplane.compliance import (
     CONTROL_MAPPINGS,
@@ -19,6 +20,8 @@ from agentos_controlplane.compliance import (
     LIVE_DETECTOR_CONTROLS,
     NIST_RMF,
     OWASP_AGENTIC,
+    RISK_CLASSIFICATIONS,
+    export_compliance_evidence,
 )
 
 _CONTROL_KEYS = {m.control for m in CONTROL_MAPPINGS}
@@ -140,3 +143,88 @@ def test_p0_audit_and_identity_capabilities_are_mapped():
         "constitution_policy_floor",
     ):
         assert key in _CONTROL_KEYS, f"missing P0 capability mapping: {key}"
+
+
+# --- (e) CMP-04: the OPERATOR-DECLARED risk classification -----------------
+
+
+@pytest.fixture
+def registry():
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    from agentos_controlplane.registry import Registry
+    from agentos_controlplane.store.engine import create_all, create_session_factory
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    create_all(engine)
+    return Registry(create_session_factory(engine))
+
+
+def _classifications(registry) -> dict:
+    return export_compliance_evidence(registry._session_factory)["eu_ai_act"][
+        "risk_classifications"
+    ]
+
+
+def test_an_undeclared_agent_is_reported_as_undeclared_not_defaulted(registry):
+    """Defaulting a legal classification is the single most harmful thing this module could do:
+    a false 'high_risk' burdens a deployer with obligations they do not have, and a false
+    'minimal_risk' tells them to skip ones they do. 'We do not know' must survive to the export."""
+    registry.register("a1")
+
+    assert _classifications(registry)["a1"] == "undeclared"
+
+
+def test_a_declared_classification_is_echoed_verbatim(registry):
+    registry.register("a2")
+    registry.declare_risk_classification("a2", "high_risk")
+
+    assert _classifications(registry)["a2"] == "high_risk"
+
+
+def test_a_declaration_can_be_withdrawn_back_to_undeclared(registry):
+    """An operator who realises they classified a deployment wrongly must be able to say so.
+    Withdrawal returns the agent to 'undeclared' — not to a 'safe' default class, which would be
+    the same fabrication in the opposite direction."""
+    registry.register("a3")
+    registry.declare_risk_classification("a3", "prohibited")
+
+    registry.declare_risk_classification("a3", None)
+
+    assert _classifications(registry)["a3"] == "undeclared"
+
+
+def test_an_unknown_classification_is_refused(registry):
+    """The column is a plain string on every backend, so this setter is the only gate. A typo'd
+    'high-risk' stored verbatim would be echoed into a regulator-facing bundle as if it were the
+    Act's own vocabulary."""
+    registry.register("a4")
+
+    with pytest.raises(ValueError, match="risk classification"):
+        registry.declare_risk_classification("a4", "high-risk")
+
+    assert _classifications(registry)["a4"] == "undeclared"
+
+
+def test_declaring_for_an_unregistered_agent_is_refused(registry):
+    """Silently accepting it would leave an operator believing a classification is on file for an
+    agent that has none."""
+    with pytest.raises(ValueError, match="not registered"):
+        registry.declare_risk_classification("never-registered", "minimal_risk")
+
+
+def test_the_accepted_vocabulary_is_the_acts_own_risk_tiers():
+    assert RISK_CLASSIFICATIONS == frozenset(
+        {"prohibited", "high_risk", "limited_risk", "minimal_risk"}
+    )
+
+
+def test_without_a_registry_the_bundle_claims_nothing_about_any_fleet():
+    """An empty `risk_classifications: {}` reads as 'this fleet has no agents'. With no store
+    supplied we know nothing about any fleet, and the honest output is to say nothing at all."""
+    assert "risk_classifications" not in export_compliance_evidence()["eu_ai_act"]

@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from agentos_controlplane.certificates import CertificateAuthority, generate_agent_keypair
+from agentos_controlplane.compliance import RISK_CLASSIFICATIONS
 from agentos_controlplane.identity_engine import IdentityEngine
 from agentos_controlplane.inventory import InventoryStore
 from agentos_controlplane.store.models import Agent, RevokedCertificate, TrustProfile
@@ -144,6 +145,32 @@ class Registry:
             private_key_pem=private_pem,
             ca_certificate_pem=self._ca.ca_certificate_pem if self._ca else None,
         )
+
+    def declare_risk_classification(self, agent_id: str, classification: str | None) -> None:
+        """CMP-04 — record the EU AI Act risk class an OPERATOR declares for this agent (D-8).
+
+        This setter is the ONLY gate on the value: the column is a plain string on every backend
+        (D-14), so a typo'd 'high-risk' accepted here would be echoed verbatim into a
+        regulator-facing bundle as if it were the Act's own vocabulary.
+
+        `None` WITHDRAWS the declaration back to undeclared, rather than to some 'safe' default —
+        an operator correcting a wrong classification must be able to return to "we have not
+        determined this", which is the only honest state between the two harmful guesses.
+
+        Declaring for an unregistered agent raises rather than no-oping: silently accepting it
+        would leave an operator believing a classification is on file where there is no row at all.
+        """
+        if classification is not None and classification not in RISK_CLASSIFICATIONS:
+            raise ValueError(
+                f"unknown EU AI Act risk classification {classification!r}; "
+                f"expected one of {sorted(RISK_CLASSIFICATIONS)} or None (undeclared)"
+            )
+        with self._session_factory() as session:
+            agent = session.get(Agent, agent_id)
+            if agent is None:
+                raise ValueError(f"agent {agent_id!r} is not registered")
+            agent.risk_classification = classification
+            session.commit()
 
     # ---- IDN-03 certificate lifecycle ----
 

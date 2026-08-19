@@ -91,6 +91,55 @@ def test_0026_is_reversible_without_taking_the_pre_existing_row_with_it(
         assert c.execute(text("SELECT count(*) FROM cost_record")).scalar_one() == 1
 
 
+def _insert_legacy_agent_row(engine) -> None:
+    """One agent as 0026 knew how to write it: no risk classification column at all."""
+    with engine.begin() as c:
+        c.execute(text("INSERT INTO agent (agent_id, trust_score) VALUES ('a1', 0.5)"))
+
+
+def test_0027_does_not_backfill_a_risk_classification(alembic_on_a_scratch_db) -> None:
+    """An agent registered before CMP-04 genuinely has no declaration on file, and this is the one
+    column in the schema where a default is a legal claim about someone else's deployment.
+    'minimal_risk' would tell a deployer to skip obligations they may have; 'high_risk' would
+    burden them with obligations they do not. NULL is the only honest value, and the export turns
+    it into "undeclared".
+    """
+    config, engine = alembic_on_a_scratch_db
+    command.upgrade(config, "0026_cost_provider_gpu")
+    _insert_legacy_agent_row(engine)
+
+    command.upgrade(config, "head")
+
+    with engine.begin() as c:
+        assert c.execute(text("SELECT risk_classification FROM agent")).scalar_one() is None
+
+
+def test_0027_is_reversible_without_taking_the_agent_with_it(alembic_on_a_scratch_db) -> None:
+    """The declaration is an annotation on a registered agent; backing the migration out must drop
+    the annotation, never the identity it was attached to."""
+    config, engine = alembic_on_a_scratch_db
+    command.upgrade(config, "0026_cost_provider_gpu")
+    _insert_legacy_agent_row(engine)
+    command.upgrade(config, "head")
+    with engine.begin() as c:
+        c.execute(text("UPDATE agent SET risk_classification = 'high_risk'"))
+
+    command.downgrade(config, "0026_cost_provider_gpu")
+
+    with engine.begin() as c:
+        assert c.execute(text("SELECT count(*) FROM agent")).scalar_one() == 1
+        columns = {r[1] for r in c.execute(text("PRAGMA table_info(agent)"))}
+    assert "risk_classification" not in columns
+
+    command.upgrade(config, "head")  # and forward again, so the branch is not one-way
+
+    with engine.begin() as c:
+        # The declaration did NOT survive the round trip, and must come back as undeclared rather
+        # than as whatever it was before — a dropped column is dropped data, and re-adding it must
+        # not resurrect a legal classification nobody re-declared.
+        assert c.execute(text("SELECT risk_classification FROM agent")).scalar_one() is None
+
+
 def test_the_migration_chain_has_exactly_one_head(alembic_on_a_scratch_db) -> None:
     """Two heads is the failure mode of parallel slices on one branch, and it does not show up
     until an operator runs `upgrade head` and gets an error instead of a schema."""

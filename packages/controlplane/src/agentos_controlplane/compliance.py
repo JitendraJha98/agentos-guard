@@ -25,6 +25,29 @@ EU_AI_ACT = {
     "Art.26": "Deployer obligations & human oversight",
 }
 
+# CMP-04 — the risk tiers an OPERATOR may declare for a deployment (Art. 6 / Annex III).
+# Never inferred. Which tier applies depends on the USE CASE, not on anything a runtime can observe:
+# the same agent is high-risk in a hiring pipeline and minimal-risk summarizing meeting notes. A
+# wrong guess harms in both directions — it burdens a deployer with obligations they do not have, or
+# tells them to skip ones they do. Absent = UNDECLARED, which the export reports as undeclared.
+RISK_CLASSIFICATIONS = frozenset({"prohibited", "high_risk", "limited_risk", "minimal_risk"})
+UNDECLARED = "undeclared"
+
+# D-8, in one string. It travels INSIDE the eu_ai_act section rather than beside it, so the articles
+# cannot be lifted out of the bundle and forwarded without it. Art. 6 / Annex III (classification)
+# and Art. 43 (conformity assessment) are cited because they are the two determinations this tool
+# must not pre-empt — both belong to the deployer, their counsel, or a notified body.
+EU_AI_ACT_DISCLAIMER = (
+    "Evidence bearing on the obligations these articles create. This is NOT a conformity "
+    "assessment and NOT a claim of compliance: classification under Art. 6 and Annex III, and "
+    "conformity under Art. 43, are determinations for the deployer, their counsel, or a notified "
+    "body — never for this tool."
+)
+RISK_CLASSIFICATION_SOURCE = (
+    "operator-declared, never inferred; 'undeclared' means no operator has declared one for this "
+    "agent's deployment, not that it is low risk"
+)
+
 
 @dataclass(frozen=True)
 class ControlMapping:
@@ -225,8 +248,10 @@ def export_compliance_evidence(session_factory=None, public_key_pem=None) -> dic
         art: {"name": name, "controls": [m.control for m in CONTROL_MAPPINGS if art in m.eu_ai_act]}
         for art, name in EU_AI_ACT.items()
     }
+    eu_section: dict = {"articles": by_eu, "disclaimer": EU_AI_ACT_DISCLAIMER}
     bundle = {
         "frameworks": {"owasp_agentic_2026": by_owasp, "nist_ai_rmf": by_nist, "eu_ai_act": by_eu},
+        "eu_ai_act": eu_section,
         "controls": controls,
         "evidence": {
             "eu_art12_record_keeping": "hash-chained, per-record-signed, fail-closed-redacted audit log (AUD-01/03/04/08)",
@@ -237,11 +262,20 @@ def export_compliance_evidence(session_factory=None, public_key_pem=None) -> dic
         from sqlalchemy import func, select
 
         from agentos_controlplane.audit_verify import verify_chain
-        from agentos_controlplane.store.models import AuditRecord, ChainCheckpoint
+        from agentos_controlplane.store.models import Agent, AuditRecord, ChainCheckpoint
 
         with session_factory() as s:
             bundle["evidence"]["audit_records"] = s.scalar(select(func.count()).select_from(AuditRecord))
             bundle["evidence"]["checkpoints"] = s.scalar(select(func.count()).select_from(ChainCheckpoint))
+            # CMP-04. Added ONLY with a registry to read: an empty `risk_classifications: {}` would
+            # read as "this fleet has no agents", which is a claim about a fleet we cannot see.
+            eu_section["risk_classifications"] = {
+                agent_id: classification or UNDECLARED
+                for agent_id, classification in s.execute(
+                    select(Agent.agent_id, Agent.risk_classification).order_by(Agent.agent_id)
+                ).all()
+            }
+            eu_section["risk_classification_source"] = RISK_CLASSIFICATION_SOURCE
         result = verify_chain(session_factory, public_key_pem=public_key_pem)
         bundle["evidence"]["chain_verifies"] = result.ok
     return bundle

@@ -55,6 +55,14 @@ class Agent(Base):
     cert_serial: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # TRST-01 seed: a single 0-1 score consumed by the graduated-response stage.
     trust_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    # CMP-04 — the EU AI Act risk class the OPERATOR declares for this agent's use case. Never
+    # inferred: the same agent is high-risk in a hiring pipeline and minimal-risk summarizing
+    # meeting notes, and the difference lives in the deployment, not in anything observable here.
+    # NULL means UNDECLARED, which the compliance export reports as undeclared rather than
+    # defaulting to a class. Accepted values are gated at `Registry.declare_risk_classification`
+    # (the single writer) rather than by a DB constraint — the same discipline as
+    # `ApprovalRequest.status`, so the column stays a plain string on every backend (D-14).
+    risk_classification: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
