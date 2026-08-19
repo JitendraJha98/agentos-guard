@@ -238,6 +238,28 @@ def test_the_range_is_echoed_so_a_zero_can_be_read_against_its_window(store) -> 
     assert (empty["start"], empty["end"]) == (None, None)
 
 
+def test_the_uncapped_scan_streams_rather_than_buffering_the_whole_log(store, monkeypatch) -> None:
+    """WHITE-BOX on purpose: the difference is invisible on SQLite, which is why the wrong call
+    shipped. The scan is deliberately uncapped (a clipped count is a WRONG count reported to
+    someone who cannot see it was clipped), and `yield_per` is the whole justification for that.
+    `Result.yield_per()` only sets a buffer size on an ALREADY-materialized result; the execution
+    OPTION also sets `stream_results`, without which psycopg2 client-side-buffers every `body` in
+    the audit table before the first row — no memory bound at all on the production backend."""
+    from sqlalchemy.orm import Session
+
+    seen: list[dict] = []
+    real = Session.execute
+
+    def spy(self, statement, params=None, **kw):
+        seen.append(dict(kw.get("execution_options") or {}))
+        return real(self, statement, params, **kw)
+
+    monkeypatch.setattr(Session, "execute", spy)
+    derive_soc2_evidence(store)
+
+    assert any(o.get("yield_per") for o in seen), "the scan must pass yield_per as an execution option"
+
+
 def test_the_window_says_what_it_is_scoped_on_and_what_that_does_not_prove(store) -> None:
     """The one dimension scoping an auditor-facing count is `created_at` — the one field in the
     record the hash chain and the AUD-08 signature do NOT cover (ordering derives from `seq`). An
