@@ -145,7 +145,30 @@ RANGE_NOTE = (
     "which the record hash and the AUD-08 signature do NOT cover (the chain's own ordering is "
     "`seq`), so the window is administrative metadata rather than tamper-evident. Inclusive only "
     "to that column's storage granularity: on SQLite it is one second, so a record written in the "
-    "same second as an exact-second `start` falls outside the window."
+    "same second as an exact-second `start` falls outside the window, and one written later in the "
+    "same second as an exact-second `end` falls inside it. That cuts both ways on purpose — the "
+    "over-including half is the half a recipient needs stated."
+)
+
+# CMP-06. Said because a bundle that scopes its MAPPING to one framework invites the inference that
+# it scoped its RECORDS the same way, and nothing else in the artifact contradicts that reading.
+RECORDS_SCOPE = (
+    "The record list is scoped by TIME ALONE. It is not filtered by framework, agent, data subject "
+    "or event kind: the mapping in this bundle is one framework's, the records are every in-range "
+    "audit record the cap allowed. A per-framework mapping does not imply per-framework records."
+)
+
+# CMP-06. Emitted when the whole-chain pass did not run, because a missing `chain_verifies` must
+# never read as a passing one. It is OFF by default on the HTTP route: `verify_chain` reads EVERY
+# audit record whatever range was asked for, and an unbounded read behind a gated GET is the same
+# memory event `_MAX_RECORDS` exists to prevent.
+CHAIN_NOT_RUN = (
+    "The AUD-05 pass over the WHOLE chain did not run for this export, which is why "
+    "`chain_verifies`, `chain_violation`, `chain_signatures_checked` and "
+    "`chain_epochs_anchor_skipped` are null rather than false or zero. Nothing here says the log "
+    "outside these records is intact, and nothing here says it is not. Ask for it explicitly "
+    "(`?verify_chain=1` on the export route; the CLI runs it by default) — it reads the whole "
+    "audit table, which is why it is not free. The per-record proofs in step 2 do not depend on it."
 )
 
 
@@ -225,21 +248,40 @@ HOW_TO_VERIFY = (
     "agentos_controlplane.merkle.verify_bundle(payload, public_key_pem=..., tsa_root_pem=...); "
     "require `.ok`. Use verify_bundle, NOT verify_inclusion: the tree check alone binds a "
     "record_hash, so on its own it proves only that this file agrees with itself.",
-    "3. Require `.anchor_verified` too. Without it nothing outside this file vouches for an "
-    "epoch's `root` or `leaf_count`, and a fabricated epoch over a fabricated tree verifies exactly "
-    "as a genuine one does.",
+    "3. Require `.anchor_verified` too, then read the epoch's `anchor_kind` to learn what it is "
+    "worth. Without it nothing vouches for an epoch's `root` or `leaf_count`, and a fabricated "
+    "epoch over a fabricated tree verifies exactly as a genuine one does. WITH it, only "
+    "`rfc3161_v1` puts an authority outside the operator behind that root: `local_ed25519_v1` is "
+    "the control plane's own signature over its own root, made with the same key that signs the "
+    "records — durability, not independent attestation. Each epoch's `anchor_authority` says which "
+    "in words. In the counts below, `records_with_anchor_proof` means anchor bytes are PRESENT, "
+    "`records_anchor_verified` means they were checked and held, and "
+    "`records_externally_anchored` means both AND the kind is external; a bundle where the second "
+    "is under the first was exported without the material to check the anchor (the control-plane "
+    "public key, or the TSA root certificate), so check it yourself.",
     "4. Read `records_unsealed` and `truncated` before drawing conclusions from the record list. An "
-    "unsealed record carries no proof because it was appended after the last epoch was sealed; a "
-    "truncated bundle is a subset of `records_in_range`, oldest first. Both are stated rather than "
-    "implied so that what you hold is never mistaken for everything there was.",
+    "unsealed record carries no INCLUSION proof because it was appended after the last epoch was "
+    "sealed — but it is not unverifiable: sha256 over the canonical JSON of its `body` must equal "
+    "its `record_hash`, and its `signature` must verify under the control-plane public key. Both "
+    "are checkable from this file alone; do them. We do the same before exporting and refuse "
+    "rather than ship one that fails. A truncated bundle is a subset of `records_in_range`, oldest "
+    "first. All of it is stated rather than implied so that what you hold is never mistaken for "
+    "everything there was.",
     "5. `chain_verifies` is our own AUD-05 pass over the WHOLE chain at export time, run on our "
-    "data — context, not a substitute for steps 2 and 3. Read `chain_signatures_checked` beside "
-    "it: without a public key that pass re-derives the hash linkage and verifies NO signature, so "
-    "a zero there means `chain_verifies: true` says nothing about who wrote the records.",
+    "data — context, not a substitute for steps 2 and 3. `false` is the loud one: that pass FAILED "
+    "here, `chain_violation` names the seq and the check, and the disclosed records can still "
+    "verify against their root while the log around them does not. `null` means it did not run at "
+    "all (`chain_note` says so) and is not a quieter `true`. Read `chain_signatures_checked` "
+    "beside it: without a public key that pass re-derives the hash linkage and verifies NO "
+    "signature, so a zero there means `chain_verifies: true` says nothing about who wrote the "
+    "records. `chain_epochs_anchor_skipped` counts the epochs whose own anchor it did not check.",
     "6. Know the limit of all of it: an inclusion proof shows a record IS in the sealed epoch. It "
     "cannot show the epoch is COMPLETE — no root can testify that nothing was withheld before "
-    "sealing. Completeness needs independent witnesses observing roots, which this bundle neither "
-    "provides nor claims.",
+    "sealing. It equally cannot show this BUNDLE is complete for the window: which sealed records "
+    "were put in it was decided at export time by filtering `created_at`, a column neither the "
+    "record hash nor the signature covers, and `records_in_range` is our own unauthenticated "
+    "count. Completeness in either sense needs independent witnesses observing roots, which this "
+    "bundle neither provides nor claims.",
 )
 
 SOC2_CRITERIA: dict[str, dict] = {
@@ -943,6 +985,34 @@ def bundle_digest(bundle: dict) -> str:
     ).hexdigest()
 
 
+def _unsealed_failure(entry: dict, public_key_pem) -> str | None:
+    """What is wrong with an UNSEALED record, or None if nothing is.
+
+    An unsealed record has no inclusion proof, and step 4 used to leave it there — which read as
+    "there is nothing you can do", making the one class of record we did not check also the one the
+    recipient was told not to. Both remaining bindings are checkable with no database: the body must
+    hash to `record_hash`, and the signature must verify. Checking them here gives every exported
+    record the same posture, sealed or not.
+    """
+    from agentos_controlplane.audit import canonical_json, verify_record_signature
+
+    rec = entry["record"]
+    body = rec["body"]
+    if hashlib.sha256(canonical_json(body)).hexdigest() != rec["record_hash"]:
+        return "the body does not hash to record_hash"
+    if body.get("seq") != rec["seq"]:
+        return "the body's seq disagrees with the record"
+    if public_key_pem is None or rec["signature"] is None:
+        return None
+    try:
+        signature = bytes.fromhex(rec["signature"])
+    except ValueError:
+        return "the signature is not valid hex"
+    if not verify_record_signature(public_key_pem, signature, canonical_json(body)):
+        return "the signature does not verify"
+    return None
+
+
 def export_evidence_bundle(
     framework: str,
     session_factory,
@@ -950,6 +1020,7 @@ def export_evidence_bundle(
     start: datetime | None = None,
     end: datetime | None = None,
     public_key_pem=None,
+    verify_whole_chain: bool = True,
 ) -> dict:
     """CMP-06 — a per-framework, per-time-range evidence bundle, verifiable standalone.
 
@@ -971,15 +1042,32 @@ def export_evidence_bundle(
     NO SEALER ARGUMENT, deliberately: the epochs are read from the same store as the records, so an
     export needs exactly one collaborator and cannot be handed a sealer pointed at a different
     database than the records it proves.
+
+    `verify_whole_chain` is the AUD-05 pass over the ENTIRE log, which is why it is a switch at all:
+    it reads every audit record however narrow the range, so on a gated HTTP route it is opt-in. Off,
+    its fields are null and `chain_note` says so — never absent, because an absent verdict reads as
+    a passing one.
     """
     if framework not in FRAMEWORKS:
         raise ValueError(f"unknown framework {framework!r}; expected one of {list(FRAMEWORKS)}")
+
+    lo, hi = _as_utc_naive(start), _as_utc_naive(end)
+    # An inverted window is the same typo as an unparseable one and gets the same refusal. Exported,
+    # it produces an empty bundle that reads as "your quarter was quiet" — the under-disclosing
+    # mirror of the over-disclosure `parse_time_bound` refuses a malformed bound to prevent.
+    if lo is not None and hi is not None and lo > hi:
+        raise ValueError(
+            f"range start {start.isoformat()} is after end {end.isoformat()}: an inverted window "
+            "exports as an empty bundle, which reads as 'nothing happened' rather than as the "
+            "mistake it is"
+        )
 
     from bisect import bisect_left, bisect_right
 
     from sqlalchemy import func, select
 
     from agentos_controlplane.audit_verify import verify_chain
+    from agentos_controlplane.checkpoint import EXTERNAL_AUTHORITY_KINDS, anchor_authority
     from agentos_controlplane.merkle import (
         MerkleIntegrityError,
         inclusion_proofs,
@@ -987,7 +1075,6 @@ def export_evidence_bundle(
     )
     from agentos_controlplane.store.models import AuditRecord, MerkleRoot
 
-    lo, hi = _as_utc_naive(start), _as_utc_naive(end)
     bounds = []
     if lo is not None:
         bounds.append(AuditRecord.created_at >= lo)
@@ -1059,6 +1146,9 @@ def export_evidence_bundle(
                     "root": ep.root,
                     "leaf_count": ep.leaf_count,
                     "anchor_kind": ep.anchor_kind,
+                    # The enum is not legible to a recipient who has never read checkpoint.py, and
+                    # `anchored: true` over a local anchor is the control plane vouching for itself.
+                    "anchor_authority": anchor_authority(ep.anchor_kind),
                     "anchor_proof": ep.proof.hex() if ep.proof is not None else None,
                     "tsa_url": ep.tsa_url,
                     "anchored": ep.proof is not None,
@@ -1086,10 +1176,6 @@ def export_evidence_bundle(
             )
 
     included = [e for e in records if e["inclusion"] is not None]
-    # `ok` alone would over-report: with no public key the pass re-derives the hash linkage and
-    # verifies NO signature, and `chain_verifies: true` beside nothing else reads as "signatures
-    # checked". The count is what the pass actually did, so a zero is legible as a zero.
-    chain = verify_chain(session_factory, public_key_pem=public_key_pem)
     bundle = {
         "framework": framework,
         "range": _window(start, end),
@@ -1097,30 +1183,68 @@ def export_evidence_bundle(
         "derived_evidence": _framework_evidence(framework, session_factory, start, end),
         "epochs": epochs,
         "records": records,
-        "verification": {
-            "chain_verifies": chain.ok,
-            "chain_signatures_checked": chain.signatures_checked,
-            "records_in_range": in_range,
-            "records_exported": len(records),
-            "records_included": len(included),
-            "records_unsealed": len(records) - len(included),
-            "records_anchored": sum(
-                1 for e in included if epochs[str(e["inclusion"]["epoch"])]["anchored"]
-            ),
-            "truncated": in_range > len(records),
-            "how_to_verify": list(HOW_TO_VERIFY),
-        },
-        "disclaimer": EVIDENCE_BUNDLE_DISCLAIMER,
     }
     # Verified BEFORE it leaves, the same posture as `MerkleSealer.disclose`: a record edited or
     # deleted from under a sealed root produces a success-shaped bundle the recipient cannot verify,
     # and to an auditor an unverifiable proof reads as tampering rather than as our bug.
+    #
+    # The self-check is also where the anchor counters come from. `anchored` on an epoch row says
+    # anchor BYTES exist — a claim nothing checked, and one an insider DB write can make with a
+    # garbage blob and an `rfc3161_v1` label. `result.anchor_verified` is the same verdict the
+    # recipient's own `verify_bundle` will reach, so the summary cannot contradict the verifier this
+    # bundle tells them to run.
+    anchor_verified = 0
+    externally_anchored = 0
     for entry in included:
         result = verify_bundle(verifiable_record(bundle, entry), public_key_pem=public_key_pem)
         if not result.ok:
             raise MerkleIntegrityError(
                 f"refusing to export seq {entry['record']['seq']}: {result.reason}"
             )
+        if result.anchor_verified:
+            anchor_verified += 1
+            if epochs[str(entry["inclusion"]["epoch"])]["anchor_kind"] in EXTERNAL_AUTHORITY_KINDS:
+                externally_anchored += 1
+    for entry in records:
+        if entry["inclusion"] is None:
+            failure = _unsealed_failure(entry, public_key_pem)
+            if failure is not None:
+                raise MerkleIntegrityError(
+                    f"refusing to export seq {entry['record']['seq']}: {failure}"
+                )
+    # `ok` alone would over-report: with no public key the pass re-derives the hash linkage and
+    # verifies NO signature, and `chain_verifies: true` beside nothing else reads as "signatures
+    # checked". The count is what the pass actually did, so a zero is legible as a zero — and the
+    # violation travels, because "something failed some check somewhere" is not a finding anyone
+    # can act on.
+    chain = (
+        verify_chain(session_factory, public_key_pem=public_key_pem) if verify_whole_chain else None
+    )
+    violation = None if chain is None else chain.violation
+    bundle["verification"] = {
+        "chain_verifies": None if chain is None else chain.ok,
+        "chain_signatures_checked": None if chain is None else chain.signatures_checked,
+        "chain_violation": (
+            None
+            if violation is None
+            else {"seq": violation.seq, "check": violation.check, "detail": violation.detail}
+        ),
+        "chain_epochs_anchor_skipped": None if chain is None else chain.skipped_epochs,
+        "chain_note": CHAIN_NOT_RUN if chain is None else None,
+        "records_in_range": in_range,
+        "records_exported": len(records),
+        "records_included": len(included),
+        "records_unsealed": len(records) - len(included),
+        "records_with_anchor_proof": sum(
+            1 for e in included if epochs[str(e["inclusion"]["epoch"])]["anchored"]
+        ),
+        "records_anchor_verified": anchor_verified,
+        "records_externally_anchored": externally_anchored,
+        "records_scope": RECORDS_SCOPE,
+        "truncated": in_range > len(records),
+        "how_to_verify": list(HOW_TO_VERIFY),
+    }
+    bundle["disclaimer"] = EVIDENCE_BUNDLE_DISCLAIMER
     bundle["manifest_digest"] = bundle_digest(bundle)
     return bundle
 
@@ -1128,9 +1252,11 @@ def export_evidence_bundle(
 def _main(argv=None) -> int:
     import argparse
     import json
+    import sys
 
     from sqlalchemy import create_engine
 
+    from agentos_controlplane.merkle import MerkleIntegrityError
     from agentos_controlplane.store.engine import create_session_factory
 
     p = argparse.ArgumentParser(
@@ -1166,6 +1292,13 @@ def _main(argv=None) -> int:
             end=parse_time_bound(args.end),
             public_key_pem=pub,
         )
+    except MerkleIntegrityError as exc:
+        # NOT `p.error`. That exits 2, the same code as a mistyped date, so a nightly export job
+        # could not tell "someone edited the audit log" from "someone fat-fingered a bound" — the
+        # exact conflation MerkleIntegrityError exists to keep apart, and the route already draws it
+        # as 409 vs 422.
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        return 3
     except ValueError as exc:
         p.error(str(exc))
     text = json.dumps(bundle, indent=2)

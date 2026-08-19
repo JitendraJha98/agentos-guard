@@ -18,7 +18,7 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.pool import StaticPool
 
 from agentos_controlplane.api import create_app
@@ -30,6 +30,7 @@ from agentos_controlplane.identity_engine import IdentityEngine
 from agentos_controlplane.inventory import InventoryStore
 from agentos_controlplane.merkle import MerkleSealer, verify_bundle
 from agentos_controlplane.store.engine import create_all, create_session_factory
+from agentos_controlplane.store.models import AuditRecord
 
 TOKEN = "test-token"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -166,6 +167,42 @@ def test_a_malformed_date_is_refused_rather_than_ignored(client) -> None:
     assert client.get("/compliance/export/soc2?start=").status_code == 422
 
 
+def test_an_inverted_range_is_refused_rather_than_answered_with_an_empty_bundle(client) -> None:
+    """Both bounds parse and the window still cannot contain anything. Answered 200 it reads as a
+    quiet quarter — the under-disclosing mirror of the malformed-bound failure above."""
+    response = client.get("/compliance/export/soc2?start=2026-07-01&end=2026-01-01")
+
+    assert response.status_code == 422
+    assert "is after end" in response.json()["detail"]
+
+
+def test_evidence_tampering_is_409_rather_than_a_bad_request(client, store) -> None:
+    """Deleting seq 1 leaves the epoch's stated leaf_count describing records that are gone. The
+    export refuses either way — but only as `MerkleIntegrityError` does it reach the operator's
+    monitoring as tampering rather than as a malformed request, and that distinction is the whole
+    reason the exception type exists."""
+    with store() as s:
+        s.delete(s.scalars(select(AuditRecord).where(AuditRecord.seq == 1)).one())
+        s.commit()
+
+    response = client.get("/compliance/export/soc2")
+
+    assert response.status_code == 409
+    assert "deleted from under a sealed root" in response.json()["detail"]
+
+
+def test_the_route_leaves_the_whole_chain_pass_off_unless_it_is_asked_for(client) -> None:
+    """The chain pass reads EVERY audit record however narrow the range, so a gated GET does not run
+    it by default. The bundle says which of "did not run" and "ran and passed" a reader is looking
+    at, because an absent verdict reads as a passing one."""
+    off = client.get("/compliance/export/soc2").json()["verification"]
+    on = client.get("/compliance/export/soc2?verify_chain=1").json()["verification"]
+
+    assert off["chain_verifies"] is None and "did not run" in off["chain_note"]
+    assert on["chain_verifies"] is True and on["chain_note"] is None
+    assert off["records_included"] == on["records_included"] == RECORDS
+
+
 def test_a_well_formed_range_still_gets_through(client) -> None:
     """Non-vacuity for the refusals above: a 422 on every range would also 'never over-disclose'."""
     response = client.get("/compliance/export/soc2?start=2020-01-01&end=2030-01-01")
@@ -224,8 +261,29 @@ def test_the_cli_honours_the_range_it_was_given(tmp_path, seeded_db) -> None:
 
 def test_the_cli_refuses_a_malformed_date_rather_than_exporting_everything(seeded_db) -> None:
     """The same over-disclosure as the route's, reached from a terminal instead of a URL."""
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as exit_info:
         _main(["--db", str(seeded_db), "--framework", "soc2", "--start", "last-tuesday"])
+
+    assert exit_info.value.code == 2, "argparse's usage exit — the operator typed something wrong"
+
+
+def test_the_cli_reports_tampering_as_tampering_rather_than_as_a_usage_error(
+    seeded_db, capsys
+) -> None:
+    """`MerkleIntegrityError` is a `ValueError`, so an `except ValueError: p.error(...)` swallows an
+    edited audit log into argparse's usage exit — code 2, the same as a mistyped date, printed under
+    a usage banner. A nightly export job keys on that code, and it is the one signal that must never
+    be confused with an operator's typo."""
+    engine = create_engine(f"sqlite+pysqlite:///{seeded_db}")
+    with create_session_factory(engine)() as s:
+        row = s.scalars(select(AuditRecord).where(AuditRecord.seq == 2)).one()
+        row.body = dict(row.body, framework="tampered")
+        s.commit()
+
+    code = _main(["--db", str(seeded_db), "--framework", "soc2"])
+
+    assert code == 3, "not 2 — an edited log is not a usage error"
+    assert "does not hash to record_hash" in capsys.readouterr().err
 
 
 def test_the_cli_refuses_a_framework_export_with_no_store_to_read(capsys) -> None:

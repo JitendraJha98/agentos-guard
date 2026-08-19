@@ -221,9 +221,15 @@ class BundleResult:
 
     The two flags are separate on purpose, the same distinction `VerifyResult.skipped_epochs`
     draws: `ok` says the disclosed BODY is the record the root commits to, at the seq the bundle
-    claims. `anchor_verified` says an authority outside the discloser vouched for that root. Only
-    the second makes `root`/`leaf_count` more than numbers in a file the discloser wrote — so a
-    caller that collapses these into one boolean is certifying the discloser's own word.
+    claims. `anchor_verified` says the epoch's anchor proof was CHECKED and held. Only the second
+    makes `root`/`leaf_count` more than numbers in a file the discloser wrote — so a caller that
+    collapses these into one boolean is certifying the discloser's own word.
+
+    `anchor_verified` alone does not say the vouching came from OUTSIDE the discloser: that depends
+    on `epoch["anchor_kind"]`, and only `rfc3161_v1` is external authority. `local_ed25519_v1` is
+    the control plane signing its own root with the same key that signs its records (checkpoint.py
+    says so plainly), so a caller reporting it as third-party attestation over-claims exactly one
+    layer up from the collapse this dataclass exists to prevent.
     """
 
     ok: bool

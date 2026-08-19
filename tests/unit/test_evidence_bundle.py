@@ -13,6 +13,7 @@ cannot be walked back after a regulator reads it.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -20,7 +21,7 @@ import pytest
 from sqlalchemy import create_engine, select, update
 from sqlalchemy.pool import StaticPool
 
-from agentos_controlplane.audit import AuditWriter
+from agentos_controlplane.audit import AuditWriter, canonical_json
 from agentos_controlplane.checkpoint import LocalEd25519Anchor
 from agentos_controlplane.compliance import (
     EU_AI_ACT_DISCLAIMER,
@@ -38,7 +39,7 @@ from agentos_controlplane.identity_engine import IdentityEngine
 from agentos_controlplane.merkle import MerkleIntegrityError, MerkleSealer, verify_bundle
 from agentos_controlplane.registry import Registry
 from agentos_controlplane.store.engine import create_all, create_session_factory
-from agentos_controlplane.store.models import AuditRecord
+from agentos_controlplane.store.models import AuditRecord, MerkleRoot
 
 SEALED_RECORDS = 5  # seq 0..4 seal into epoch 0; the seal's own announcement lands unsealed at 5
 Q1 = datetime(2026, 1, 15, 12, 0, 0)
@@ -185,6 +186,24 @@ def test_the_range_is_echoed_with_what_it_is_actually_filtered_on(sealed) -> Non
     assert b["range"]["start"] == Q1.isoformat() and b["range"]["end"] == Q3.isoformat()
     assert b["range"]["note"] == RANGE_NOTE
     assert "created_at" in RANGE_NOTE and "seq" in RANGE_NOTE
+    # Storage granularity moves the boundary in BOTH directions, and the over-including half is the
+    # one a recipient of a partial disclosure needs stated: a record written after an exact-second
+    # `end`, in that same second, is inside the window they were sent.
+    assert "same second as an exact-second `start` falls outside the window" in RANGE_NOTE
+    assert "same second as an exact-second `end` falls inside it" in RANGE_NOTE
+
+
+def test_an_inverted_range_is_refused_rather_than_exported_as_a_quiet_quarter(sealed) -> None:
+    """`start > end` is the same typo as an unparseable bound and gets the opposite treatment
+    without this: 200, zero records, `records_in_range: 0` — which reads as 'nothing happened in
+    your window' rather than 'you asked for a window that cannot contain anything'."""
+    with pytest.raises(ValueError, match="is after end"):
+        export_evidence_bundle("soc2", sealed, start=Q3, end=Q1)
+
+    # Non-vacuity: the same two bounds the right way round export the whole window.
+    _stamp(sealed, MIDYEAR, *range(SEALED_RECORDS + 1))
+    b = export_evidence_bundle("soc2", sealed, start=Q1, end=Q3)
+    assert len(b["records"]) == SEALED_RECORDS + 1
 
 
 def test_an_empty_window_is_an_honest_zero_rather_than_an_error(sealed) -> None:
@@ -266,7 +285,7 @@ def test_the_bundle_separates_included_from_anchored(bundle) -> None:
     'verified' records without that distinction is certifying our own word."""
     v = bundle["verification"]
 
-    assert v["records_anchored"] == v["records_included"] == SEALED_RECORDS
+    assert v["records_with_anchor_proof"] == v["records_included"] == SEALED_RECORDS
     assert all(ep["anchored"] is True for ep in bundle["epochs"].values())
 
 
@@ -279,8 +298,62 @@ def test_an_unanchored_epoch_is_reported_as_such_rather_than_counted_as_anchored
     b = export_evidence_bundle("soc2", store)
 
     assert b["verification"]["records_included"] == SEALED_RECORDS
-    assert b["verification"]["records_anchored"] == 0
+    assert b["verification"]["records_with_anchor_proof"] == 0
     assert all(ep["anchored"] is False for ep in b["epochs"].values())
+
+
+# --- what "anchored" is worth ------------------------------------------------
+
+
+def test_a_local_anchor_is_not_reported_as_an_authority_outside_the_operator(bundle, sealed) -> None:
+    """The shipped anchor signs our own root with the SAME key that signs our records. Reporting
+    that as anchoring invites the auditor to conclude a third party vouched for the root — the
+    11a `ok`/`anchor_verified` over-claim, re-introduced one layer up in the artifact that leaves
+    our hands.
+
+    Three different numbers, because they are three different claims: the proof bytes EXIST, they
+    were CHECKED, and the checking came from outside the operator. Only the last one is what an
+    auditor thinks "anchored" means."""
+    v = bundle["verification"]
+    assert v["records_with_anchor_proof"] == SEALED_RECORDS
+    assert v["records_anchor_verified"] == SEALED_RECORDS  # the fixture supplies the public key
+    assert v["records_externally_anchored"] == 0, "a local_ed25519 anchor is not external authority"
+
+    # Exported the way the HTTP route exports: no key, so nothing checked the anchor at all.
+    unkeyed = export_evidence_bundle("soc2", sealed)["verification"]
+    assert unkeyed["records_with_anchor_proof"] == SEALED_RECORDS
+    assert unkeyed["records_anchor_verified"] == 0
+
+    authority = {ep["anchor_authority"] for ep in bundle["epochs"].values()}
+    assert all("NOT independent attestation" in a for a in authority), authority
+    steps = " ".join(bundle["verification"]["how_to_verify"])
+    assert "local_ed25519_v1" in steps and "rfc3161_v1" in steps
+
+
+def test_an_unverified_external_anchor_claim_is_not_counted_as_verified(sealed, signer) -> None:
+    """`anchor_kind` is a plain column: an insider write — or a TSA response stored without being
+    parsed — can label an epoch `rfc3161_v1` and put anything in `proof`.
+
+    The export never had the TSA root, so it never checked that blob, and the recipient's own
+    `verify_bundle` will report `anchor_verified: False`. A summary that counted it as anchored
+    would contradict the verifier this bundle tells them to run."""
+    with sealed() as s:
+        row = s.get(MerkleRoot, 0)
+        row.anchor_kind = "rfc3161_v1"
+        row.proof = b"\xde\xad\xbe\xef" * 40
+        s.commit()
+
+    b = export_evidence_bundle("soc2", sealed, public_key_pem=signer.public_key_pem)
+
+    v = b["verification"]
+    assert v["records_with_anchor_proof"] == SEALED_RECORDS  # bytes are there
+    assert v["records_anchor_verified"] == 0  # nothing checked them
+    assert v["records_externally_anchored"] == 0
+    for entry in (e for e in b["records"] if e["inclusion"] is not None):
+        result = verify_bundle(
+            verifiable_record(b, entry), public_key_pem=signer.public_key_pem
+        )
+        assert result.ok and not result.anchor_verified, result.reason
 
 
 def test_a_record_deleted_from_under_a_sealed_root_is_refused_not_exported(sealed) -> None:
@@ -292,6 +365,52 @@ def test_a_record_deleted_from_under_a_sealed_root_is_refused_not_exported(seale
 
     with pytest.raises(MerkleIntegrityError):
         export_evidence_bundle("soc2", sealed)
+
+
+def test_a_record_deleted_outside_the_window_is_tampering_not_a_bad_request(sealed) -> None:
+    """The leaf-count guard's own scenario, which the deletion test above cannot reach: seq 1 is
+    inside the sealed epoch but outside the exported window, so no proof is ever built for it.
+
+    Without the guard the export still fails — but as a bare `MerkleError` about an index being out
+    of range, which the route answers 422, filing evidence tampering as an operator typo. The
+    message is the whole point here, so it is what this asserts."""
+    _stamp(sealed, Q1, 0, 1, 2)
+    _stamp(sealed, Q3, 3, 4, 5)
+    with sealed() as s:
+        s.delete(s.scalars(select(AuditRecord).where(AuditRecord.seq == 1)).one())
+        s.commit()
+
+    with pytest.raises(MerkleIntegrityError, match="deleted from under a sealed root"):
+        export_evidence_bundle("soc2", sealed, start=MIDYEAR)
+
+
+def test_an_unsealed_record_is_checked_before_it_ships_too(sealed) -> None:
+    """An unsealed record has no inclusion proof — and that is NOT the same as unverifiable. Its
+    body still has to hash to its `record_hash`, and both travel in the bundle.
+
+    Exporting one that does not is the "extract you must take on our word" this artifact exists to
+    stop being, and it is the only class of record the pre-flight used to skip entirely."""
+    with sealed() as s:
+        row = s.scalars(select(AuditRecord).where(AuditRecord.seq == SEALED_RECORDS)).one()
+        assert row.body.get("kind") == "merkle_epoch_sealed", "seq 5 is the unsealed announcement"
+        row.body = dict(row.body, leaf_count=99)
+        s.commit()
+
+    with pytest.raises(MerkleIntegrityError, match="does not hash to record_hash"):
+        export_evidence_bundle("soc2", sealed)
+
+
+def test_an_unsealed_records_signature_is_checked_when_a_key_is_supplied(sealed, signer) -> None:
+    """The other half of what an unsealed record can still be checked on. A body that hashes
+    correctly under a signature that does not verify is the forgery a key exists to catch, and the
+    recipient is told in step 4 to make exactly this check."""
+    with sealed() as s:
+        row = s.scalars(select(AuditRecord).where(AuditRecord.seq == SEALED_RECORDS)).one()
+        row.signature = "00" * 64
+        s.commit()
+
+    with pytest.raises(MerkleIntegrityError, match="signature does not verify"):
+        export_evidence_bundle("soc2", sealed, public_key_pem=signer.public_key_pem)
 
 
 def test_a_body_edited_under_a_sealed_root_is_refused_not_exported(sealed) -> None:
@@ -344,6 +463,42 @@ def test_the_chain_pass_reports_what_it_actually_checked(sealed, signer) -> None
     assert unkeyed["chain_verifies"] is True and unkeyed["chain_signatures_checked"] == 0
     assert keyed["chain_verifies"] is True
     assert keyed["chain_signatures_checked"] == SEALED_RECORDS + 1
+    assert keyed["chain_violation"] is None and keyed["chain_note"] is None
+
+
+def test_a_failed_chain_pass_says_where_it_failed(sealed) -> None:
+    """`chain_verifies: false` is the loud signal, and on its own it says only that something failed
+    some check somewhere. The violation the pass already computed is what a recipient can act on.
+
+    The payload is a forger's: rewrite the in-chain announcement of what epoch 0 sealed, and fix up
+    that row's own hash so the cheap checks pass. The disclosed records still verify against their
+    root — which is exactly why the whole-chain verdict has to travel beside them rather than
+    instead of them."""
+    with sealed() as s:
+        row = s.scalars(select(AuditRecord).where(AuditRecord.seq == SEALED_RECORDS)).one()
+        row.body = dict(row.body, root="0" * 64)
+        row.record_hash = hashlib.sha256(canonical_json(row.body)).hexdigest()
+        s.commit()
+
+    v = export_evidence_bundle("soc2", sealed)["verification"]
+
+    assert v["chain_verifies"] is False
+    assert v["chain_violation"]["check"] == "merkle_announcement_mismatch"
+    assert v["chain_violation"]["seq"] == 0 and v["chain_violation"]["detail"]
+    assert v["records_included"] == SEALED_RECORDS, "the disclosed records still verify"
+
+
+def test_the_whole_chain_pass_can_be_left_out_and_says_so_rather_than_going_quiet(sealed) -> None:
+    """That pass reads EVERY audit record whatever range was asked for, so a gated route leaves it
+    off. A missing verdict must never read as a passing one: the fields go null and the note says
+    which of the two a null is."""
+    v = export_evidence_bundle("soc2", sealed, verify_whole_chain=False)["verification"]
+
+    assert v["chain_verifies"] is None
+    assert v["chain_signatures_checked"] is None and v["chain_violation"] is None
+    assert v["chain_epochs_anchor_skipped"] is None
+    assert "did not run" in v["chain_note"]
+    assert v["records_included"] == SEALED_RECORDS, "the per-record evidence is unaffected"
 
 
 def test_the_bundle_states_what_the_digest_and_the_root_do_NOT_prove(bundle) -> None:
@@ -356,6 +511,22 @@ def test_the_bundle_states_what_the_digest_and_the_root_do_NOT_prove(bundle) -> 
     assert "anchor_verified" in steps
     assert "cannot show the epoch is complete" in steps
     assert "chain_signatures_checked" in steps
+    # CMP-06 adds a SECOND withholding surface 11a did not have: which sealed in-range records were
+    # put in the bundle was our choice at export time, filtered on a column no hash covers.
+    assert "cannot show this bundle is complete" in steps
+    # An unsealed record has no proof and is still checkable — saying only the first half tells the
+    # recipient not to check the one class of record we did not check either.
+    assert "must equal its `record_hash`" in steps
+    assert "chain_violation" in steps
+
+
+def test_the_record_list_says_it_is_scoped_by_time_alone(bundle) -> None:
+    """The mapping is scoped to one framework and the records are not scoped at all. A reader who
+    sees the first infers the second — which is the wrong inference to leave available in a document
+    built to be forwarded."""
+    scope = bundle["verification"]["records_scope"]
+
+    assert "TIME ALONE" in scope and "not filtered by framework" in scope
 
 
 # --- per framework ----------------------------------------------------------

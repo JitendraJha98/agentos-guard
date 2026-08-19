@@ -482,7 +482,12 @@ def build_inventory_router(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @router.get("/compliance/export/{framework}")
-    def export_bundle(framework: str, start: str | None = None, end: str | None = None) -> dict:
+    def export_bundle(
+        framework: str,
+        start: str | None = None,
+        end: str | None = None,
+        verify_chain: bool = False,
+    ) -> dict:
         """CMP-06 — the one-click evidence bundle: this framework's mapping, the evidence derived
         for this range, the in-range audit records, and their inclusion proofs against an anchored
         root.
@@ -496,6 +501,13 @@ def build_inventory_router(
         is the whole log and the alternative to a bad framework is an empty artifact that reads as
         "no evidence exists". A 409 is the different, louder failure the disclosure route already
         draws: the records exist and their evidence does not check out.
+
+        `verify_chain` is OFF by default here and nowhere else. That pass reads EVERY audit record
+        whatever range was asked for, so leaving it on would make one gated GET cost a full
+        materialization of the audit table — the memory event `_MAX_RECORDS` exists to prevent,
+        reintroduced by the one field it does not bound. Off, the bundle reports its chain fields as
+        null with a note saying the pass did not run; the per-record proofs, which are the evidence,
+        are unaffected either way.
         """
         if session_factory is None:
             raise HTTPException(status_code=404, detail="evidence export is not wired")
@@ -505,6 +517,7 @@ def build_inventory_router(
                 session_factory,
                 start=parse_time_bound(start),
                 end=parse_time_bound(end),
+                verify_whole_chain=verify_chain,
             )
         except MerkleIntegrityError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
