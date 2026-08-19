@@ -26,6 +26,7 @@ from agentos_controlplane.compliance import export_evidence_bundle, parse_time_b
 from agentos_controlplane.economics import CostRecorder
 from agentos_controlplane.framework_discovery import FrameworkDetector
 from agentos_controlplane.graph import AgentGraphStore
+from agentos_controlplane.health import HealthStore
 from agentos_controlplane.inventory import InventoryStore
 from agentos_controlplane.killswitch import EmergencyActiveError, KillSwitchStore
 from agentos_controlplane.merkle import MerkleError, MerkleIntegrityError, MerkleSealer
@@ -42,6 +43,9 @@ from agentos_controlplane.store.models import ApprovalRequest, GovernanceReview
 # one query parameter into a 500 on a gated operator route. Ten years is past any plausible
 # retention, so anything beyond it is a typo rather than a question.
 _MAX_WINDOW_DAYS = 3650
+# OBS-04: the same bound, in the unit the health route asks for. Same reasoning — an unbounded
+# `hours` raises OverflowError building the timedelta, turning one query parameter into a 500.
+_MAX_WINDOW_HOURS = _MAX_WINDOW_DAYS * 24
 
 
 class ResolveRequest(BaseModel):
@@ -390,6 +394,8 @@ def build_inventory_router(
     session_factory=None,
     # TEST-07: likewise appended last.
     validation: ValidationStore | None = None,
+    # OBS-04: likewise appended last.
+    health: HealthStore | None = None,
 ) -> APIRouter:
     """DISC-01/02 — read API over the authoritative agent inventory, plus the DISC-03 framework
     inventory, the DISC-04 shadow-agent sightings, the DISC-05 rogue-agent findings, the DISC-06
@@ -670,6 +676,35 @@ def build_inventory_router(
             raise HTTPException(status_code=404, detail="validation tracking is not wired")
         return validation.runs_for(agent_id)
 
+    @router.get("/health/agents")
+    def fleet_health(
+        hours: int = Query(default=24, ge=1, le=_MAX_WINDOW_HOURS),
+    ) -> list[dict]:
+        """OBS-04 — per-agent liveness, error rate and circuit-breaker state.
+
+        `last_seen_at` is a FACT, not a verdict: an idle agent and a dead one look identical from
+        here and only the operator's own expectation separates them, so nothing on this route
+        claims to. A null one means "not within `window_hours`", which is why the window is
+        returned beside it — widening `hours` is what tells "idle for a week" apart from "never
+        seen at all".
+
+        The failure rate counts EXECUTION failures over EXECUTED actions, and both counts travel
+        with it. A governance block is not an error; folding blocks in would make the
+        best-governed agent in the fleet look like the worst one, and the fix an operator reaches
+        for to make that chart green is to loosen the guard.
+
+        Gated like every route on this router: which agents are quiet, which are being blocked and
+        which are held by a breaker is a map of where a fleet is weakest right now.
+
+        `hours` is validated rather than coerced, for the same reasons as the TEST-07 trend's
+        `days`. A non-positive window puts its start in the FUTURE and answers 200 with an empty
+        fleet — indistinguishable from "every agent is silent" — and an unbounded one raises
+        OverflowError building the timedelta. Both are 422.
+        """
+        if health is None:
+            raise HTTPException(status_code=404, detail="health monitoring is not wired")
+        return health.fleet(window=timedelta(hours=hours))
+
     return router
 
 
@@ -724,6 +759,8 @@ def create_app(
     budget: BudgetLedger | None = None,
     # TEST-07: likewise appended last.
     validation: ValidationStore | None = None,
+    # OBS-04: likewise appended last.
+    health: HealthStore | None = None,
 ) -> FastAPI:
     # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
     # explicit arg -> AGENTOS_API_TOKEN env -> ephemeral random (logged) — never silently open.
@@ -753,7 +790,9 @@ def create_app(
     # export is the same call as AUD-06's disclosure taken in bulk: a curated statement of who did
     # what, addressed to one recipient the operator chose. TEST-07's validation trend belongs here
     # for the same reason as DISC-06's graph: how well an agent's guard is holding, per attack
-    # class, is a map of where to attack it.
+    # class, is a map of where to attack it. OBS-04's health read closes the set: which agents are
+    # quiet, which are being blocked and which are held by a breaker is a map of where a fleet is
+    # weakest right now.
     if inventory_store is not None:
         app.include_router(
             build_inventory_router(
@@ -767,6 +806,7 @@ def create_app(
                 budget,
                 session_factory,
                 validation,
+                health,
             ),
             dependencies=guard,
         )
