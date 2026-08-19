@@ -489,6 +489,16 @@ def build_inventory_router(
         Paged for the same reason the per-agent route is: the aggregation reads the WHOLE cost
         table, which grows with every governed action the fleet ever takes, and an unbounded scan
         on a gated read route is still a scan of everything.
+
+        THE `gpu_process_*` FIGURES ARE NOT ADDITIVE ACROSS AGENTS. They are process-level
+        observations made while that agent was acting — an upper bound on what it was responsible
+        for, never a division of a shared number. One process can host several agents, and the
+        INT-07 gateway governs agents that run in no process of its own, so three agents under one
+        8 GiB allocation each report `gpu_process_memory_mib_max: 8192`; a dashboard summing that
+        column shows 24576 MiB on an 8192 MiB box. `gpu_device_shared_actions` is a COUNT and not a
+        quantity for the same reason, taken further: a host-wide GPU figure cannot be attributed to
+        one agent at all, so this route reports how often one was observed and never how large it
+        was. NULL in any of these means nothing measured a GPU, which is not the same as zero.
         """
         if cost is None:
             raise HTTPException(status_code=404, detail="cost attribution is not wired")

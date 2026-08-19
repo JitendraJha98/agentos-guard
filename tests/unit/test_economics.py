@@ -1058,3 +1058,122 @@ def test_the_per_action_detail_carries_the_provider_and_the_gpu_label(store) -> 
     assert row["provider"] == "api.stripe.com"
     assert row["gpu_memory_mib"] == 8192
     assert row["gpu_attribution"] == DEVICE_SHARED
+
+
+def test_two_process_readings_of_ONE_allocation_report_the_level_not_their_sum(store) -> None:
+    """Memory is a level, not a quantity that accumulates. One 8 GiB allocation observed across
+    three actions is still 8 GiB; SUMming the snapshots reports 24 GiB against a device that
+    physically holds 8, on the roll-up an operator reads as a resource bill. The shipped MAX and a
+    SUM agree whenever an agent has exactly one process row, which is why this needs more than one.
+    """
+    from agentos_controlplane.gpu import PROCESS, GpuReading
+
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+    for _ in range(3):
+        _record(rec, _action(), Usage(1, 1, "gpt-4o"),
+                gpu=GpuReading(gpu_memory_mib=8192, attribution=PROCESS))
+
+    row = rec.totals()[0]
+
+    assert row["gpu_process_memory_mib_max"] == 8192
+
+
+def test_process_gpu_SECONDS_accumulate_across_actions_because_they_are_per_action_deltas(
+    store,
+) -> None:
+    """The other half of the asymmetry, pinned here because the two fields aggregate differently
+    on purpose: seconds are consumption and add up, memory is a level and does not. That is exactly
+    why `GpuReading.gpu_seconds` is defined as the time consumed by ONE action — a supplier handing
+    over a cumulative job counter gets it multiplied by its own action count instead."""
+    from agentos_controlplane.gpu import PROCESS, GpuReading
+
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+    for _ in range(4):
+        _record(rec, _action(), Usage(1, 1, "gpt-4o"),
+                gpu=GpuReading(gpu_memory_mib=8192, attribution=PROCESS, gpu_seconds=30.0))
+
+    assert rec.totals()[0]["gpu_process_seconds"] == 120.0
+
+
+def test_an_over_long_target_is_stored_clipped_to_the_ledger_column_width(store) -> None:
+    """SQLite does not enforce VARCHAR length, so no assertion about the VALUE can catch a lost
+    clip — only the stored LENGTH can. On Postgres, the D-14 production target, an over-long
+    provider makes the INSERT raise into the PEP's metering swallow and the whole cost row
+    disappears: missing money, not a missing hostname. (`model` has the same guard and the same
+    SQLite blind spot; that one is pre-existing.)"""
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+
+    _record(rec, _tool_action("a1", target="https://gw.internal/" + "t" * 400), Usage(0, 0, None))
+
+    with store() as s:
+        row = s.scalars(select(CostRecord)).one()
+    assert len(row.provider) == 128
+    assert len(_cost_events(store)[0]["provider"]) == 128, "the audit body must not exceed it either"
+
+
+def test_two_long_targets_sharing_a_prefix_stay_DISTINCT_vendor_lines(store) -> None:
+    """Clipping alone merged them. `by_provider` GROUPs on this string, so two gateway URLs whose
+    first 128 characters match — routine for tenant-scoped paths — collapsed into ONE line whose
+    cost summed both: a single vendor line covering two billing accounts, on the report an operator
+    reconciles against invoices. `model` can be clipped bare because nothing groups on it."""
+    prefix = "https://gw.internal/tenants/" + "x" * 110 + "/vendor-"
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+
+    _record(rec, _tool_action("a1", target=prefix + "stripe"), Usage(0, 0, None))
+    _record(rec, _tool_action("a1", target=prefix + "twilio"), Usage(0, 0, None))
+
+    rows = rec.by_provider()
+
+    assert len(prefix) > 128, "the two targets must actually collide under a bare clip"
+    assert len(rows) == 2, "two downstream services must not report as one vendor line"
+    assert {len(r["provider"]) for r in rows} == {128}
+
+
+def test_a_flood_of_invented_providers_cannot_push_a_REAL_vendor_off_the_first_page(store) -> None:
+    """`provider` is the only grouping key here that the AGENT chooses — it is the action's own
+    target, and on the INT-07 gateway a URL path segment. Ordered alphabetically, an agent that
+    called a few thousand invented hostnames sorting before its real ones pushed them past the page
+    bound: spend-report suppression by the agent being reported on. Volume ordering means an
+    invented provider has to be genuinely expensive before it can hide a real one."""
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+    for i in range(40):
+        _record(rec, _tool_action("a1", target=f"api.aaa-vendor-{i:03d}.example.com"),
+                Usage(0, 0, None))
+    for _ in range(3):
+        _record(rec, _tool_action("a1", target="api.stripe.com"), Usage(0, 0, None))
+
+    page = rec.by_provider(limit=5)
+
+    assert page[0]["provider"] == "api.stripe.com"
+    assert page[0]["calls"] == 3
+
+
+def test_the_gpu_probe_runs_OFF_the_event_loop(store, monkeypatch) -> None:
+    """On a GPU host this is nvmlInit plus device enumeration plus a per-device running-process
+    query — synchronous driver calls, not memory reads — and `record` is awaited before
+    `governed_call` returns the agent its result. Inline, it serialises every concurrent governed
+    call in the process behind one NVML query, to collect a number that bills nobody."""
+    import threading
+
+    from agentos_controlplane import economics
+    from agentos_controlplane.gpu import PROCESS, GpuReading
+
+    probe_thread: list[int] = []
+    monkeypatch.setattr(economics, "gpu_metering_available", lambda: True)
+    monkeypatch.setattr(
+        economics,
+        "read_gpu",
+        lambda: probe_thread.append(threading.get_ident())
+        or GpuReading(gpu_memory_mib=2048, attribution=PROCESS),
+    )
+    rec = CostRecorder(store, AuditWriter(store), PriceBook({}, version="v"))
+    action = _action()
+    loop_thread: list[int] = []
+
+    async def go() -> None:
+        loop_thread.append(threading.get_ident())
+        await rec.record(action, _decision(action), Usage(1, 1, "gpt-4o"))
+
+    asyncio.run(go())
+
+    assert probe_thread[0] != loop_thread[0]

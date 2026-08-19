@@ -18,7 +18,13 @@ from agentos_controlplane.store.models import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # `disable_existing_loggers=False` is the load-bearing argument, not boilerplate. The default
+    # is True, which silently switches OFF every logger already configured in the process — and
+    # alembic runs IN-PROCESS here (the store bootstrap, and now the migration tests), not only as
+    # a standalone CLI. So a host that had configured its own logging lost it the moment it ran a
+    # migration, and a control plane whose logging dies during a schema upgrade loses exactly the
+    # records an operator needs if that upgrade goes wrong.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Allow an env-var override (e.g. a sync sqlite URL for a manual migration run).
 _env_url = os.environ.get("AGENTOS_DB_URL")

@@ -23,6 +23,8 @@ an inferred vendor, and a GPU figure never travels without the label saying what
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import case, func, select
@@ -51,10 +53,25 @@ _VERSION_MAX = 32
 # invocation's target is 'chat', not a vendor — writing that into `provider` would invent a service
 # that was never called and put the same spend under two headings on one report.
 _DOWNSTREAM_TYPES = frozenset({ActionType.tool_call, ActionType.mcp_call})
-# `provider` is String(128) and a target can be an arbitrarily long URL. Truncated for the same
-# reason `model` is: on Postgres an over-long value makes the INSERT raise into the PEP's swallow and
-# the whole cost row disappears. A clipped hostname is a display defect; a missing row is missing money.
+# `provider` is String(128) and a target can be an arbitrarily long URL. It has to be clipped for the
+# same reason `model` is: on Postgres an over-long value makes the INSERT raise into the PEP's
+# swallow and the whole cost row disappears, and a missing row is missing money.
 _PROVIDER_MAX = 128
+# ...but a bare clip was wrong HERE in a way it is not for `model`. `by_provider` GROUPs on this
+# string, so two gateway URLs sharing a 128-character tenant prefix collapsed into ONE vendor line
+# whose cost summed both — one report line covering two billing accounts, on the report an operator
+# reconciles against invoices. `model` is never a grouping key: a clipped model simply fails to match
+# the price book and records unpriced. So an over-long target keeps a digest of its full self, which
+# costs a suffix of the displayed prefix and buys back the distinctness the grouping depends on.
+_PROVIDER_DIGEST = 12
+
+
+def _provider_for(target: str) -> str:
+    """The `provider` value for a downstream target: itself when it fits, prefix + digest when not."""
+    if len(target) <= _PROVIDER_MAX:
+        return target
+    digest = hashlib.sha256(target.encode("utf-8", "replace")).hexdigest()[:_PROVIDER_DIGEST]
+    return f"{target[: _PROVIDER_MAX - _PROVIDER_DIGEST - 1]}~{digest}"
 
 
 class PriceBook:
@@ -182,9 +199,13 @@ class CostRecorder:
         cost = self._prices.cost_micro_usd(model, usage.input_tokens, usage.output_tokens)
         # ECON-03: the downstream service consumed is the action's own target, a fact the PEP
         # already normalized — never a vendor inferred from it.
-        provider = action.target[:_PROVIDER_MAX] if action.type in _DOWNSTREAM_TYPES else None
+        provider = _provider_for(action.target) if action.type in _DOWNSTREAM_TYPES else None
         if gpu is None and self._gpu_available:
-            gpu = read_gpu()
+            # Off the event loop. On a GPU host this is nvmlInit plus device enumeration plus a
+            # per-device running-process query — synchronous driver calls, not memory reads — and
+            # `record` is awaited before `governed_call` hands the agent its result, so running it
+            # inline serialises every concurrent governed call in the process behind one NVML query.
+            gpu = await asyncio.to_thread(read_gpu)
         body = {
             "action_id": str(action.id),
             "agent": action.agent_id,
@@ -256,10 +277,19 @@ class CostRecorder:
         and `device_shared` readings produce a COUNT — visible, so an absent number is not misread
         as "no GPU was seen", and never a quantity attributed to one agent.
 
-        Even the process figure is an upper bound, not a division: a process may host several
-        agents, so this is the largest process-level reading observed while this agent was acting.
-        Memory is a MAX rather than a SUM because it is a level, not a quantity that accumulates —
-        summing snapshots would multiply one 8 GiB allocation by the action count into nonsense.
+        THE PROCESS FIGURES ARE NOT ADDITIVE ACROSS AGENTS EITHER. A process may host several
+        agents — and on the INT-07 gateway it hosts none of them, it merely governs their calls —
+        so a process-level observation is an upper bound on what this agent was responsible for,
+        never a division of one. Three co-resident agents under one 8 GiB allocation each report
+        8192 here, and summing the column shows 24 GiB on an 8 GiB box. Which is why the qualifier
+        is welded into the field NAMES rather than left to a caller to remember.
+
+        The two process fields aggregate DIFFERENTLY and the difference is not cosmetic. Memory is
+        a MAX because it is a level: summing snapshots multiplies one 8 GiB allocation by the action
+        count into nonsense. Seconds are a SUM because they are a quantity that accumulates — which
+        is exactly why `GpuReading.gpu_seconds` is defined as the time consumed BY ONE ACTION and
+        not as a cumulative counter; a supplier passing a running job total gets it multiplied here
+        instead.
         """
         is_process = CostRecord.gpu_attribution == PROCESS
         with self._sf() as s:
@@ -311,19 +341,30 @@ class CostRecorder:
 
         Paged like `totals()`, and for the same reason: the aggregation reads the whole cost table,
         which grows with every governed action, and a bounded scan on a gated route is still a scan.
+
+        ORDERED BY CALL VOLUME within an agent, not alphabetically, because `provider` is the only
+        grouping key in this codebase that the AGENT chooses — it is the action's own target, and on
+        the INT-07 gateway that is a URL path segment. Alphabetical order let an agent that called
+        three thousand invented hostnames push the vendors it actually used off the operator's first
+        page: spend-report suppression, on the report an operator reconciles against invoices.
+        Volume ordering means an invented provider must be genuinely expensive to hide a real one.
+        The distinct-provider count itself stays unbounded on purpose — capping it would mean
+        deciding on the write path that a target is not a real vendor, which is precisely the
+        inference this column refuses to make. `provider` breaks ties so paging stays stable.
         """
+        calls = func.count().label("calls")
         with self._sf() as s:
             rows = s.execute(
                 select(
                     CostRecord.agent_id,
                     CostRecord.provider,
-                    func.count().label("calls"),
+                    calls,
                     func.sum(CostRecord.cost_micro_usd),
                     func.count(CostRecord.cost_micro_usd).label("priced_calls"),
                 )
                 .where(CostRecord.provider.is_not(None))
                 .group_by(CostRecord.agent_id, CostRecord.provider)
-                .order_by(CostRecord.agent_id, CostRecord.provider)
+                .order_by(CostRecord.agent_id, calls.desc(), CostRecord.provider)
                 .limit(limit)
                 .offset(offset)
             ).all()

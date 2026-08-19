@@ -302,3 +302,35 @@ def test_the_provider_route_is_gated_and_404s_without_a_recorder(
     onto what a deployment is built out of."""
     assert client_no_token.get("/economics/providers").status_code == 401
     assert client_no_cost.get("/economics/providers").status_code == 404
+
+
+def test_the_roll_up_route_TELLS_operators_the_gpu_figures_are_not_additive(client) -> None:
+    """FastAPI publishes this route's docstring as its OpenAPI description, which is the only
+    in-band place an operator ever reads what a field means. The response carries process-level GPU
+    quantities in PER-AGENT rows: three co-resident agents under one 8 GiB allocation each report
+    8192, so a dashboard summing the column shows 24576 MiB on an 8192 MiB box. The mitigation
+    lived in a Python docstring nobody outside this repo sees, leaving the substring 'process' in a
+    field name as the entire warning."""
+    description = client.get("/openapi.json").json()["paths"]["/economics/costs"]["get"][
+        "description"
+    ]
+
+    assert "gpu_process" in description
+    assert "not additive" in description.lower()
+
+
+def test_the_provider_route_reports_the_BUSIEST_vendors_first(client, cost) -> None:
+    """`provider` is the action's own target, so an AGENT picks this route's grouping key. Under
+    alphabetical order a flood of invented hostnames sorting before the real ones pushed the vendors
+    an agent actually used past the page bound — the operator's downstream-spend report suppressed
+    by the thing it reports on."""
+    for target in ["api.stripe.com"] * 3 + ["api.aaa-noise.example.com"] * 2 + ["api.twilio.com"]:
+        action = _tool_action("a1", target)
+        decision = Decision(
+            action_id=action.id, outcome=Outcome.allow, reasons=[Reason(stage="policy", code="ok")]
+        )
+        asyncio.run(cost.record(action, decision, Usage(0, 0, None)))
+
+    rows = client.get("/economics/providers?limit=2").json()
+
+    assert [r["provider"] for r in rows] == ["api.stripe.com", "api.aaa-noise.example.com"]
