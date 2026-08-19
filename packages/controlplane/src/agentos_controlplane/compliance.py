@@ -254,7 +254,11 @@ HOW_TO_VERIFY = (
     "`rfc3161_v1` puts an authority outside the operator behind that root: `local_ed25519_v1` is "
     "the control plane's own signature over its own root, made with the same key that signs the "
     "records — durability, not independent attestation. Each epoch's `anchor_authority` says which "
-    "in words. In the counts below, `records_with_anchor_proof` means anchor bytes are PRESENT, "
+    "in words. An epoch's own `anchored` flag is the WEAKEST of these: it means anchor bytes exist "
+    "on that row and nothing more — an insider with database write access can set it beside a "
+    "garbage blob and an `rfc3161_v1` label — so never read it as 'checked'. The counts in "
+    "`verification` are what was checked. In those counts, `records_with_anchor_proof` means "
+    "anchor bytes are PRESENT, "
     "`records_anchor_verified` means they were checked and held, and "
     "`records_externally_anchored` means both AND the kind is external; a bundle where the second "
     "is under the first was exported without the material to check the anchor (the control-plane "
@@ -263,10 +267,12 @@ HOW_TO_VERIFY = (
     "unsealed record carries no INCLUSION proof because it was appended after the last epoch was "
     "sealed — but it is not unverifiable: sha256 over the canonical JSON of its `body` must equal "
     "its `record_hash`, and its `signature` must verify under the control-plane public key. Both "
-    "are checkable from this file alone; do them. We do the same before exporting and refuse "
-    "rather than ship one that fails. A truncated bundle is a subset of `records_in_range`, oldest "
-    "first. All of it is stated rather than implied so that what you hold is never mistaken for "
-    "everything there was.",
+    "are checkable from this file alone; do them. We do the same before exporting — the hash "
+    "ALWAYS, the signature only when this export held the public key. `records_signature_verified` "
+    "says how many signatures we actually checked, across sealed and unsealed alike; a zero means "
+    "we checked none of them, so that half is entirely yours to do. A truncated bundle is a subset "
+    "of `records_in_range`, oldest first. All of it is stated rather than implied so that what you "
+    "hold is never mistaken for everything there was.",
     "5. `chain_verifies` is our own AUD-05 pass over the WHOLE chain at export time, run on our "
     "data — context, not a substitute for steps 2 and 3. `false` is the loud one: that pass FAILED "
     "here, `chain_violation` names the seq and the check, and the disclosed records can still "
@@ -1195,12 +1201,22 @@ def export_evidence_bundle(
     # bundle tells them to run.
     anchor_verified = 0
     externally_anchored = 0
+    # How many records had their SIGNATURE checked here — which is not "how many were exported".
+    # Step 4 told the recipient we refuse to ship a record whose signature fails, and on the HTTP
+    # route that was false: it supplies no public key, so every signature branch is skipped and the
+    # count is zero. A forged unsealed body with a stale signature shipped 200 OK. The claim now
+    # travels with the number that qualifies it, on the same present/checked/held pattern step 3
+    # already uses for anchors — a hedge nobody can read past, rather than a promise held only on
+    # the CLI path that happens to pass --pubkey.
+    signature_verified = 0
     for entry in included:
         result = verify_bundle(verifiable_record(bundle, entry), public_key_pem=public_key_pem)
         if not result.ok:
             raise MerkleIntegrityError(
                 f"refusing to export seq {entry['record']['seq']}: {result.reason}"
             )
+        if public_key_pem is not None and entry["record"]["signature"] is not None:
+            signature_verified += 1
         if result.anchor_verified:
             anchor_verified += 1
             if epochs[str(entry["inclusion"]["epoch"])]["anchor_kind"] in EXTERNAL_AUTHORITY_KINDS:
@@ -1212,6 +1228,8 @@ def export_evidence_bundle(
                 raise MerkleIntegrityError(
                     f"refusing to export seq {entry['record']['seq']}: {failure}"
                 )
+            if public_key_pem is not None and entry["record"]["signature"] is not None:
+                signature_verified += 1
     # `ok` alone would over-report: with no public key the pass re-derives the hash linkage and
     # verifies NO signature, and `chain_verifies: true` beside nothing else reads as "signatures
     # checked". The count is what the pass actually did, so a zero is legible as a zero — and the
@@ -1240,6 +1258,7 @@ def export_evidence_bundle(
         ),
         "records_anchor_verified": anchor_verified,
         "records_externally_anchored": externally_anchored,
+        "records_signature_verified": signature_verified,
         "records_scope": RECORDS_SCOPE,
         "truncated": in_range > len(records),
         "how_to_verify": list(HOW_TO_VERIFY),

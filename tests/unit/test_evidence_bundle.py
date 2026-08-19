@@ -649,3 +649,98 @@ def test_the_bundle_carries_the_non_conformity_disclaimer(bundle) -> None:
 def test_no_framework_bundle_makes_a_conformity_claim(sealed, assert_no_conformity_claim) -> None:
     for framework in FRAMEWORKS:
         assert_no_conformity_claim(json.dumps(export_evidence_bundle(framework, sealed)))
+
+
+# ------------------------------------------------------- re-review: guards nothing was testing yet
+
+
+def test_an_unrecognised_anchor_kind_names_itself_as_unverifiable(sealed) -> None:
+    """REGRESSION: replacing the fallback with a bare dict lookup left the whole suite green.
+
+    `anchor_kind` is attacker-writable. Without the fallback an unknown kind returns None — byte
+    identical to an epoch with NO anchor at all — while `anchored: true` and
+    `records_with_anchor_proof` sit beside it saying bytes are present. "Nothing can verify this"
+    and "there is nothing here to verify" are opposite statements about a root, and the sentence is
+    the only thing that tells them apart.
+    """
+    from agentos_controlplane.checkpoint import anchor_authority
+
+    assert anchor_authority(None) is None
+    unknown = anchor_authority("bogus_v9")
+    assert unknown is not None and "unrecognised" in unknown and "bogus_v9" in unknown
+
+
+def test_the_article_sweep_also_covers_the_strings_only_some_exports_carry(sealed) -> None:
+    """REGRESSION: the sweep above exports with the DEFAULT settings, so two strings this artifact
+    can carry were never in the swept object — `CHAIN_NOT_RUN` (present on every export that skips
+    the chain pass, which is the production HTTP default) and the rfc3161 authority sentence.
+
+    Planting "Art. 12" in either passed the entire suite. 11e spent two rounds building this guard;
+    a string that only appears in some export shapes is exactly how an artifact grows past it.
+    """
+    for framework in FRAMEWORKS:
+        bundle = export_evidence_bundle(framework, sealed, verify_whole_chain=False)
+        assert bundle["verification"]["chain_note"], "the probe needs the skipped-chain shape"
+        for key, section in bundle.items():
+            if key == _VERBATIM:
+                continue
+            blob = json.dumps(section, ensure_ascii=False)
+            if "Art." in blob:
+                assert EU_AI_ACT_DISCLAIMER in blob, f"{framework}: bundle[{key!r}]"
+
+    from agentos_controlplane.checkpoint import _ANCHOR_AUTHORITY, anchor_authority
+
+    for kind in _ANCHOR_AUTHORITY:
+        assert "Art." not in (anchor_authority(kind) or "")
+    assert "Art." not in (anchor_authority("bogus_v9") or "")
+
+
+def test_an_unsealed_records_body_seq_must_agree_with_the_record(sealed) -> None:
+    """REGRESSION: deleting the body-seq check on the unsealed path left the suite green, though its
+    sealed counterpart in `verify_bundle` is tested.
+
+    The body is what the hash and the signature cover; the OUTER seq is not. So an unsealed entry
+    can be relabelled to a seq it never occupied while every cryptographic binding still holds — and
+    for an unsealed record there is no inclusion proof to contradict it. `records` is what an auditor
+    reads by seq.
+    """
+    from agentos_controlplane.compliance import _unsealed_failure
+
+    entry = {"record": {"seq": 7, "record_hash": "", "body": {"seq": 7}, "signature": None}}
+    entry["record"]["record_hash"] = hashlib.sha256(
+        canonical_json(entry["record"]["body"])
+    ).hexdigest()
+    assert _unsealed_failure(entry, None) is None
+
+    entry["record"]["seq"] = 8  # the body still says 7, and still hashes correctly
+
+    failure = _unsealed_failure(entry, None)
+    assert failure is not None and "seq" in failure
+
+
+def test_the_bundle_says_how_many_signatures_it_actually_checked(sealed) -> None:
+    """REGRESSION: step 4 promised "we do the same before exporting and refuse rather than ship one
+    that fails" for signatures — and the production HTTP route supplies no public key, so the
+    signature branch was skipped for every record, sealed and unsealed. Zero were checked. A forged
+    unsealed body with a stale signature shipped 200 OK under that sentence.
+
+    The claim now travels with the number that qualifies it, on the same present/checked/held
+    pattern step 3 uses for anchors. Asserted in BOTH directions, because a counter that is always
+    zero and a counter that is always the record count are each useless in the same way.
+    """
+    without_key = export_evidence_bundle("soc2", sealed)
+
+    assert without_key["verification"]["records_signature_verified"] == 0
+    step4 = next(s for s in without_key["verification"]["how_to_verify"] if s.startswith("4."))
+    assert "records_signature_verified" in step4
+    assert "only when this export held the public key" in step4
+
+
+def test_the_signature_count_moves_when_a_key_is_supplied(sealed, signer) -> None:
+    """Non-vacuity for the counter above: with a key and signed records it must be positive, or the
+    hedge would be permanently true for the wrong reason."""
+    bundle = export_evidence_bundle("soc2", sealed, public_key_pem=signer.public_key_pem)
+
+    verification = bundle["verification"]
+    assert verification["records_signature_verified"] > 0
+    assert verification["records_signature_verified"] <= verification["records_exported"]
