@@ -831,3 +831,54 @@ class AgentBudget(Base):
     )
 
     __mapper_args__ = {"version_id_col": version}
+
+
+class RedTeamRun(Base):
+    """TEST-07 — one execution of one red-team suite against one agent's DECISION path.
+
+    A run is the unit a trend is built from, and it stores COUNTS rather than a rate: the rate is a
+    lossy summary of `blocked` and `total`, and the number it loses is the one that says whether to
+    trust it. Two attacks with one slipped and five hundred with two hundred and fifty slipped are
+    both "50%" on a chart.
+
+    It records what the guard SAID it would do, never what an attack did — `agentos_sdk.redteam`
+    asks the PDP and never invokes a handler (spec D-1). So a rising rate here means the guard
+    changed, not that an agent was compromised.
+
+    `suite` is the attack CLASS the requirement asks to break the rate down by. It is a bounded
+    vocabulary (`agentos_sdk.redteam.suites()`), NOT free text — this column is a GROUP BY key on an
+    operator-facing trend, and Phase 6's Slice 6b review already found a metric-cardinality DoS in
+    exactly this shape.
+    """
+
+    __tablename__ = "redteam_run"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    suite: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    total: Mapped[int] = mapped_column(Integer, nullable=False)
+    blocked: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    ran_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+    )
+
+
+class RedTeamResult(Base):
+    """TEST-07 — one attack within a run.
+
+    The per-attack rows are what make a regression DIAGNOSABLE rather than merely visible: a trend
+    that moves tells an operator something broke, and only the attack id tells them what.
+
+    `attack_id` is a corpus identifier, never the payload it names. The payloads are our own rather
+    than a secret, but this table is read back by tools, by operators, and eventually by a model —
+    it is not a place to store text engineered to be interpreted as an instruction.
+    """
+
+    __tablename__ = "redteam_result"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    attack_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    blocked: Mapped[bool] = mapped_column(Boolean, nullable=False)

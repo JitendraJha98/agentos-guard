@@ -140,6 +140,44 @@ def test_0027_is_reversible_without_taking_the_agent_with_it(alembic_on_a_scratc
         assert c.execute(text("SELECT risk_classification FROM agent")).scalar_one() is None
 
 
+def test_0028_creates_the_redteam_tables_and_backs_out_cleanly(alembic_on_a_scratch_db) -> None:
+    """0028 ADDS tables rather than widening a populated one, so it has no backfill to get wrong —
+    what it must prove instead is that it is not one-way. A validation history an operator cannot
+    drop and re-apply is one they will not turn on, and TEST-07's whole value is that it keeps
+    running: the trend is the deliverable, and a trend needs the table to still be there next week.
+    """
+    config, engine = alembic_on_a_scratch_db
+    command.upgrade(config, "0027_agent_risk_classification")
+
+    command.upgrade(config, "head")
+
+    with engine.begin() as c:
+        c.execute(
+            text(
+                "INSERT INTO redteam_run (id, agent_id, suite, total, blocked) "
+                "VALUES (:id, 'a1', 'jailbreak', 2, 2)"
+            ),
+            {"id": uuid4().bytes},
+        )
+        # `source` has a server default so a row written without it is 'manual' rather than NULL —
+        # the column says how a run was TRIGGERED, and a null there would make every manually
+        # recorded run indistinguishable from a scheduled one on the 12b trend.
+        assert c.execute(text("SELECT source FROM redteam_run")).scalar_one() == "manual"
+
+    command.downgrade(config, "0027_agent_risk_classification")
+
+    with engine.begin() as c:
+        tables = {
+            r[0] for r in c.execute(text("SELECT name FROM sqlite_master WHERE type = 'table'"))
+        }
+    assert not tables & {"redteam_run", "redteam_result"}
+
+    command.upgrade(config, "head")  # and forward again, so the branch is not one-way
+
+    with engine.begin() as c:
+        assert c.execute(text("SELECT count(*) FROM redteam_run")).scalar_one() == 0
+
+
 def test_the_migration_chain_has_exactly_one_head(alembic_on_a_scratch_db) -> None:
     """Two heads is the failure mode of parallel slices on one branch, and it does not show up
     until an operator runs `upgrade head` and gets an error instead of a schema."""

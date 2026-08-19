@@ -153,6 +153,9 @@ EVENT_KINDS = frozenset(
         # Short identifiers only. The column holds the CURRENT value; this is the only record that
         # it ever said something else, who said so, and when — which is what a regulator asks.
         "risk_classification_declared",
+        # TEST-07 (Slice 12a): a red-team suite was run against an agent's decision path. Short
+        # identifiers and counts only — never an attack payload.
+        "validation_run",
     }
 )
 
