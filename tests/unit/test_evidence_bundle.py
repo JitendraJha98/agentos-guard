@@ -332,6 +332,20 @@ def test_the_manifest_digest_survives_the_json_round_trip_it_will_actually_take(
     assert bundle_digest(json.loads(json.dumps(bundle))) == bundle["manifest_digest"]
 
 
+def test_the_chain_pass_reports_what_it_actually_checked(sealed, signer) -> None:
+    """`chain_verifies: true` with no key beside it re-derives the hash linkage and verifies NO
+    signature — and reads to a recipient as "signatures checked". The count is what the pass did,
+    so a zero is legible as a zero."""
+    unkeyed = export_evidence_bundle("soc2", sealed)["verification"]
+    keyed = export_evidence_bundle(
+        "soc2", sealed, public_key_pem=signer.public_key_pem
+    )["verification"]
+
+    assert unkeyed["chain_verifies"] is True and unkeyed["chain_signatures_checked"] == 0
+    assert keyed["chain_verifies"] is True
+    assert keyed["chain_signatures_checked"] == SEALED_RECORDS + 1
+
+
 def test_the_bundle_states_what_the_digest_and_the_root_do_NOT_prove(bundle) -> None:
     """Two over-readings the artifact has to pre-empt, because both are ways a recipient over-claims
     on our word: that the digest authenticates the exporter, and that a root proves completeness."""
@@ -341,6 +355,7 @@ def test_the_bundle_states_what_the_digest_and_the_root_do_NOT_prove(bundle) -> 
     assert "verify_bundle, not verify_inclusion" in steps
     assert "anchor_verified" in steps
     assert "cannot show the epoch is complete" in steps
+    assert "chain_signatures_checked" in steps
 
 
 # --- per framework ----------------------------------------------------------

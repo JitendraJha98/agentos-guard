@@ -233,7 +233,9 @@ HOW_TO_VERIFY = (
     "truncated bundle is a subset of `records_in_range`, oldest first. Both are stated rather than "
     "implied so that what you hold is never mistaken for everything there was.",
     "5. `chain_verifies` is our own AUD-05 pass over the WHOLE chain at export time, run on our "
-    "data. It is context, not a substitute for steps 2 and 3.",
+    "data — context, not a substitute for steps 2 and 3. Read `chain_signatures_checked` beside "
+    "it: without a public key that pass re-derives the hash linkage and verifies NO signature, so "
+    "a zero there means `chain_verifies: true` says nothing about who wrote the records.",
     "6. Know the limit of all of it: an inclusion proof shows a record IS in the sealed epoch. It "
     "cannot show the epoch is COMPLETE — no root can testify that nothing was withheld before "
     "sealing. Completeness needs independent witnesses observing roots, which this bundle neither "
@@ -1084,6 +1086,10 @@ def export_evidence_bundle(
             )
 
     included = [e for e in records if e["inclusion"] is not None]
+    # `ok` alone would over-report: with no public key the pass re-derives the hash linkage and
+    # verifies NO signature, and `chain_verifies: true` beside nothing else reads as "signatures
+    # checked". The count is what the pass actually did, so a zero is legible as a zero.
+    chain = verify_chain(session_factory, public_key_pem=public_key_pem)
     bundle = {
         "framework": framework,
         "range": _window(start, end),
@@ -1092,7 +1098,8 @@ def export_evidence_bundle(
         "epochs": epochs,
         "records": records,
         "verification": {
-            "chain_verifies": verify_chain(session_factory, public_key_pem=public_key_pem).ok,
+            "chain_verifies": chain.ok,
+            "chain_signatures_checked": chain.signatures_checked,
             "records_in_range": in_range,
             "records_exported": len(records),
             "records_included": len(included),

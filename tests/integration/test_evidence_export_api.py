@@ -201,6 +201,8 @@ def test_the_cli_writes_a_bundle_that_verifies(tmp_path, seeded_db, signer) -> N
     bundle = json.loads(out.read_text(encoding="utf-8"))
     assert bundle["framework"] == "soc2"
     assert bundle_digest(bundle) == bundle["manifest_digest"]
+    # 11e's `derive_soc2_evidence` reaches a user here — before this slice it had no caller at all.
+    assert set(bundle["derived_evidence"]) == {"CC6", "CC7", "CC8"}
     entry = next(e for e in bundle["records"] if e["inclusion"] is not None)
     assert verify_bundle(
         verifiable_record(bundle, entry), public_key_pem=signer.public_key_pem
