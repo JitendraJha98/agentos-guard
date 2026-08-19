@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block body %}
+<h2>agent health</h2>
+
+<p>
+  Facts, not verdicts. <code>last seen</code> is when an agent last acted within the
+  {{ window_hours }}h window &mdash; an idle agent and a stopped one look identical from here, and
+  only your own expectation for that agent separates them. Nothing on this page decides which it is.
+</p>
+<p>
+  <strong>Blocked is not failed.</strong> A governance block is the system working, so it has its own
+  column and is never counted as an error. The failure rate is execution failures over
+  <em>executed</em> actions, and both counts are shown so the rate can be read.
+</p>
+
+{% if not rows %}
+<p>No agent has acted in the last {{ window_hours }}h, and no breaker is holding one.</p>
+{% else %}
+<table border="1" cellpadding="4">
+  <tr>
+    <th>agent</th><th>last seen</th><th>actions</th><th>executed</th>
+    <th>blocked<br><small>(governance)</small></th>
+    <th>execution failures</th><th>failure rate</th>
+    <th>breakers open</th><th>half-open</th><th>limit breaches</th>
+  </tr>
+  {% for r in rows %}
+  <tr>
+    <td>{{ r.agent_id }}</td>
+    <td>{% if r.last_seen_at %}{{ r.last_seen_at }}{% else %}<em>not in window</em>{% endif %}</td>
+    <td>{{ r.actions }}</td>
+    <td>{{ r.executed }}</td>
+    <td>{{ r.blocked }}</td>
+    <td>{% if r.execution_failures is none %}<em>not measured</em>{% else %}{{ r.execution_failures }}{% endif %}</td>
+    <td>
+      {% if r.execution_failure_rate is none %}
+        <em>n/a</em>
+      {% else %}
+        {{ '%.1f'|format(r.execution_failure_rate * 100) }}%
+        <small>({{ r.execution_failures }} / {{ r.executed }} executed)</small>
+      {% endif %}
+    </td>
+    <td>{{ r.breakers_open }}</td>
+    <td>{{ r.breakers_half_open }}</td>
+    <td>{{ r.resource_limit_breaches }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}

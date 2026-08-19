@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block body %}
+<h2>attack success rate</h2>
+
+<p>
+  How often the guard let a red-team probe through, per agent and per attack class. Every rate is
+  shown with the sample it came from: 1-of-2 and 250-of-500 are both &ldquo;50%&rdquo; and are not
+  the same claim. A bar with a small <code>n</code> is a hint, not a trend.
+</p>
+<p>
+  These runs ask the decision path what it <em>would</em> do. Nothing here executed an attack, so a
+  rising rate means the <strong>guard</strong> changed &mdash; not that an agent was compromised.
+</p>
+
+{% if not rows %}
+<p>No validation runs yet. This is not a 0% success rate &mdash; it is no data.</p>
+{% else %}
+<table border="1" cellpadding="4">
+  <tr>
+    <th>agent</th><th>attack class</th><th>success rate</th><th>sample</th>
+    <th>runs</th><th>last run</th>
+  </tr>
+  {% for r in rows %}
+  <tr>
+    <td>{{ r.agent_id }}</td>
+    <td>{{ r.suite }}</td>
+    <td>
+      <svg width="120" height="12" role="img"
+           aria-label="{{ '%.0f'|format(r.attack_success_rate * 100) }} percent of attacks succeeded">
+        <rect x="0" y="0" width="120" height="12" fill="#e2e8f0"></rect>
+        <rect x="0" y="0" width="{{ (r.attack_success_rate * 120)|round|int }}" height="12"
+              fill="{% if r.attack_success_rate > 0 %}#c53030{% else %}#2f855a{% endif %}"></rect>
+      </svg>
+      {{ '%.1f'|format(r.attack_success_rate * 100) }}%
+    </td>
+    <td>{{ r.total - r.blocked }} slipped / {{ r.total }} attacks</td>
+    <td>{{ r.runs }}</td>
+    <td>{{ r.last_run_at }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}
