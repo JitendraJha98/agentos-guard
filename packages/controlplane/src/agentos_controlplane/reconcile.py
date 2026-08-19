@@ -37,6 +37,19 @@ exposing `reconcile_async` instead, and is awaited on the loop. Two shapes rathe
 than one because the choice is not stylistic: blocking DB I/O on the loop stalls
 the hot path, and a coroutine driven from a worker thread would need a SECOND
 event loop for state that belongs to the first.
+
+That exception is not clean, and pretending otherwise would misread the rule.
+`ValidationStore.record` is `async def` over a blocking SQLAlchemy body, so the
+async reconciler does put some blocking DB I/O on the loop after all — the same
+thing `AuditWriter.append_event` already does on the hot path. It is tolerated
+here for the same reason and no better one: it is a handful of rows every fifteen
+minutes. The loop affinity above is what forces the shape; the DB half is a cost
+this reconciler pays, not a property it has.
+
+An async reconciler is also the only shape that can WEDGE the loop: `run_once` is
+sequential and `_loop` awaits it, so an unbounded await stops every sibling and
+`stop()` with it. Bounding the wait is the reconciler's job — see
+`ValidationReconciler._suite_timeout_s`.
 """
 
 from __future__ import annotations
@@ -56,9 +69,12 @@ DEFAULT_INTERVALS = {
     # ECON-02: tighter than trust because spend does NOT move slowly — a runaway loop burns a
     # budget in seconds, and this interval is how far a multi-process fleet's view of spend can lag.
     "budget": 30.0,
-    # TEST-08: re-running the corpus is pure CPU against the in-process PDP, but it is still N
-    # evaluations per pass; 15 minutes is often enough to catch a regression the same working day
-    # and rare enough that it never competes with real traffic.
+    # TEST-08: the most expensive pass here, and NOT pure CPU. Each probe drives the full PDP: a
+    # synchronous audit append on the same serialized write path the hot path uses, plus — on policy
+    # `no_match`, which is much of a red-team corpus — a remote interpreter call of up to 20s. So a
+    # pass is ~N audit appends and up to N provider calls, against live traffic. 15 minutes is often
+    # enough to catch a regression the same working day and rare enough that the contention is
+    # negligible; it is not free.
     "validation": 900.0,
 }
 
