@@ -17,9 +17,16 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
+import json
+
 from agentos_contract import ActionType, AgentAction, Decision, Outcome
 from agentos_controlplane.audit import EVENT_KINDS, AuditWriter
-from agentos_controlplane.compliance import SOC2_CRITERIA, derive_soc2_evidence
+from agentos_controlplane.compliance import (
+    SOC2_CRITERIA,
+    SOC2_DISCLAIMER,
+    SOC2_SCOPE,
+    derive_soc2_evidence,
+)
 from agentos_controlplane.store.engine import create_all, create_session_factory
 
 
@@ -88,6 +95,70 @@ def test_no_criterion_is_evidence_free() -> None:
     """A criterion with neither an event kind nor an outcome behind it can only ever report zero."""
     for name, criterion in SOC2_CRITERIA.items():
         assert criterion["event_kinds"] or criterion["outcomes"], name
+
+
+# Frozen 2026-08-19 against the AICPA Trust Services Criteria (TSP section 100, 2017 criteria).
+# Nothing else pins these: `test_every_cited_criterion_point_belongs_to_its_own_family` is a
+# `CC\d\.\d+` regex, so renaming a family "Risk Mitigation" or citing CC6.9 — which does not exist,
+# the 2017 CC6 series running .1 to .8 — shipped green. Re-verify against the AICPA text before
+# editing, and add nothing that has not been checked there: an unverified point reference in an
+# auditor-facing artifact is the same failure as an unverified article number.
+_VERIFIED_SOC2_CITATIONS = {
+    "CC6": ("Logical and Physical Access Controls", ("CC6.1", "CC6.3")),
+    "CC7": ("System Operations", ("CC7.2", "CC7.4")),
+    "CC8": ("Change Management", ("CC8.1",)),
+}
+
+
+def test_every_family_heading_and_point_matches_the_verified_text() -> None:
+    assert {
+        name: (c["name"], tuple(c["criteria"])) for name, c in SOC2_CRITERIA.items()
+    } == _VERIFIED_SOC2_CITATIONS
+
+
+# --- D-8: the SOC 2 half must not read as an attestation ---------------------
+
+
+def test_every_criterion_carries_the_disclaimer_and_the_scope(store) -> None:
+    """A SOC 2 report is an attestation ISSUED BY an independent licensed CPA firm. This output
+    reproduces AICPA family headings and point references next to counts — the shape of a
+    control-effectiveness table out of such a report — so forwarded without a disclaimer it is
+    indistinguishable from attested evidence. It travels inside each criterion because the function
+    returns a bare {CC6:..., CC7:..., CC8:...} map with no wrapper level to hang it from, so any
+    single criterion lifted out still carries it."""
+    for name, criterion in derive_soc2_evidence(store).items():
+        assert criterion["disclaimer"] == SOC2_DISCLAIMER, name
+        assert criterion["scope"] == SOC2_SCOPE, name
+
+
+def test_the_soc2_evidence_never_claims_conformity(store, assert_no_conformity_claim) -> None:
+    """The EU half got this guard because of D-8; the SOC 2 half — touching the more strongly
+    gate-kept attestation regime — had none, so an evidence string reading "demonstrates that the
+    change-management control OPERATED EFFECTIVELY throughout the period" shipped green. That is
+    precisely the determination a SOC 2 Type II auditor makes and this tool must not."""
+    _seed_events(store, "kill_switch_set", "privilege_ring_set")
+    blob = json.dumps(derive_soc2_evidence(store)).lower()
+
+    assert_no_conformity_claim(blob)
+    assert "not a soc 2 report" in blob
+    assert "not an opinion" in blob
+    assert "out of scope" in blob  # three families of nine, said out loud
+
+
+def test_the_counted_outcomes_are_named_rather_than_implied() -> None:
+    """CC6's prose promised "the per-action decisions that refused or gated access" while the code
+    counted two of the six gating outcomes, so deleting `require_approval` from the tuple entirely
+    left every test passing. Either the set is complete or the prose names it; this pins the
+    second, and pins the omissions to a reason."""
+    counted = SOC2_CRITERIA["CC6"]["outcomes"]
+    assert set(counted) == {Outcome.deny.value, Outcome.require_approval.value}
+
+    evidence = SOC2_CRITERIA["CC6"]["evidence"]
+    for outcome in counted:
+        assert f"`{outcome}`" in evidence, outcome
+    gating = {o.value for o in Outcome} - {Outcome.allow.value, Outcome.warn.value}
+    for uncounted in gating - set(counted):
+        assert f"`{uncounted}`" in evidence, f"{uncounted} is silently uncounted"
 
 
 # --- the counts -------------------------------------------------------------
@@ -161,8 +232,22 @@ def test_the_range_is_echoed_so_a_zero_can_be_read_against_its_window(store) -> 
 
     evidence = derive_soc2_evidence(store, start=start, end=end)
 
-    assert evidence["CC6"]["range"] == {"start": start.isoformat(), "end": end.isoformat()}
-    assert derive_soc2_evidence(store)["CC6"]["range"] == {"start": None, "end": None}
+    window = evidence["CC6"]["range"]
+    assert (window["start"], window["end"]) == (start.isoformat(), end.isoformat())
+    empty = derive_soc2_evidence(store)["CC6"]["range"]
+    assert (empty["start"], empty["end"]) == (None, None)
+
+
+def test_the_window_says_what_it_is_scoped_on_and_what_that_does_not_prove(store) -> None:
+    """The one dimension scoping an auditor-facing count is `created_at` — the one field in the
+    record the hash chain and the AUD-08 signature do NOT cover (ordering derives from `seq`). An
+    auditor reading a count over a window is entitled to know the window itself is administrative
+    metadata, and that a whole-second `start` can drop a record written in that same second."""
+    note = derive_soc2_evidence(store)["CC6"]["range"]["note"]
+
+    assert "created_at" in note
+    assert "seq" in note
+    assert "inclusive" in note.lower()
 
 
 def test_a_naive_bound_is_read_as_utc_like_the_column_it_filters(store) -> None:

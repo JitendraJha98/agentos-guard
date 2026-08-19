@@ -33,13 +33,17 @@ OWASP_AGENTIC = {
     "ASI10": "Rogue Agents",
 }
 NIST_RMF = {"GOVERN", "MAP", "MEASURE", "MANAGE"}
-# EU AI Act = Regulation (EU) 2024/1689. Headings verified article-by-article on 2026-08-19 against
-# the European Commission's own AI Act Service Desk (ai-act-service-desk.ec.europa.eu), and quoted
-# as the Act words them rather than paraphrased — a paraphrase in a bundle handed to a regulator is
-# where a mapping starts describing obligations that do not exist. Anything that could not be
-# confirmed there is ABSENT rather than approximated: Art. 73 (serious incident reporting) is
-# omitted because notifying a market surveillance authority is an act this control plane does not
-# perform, and listing it would imply we evidence something toward it.
+# EU AI Act = Regulation (EU) 2024/1689. Headings quoted as the Act words them rather than
+# paraphrased — a paraphrase in a bundle handed to a regulator is where a mapping starts describing
+# obligations that do not exist. PROVENANCE, stated exactly, because overstating what we checked is
+# the same failure as overstating what we evidence: verified verbatim on 2026-08-19, Art. 5-15
+# against the CONSOLIDATED text on EUR-Lex (eur-lex.europa.eu/eli/reg/2024/1689/2026-07-27/eng),
+# and Art. 26 / 43 / 50 / 72 against two independent reproductions of the Official Journal text
+# (ai-act-law.eu, artificialintelligenceact.eu) because the EUR-Lex renderer truncates mid-recital
+# before reaching them. Anything that could not be confirmed is ABSENT rather than approximated:
+# Art. 73 (serious incident reporting) is omitted because notifying a market surveillance authority
+# is an act this control plane does not perform, and listing it would imply we evidence something
+# toward it.
 EU_AI_ACT = {
     "Art.5": "Prohibited AI practices",
     "Art.6": "Classification rules for high-risk AI systems",
@@ -74,12 +78,26 @@ EU_ARTICLE_NOTES = {
     ),
 }
 
-# CMP-04 — the risk tiers an OPERATOR may declare for a deployment (Art. 6 / Annex III).
-# Never inferred. Which tier applies depends on the USE CASE, not on anything a runtime can observe:
-# the same agent is high-risk in a hiring pipeline and minimal-risk summarizing meeting notes. A
-# wrong guess harms in both directions — it burdens a deployer with obligations they do not have, or
-# tells them to skip ones they do. Absent = UNDECLARED, which the export reports as undeclared.
-RISK_CLASSIFICATIONS = frozenset({"prohibited", "high_risk", "limited_risk", "minimal_risk"})
+# CMP-04 — the risk tiers an OPERATOR may declare. Never inferred.
+#
+# PROVENANCE, precisely, because attributing to the Regulation a vocabulary it does not use is the
+# same overreach as claiming conformity: ONLY `high_risk` names a determination the Act's OPERATIVE
+# text defines (Art. 6 + Annex III, which produce exactly one answer — high-risk or not). The other
+# three are the European Commission's own explanatory labels for the Act's risk-based approach
+# ("Unacceptable risk / High risk / Transparency risk / Minimal or no risk", verified 2026-08-19 at
+# digital-strategy.ec.europa.eu/en/policies/regulatory-framework-ai): `unacceptable_risk` for the
+# practices Art. 5 prohibits, `transparency_risk` for the systems Art. 50 attaches disclosure
+# obligations to, `minimal_risk` for everything else. Neither "limited risk" nor "minimal risk"
+# appears in the operative text at all, and "limited risk" is not even the Commission's current
+# term — which is why it is not one of these values.
+#
+# Which tier applies depends on the USE CASE, not on anything a runtime can observe: the same agent
+# is high-risk in a hiring pipeline and minimal-risk summarizing meeting notes. A wrong guess harms
+# in both directions — it burdens a deployer with obligations they do not have, or tells them to
+# skip ones they do. Absent = UNDECLARED, which the export reports as undeclared.
+RISK_CLASSIFICATIONS = frozenset(
+    {"unacceptable_risk", "high_risk", "transparency_risk", "minimal_risk"}
+)
 UNDECLARED = "undeclared"
 
 # D-8, in one string. It travels INSIDE the eu_ai_act section rather than beside it, so the articles
@@ -94,7 +112,10 @@ EU_AI_ACT_DISCLAIMER = (
 )
 RISK_CLASSIFICATION_SOURCE = (
     "operator-declared, never inferred; 'undeclared' means no operator has declared one for this "
-    "agent's deployment, not that it is low risk"
+    "agent, not that it is low risk. ONE declaration per registered agent, not per deployment — an "
+    "agent serving two use cases can hold only one, and which tier applies depends on the use "
+    "case. Only 'high_risk' names a determination the Act's operative text defines (Art. 6 + Annex "
+    "III); the other tiers follow the European Commission's explanatory risk-level framing."
 )
 
 
@@ -112,13 +133,46 @@ RISK_CLASSIFICATION_SOURCE = (
 # A record may back more than one criterion (a privilege-ring assignment is both an access
 # authorization and a configuration change), so the per-criterion totals are not a partition of the
 # log and do not sum to it.
+#
+# Within a listed family, only the POINTS the shipped records bear on are cited; the rest are
+# absent for the same reason CC6.2 is. Points we can see an argument for but have not verified
+# against the AICPA text stay out — approximating a criterion reference in an auditor-facing
+# artifact is exactly the failure D-8 exists to prevent.
+
+# D-8 for the SOC 2 half. A SOC 2 report is an attestation ISSUED BY an independent licensed CPA
+# firm; this output reproduces AICPA family headings and point references next to counts, which is
+# the shape of a control-effectiveness table out of such a report. Forwarded without this it is
+# indistinguishable from attested evidence — so it travels INSIDE each criterion (the function
+# returns a bare {CC6:..., CC7:..., CC8:...} map with no wrapper level to hang it from), never
+# beside them.
+SOC2_DISCLAIMER = (
+    "Audit-log evidence bearing on these criteria. This is NOT a SOC 2 report and NOT an opinion "
+    "on the design or operating effectiveness of any control: a SOC 2 examination is performed and "
+    "reported by an independent licensed CPA firm, never by the system under examination. A single "
+    "record may back more than one criterion, so these totals overlap and do not partition the log."
+)
+# Silence about what is NOT covered is the same failure EU_ARTICLE_NOTES exists to refuse, applied
+# to the other framework: three families out of nine read as "SOC 2 evidence" unless we say so.
+SOC2_SCOPE = (
+    "Scope: the CC6, CC7 and CC8 common criteria only, and within them only the points the shipped "
+    "audit records actually bear on. The other common-criteria series (CC1-CC5, CC9) and the "
+    "Availability, Confidentiality, Processing Integrity and Privacy categories are OUT of scope "
+    "here — not evidenced and not asserted, and their absence says nothing about them either way."
+)
+
 SOC2_CRITERIA: dict[str, dict] = {
     "CC6": {
         "name": "Logical and Physical Access Controls",
         "criteria": ("CC6.1", "CC6.3"),
         "evidence": (
             "privilege-ring assignments, human authorization rulings, time-boxed exceptions, "
-            "multi-party consensus, and the per-action decisions that refused or gated access"
+            "multi-party consensus, and the per-action decisions that REFUSED or HELD an action — "
+            "`deny` and `require_approval`, and only those two. The other gating outcomes are "
+            "already counted here as their own lifecycle events (`require_consensus` as "
+            "consensus_resolved, `temporary_exception` as exception_granted) or belong to CC7 "
+            "containment (`sandbox` as sandbox_executed), and counting the decision as well would "
+            "double-count one act of access control. `governance_review` is not counted at all: it "
+            "lets the action proceed and opens an asynchronous review, so it refused nothing."
         ),
         "event_kinds": (
             "privilege_ring_set",
@@ -487,7 +541,16 @@ def derive_soc2_evidence(session_factory, start=None, end=None) -> dict:
     The scan is deliberately UNBOUNDED over the range. Every other bulk read in this codebase is
     capped, because a clipped page is still a usable page — here a clipped count is a WRONG count,
     reported to someone who cannot see that it was clipped. `yield_per` keeps the memory bounded
-    instead. `end` is inclusive.
+    instead — passed as an EXECUTION OPTION, not as `Result.yield_per()`, because only the option
+    also sets `stream_results`; called on an already-materialized result it sets a buffer size
+    after psycopg2 has client-side-buffered every `body` in the log, which is not a memory bound at
+    all on the production backend.
+
+    BOTH BOUNDS ARE INCLUSIVE, to the storage granularity of `audit_record.created_at`. On SQLite
+    that column is TEXT at one-second resolution while a bound binds with microseconds, so a record
+    written in the same second as an exact-second `start` sorts BELOW it and falls outside the
+    window; the emitted `range` says so, because an auditor's period almost always starts on a
+    whole second.
     """
     from sqlalchemy import select
 
@@ -511,7 +574,7 @@ def derive_soc2_evidence(session_factory, start=None, end=None) -> dict:
     if end is not None:
         stmt = stmt.where(AuditRecord.created_at <= _as_utc_naive(end))
     with session_factory() as s:
-        for (body,) in s.execute(stmt).yield_per(_SCAN_CHUNK):
+        for (body,) in s.execute(stmt, execution_options={"yield_per": _SCAN_CHUNK}):
             body = body or {}
             key = body.get("kind")
             criteria = by_kind.get(key) if key is not None else None
@@ -524,6 +587,16 @@ def derive_soc2_evidence(session_factory, start=None, end=None) -> dict:
     window = {
         "start": start.isoformat() if start is not None else None,
         "end": end.isoformat() if end is not None else None,
+        # The one dimension scoping an auditor-facing count is the one field in the record that is
+        # NOT tamper-evident. Saying so here is cheaper than an auditor assuming otherwise.
+        "note": (
+            "Both bounds inclusive. Filtered on audit_record.created_at — the server clock at "
+            "insert, which the record hash and the AUD-08 signature do NOT cover (the chain's own "
+            "ordering is `seq`), so the window is administrative metadata rather than "
+            "tamper-evident. Inclusive only to that column's storage granularity: on SQLite it is "
+            "one second, so a record written in the same second as an exact-second `start` falls "
+            "outside the window."
+        ),
     }
     return {
         name: {
@@ -535,6 +608,8 @@ def derive_soc2_evidence(session_factory, start=None, end=None) -> dict:
             "counts": counts[name],
             "total": sum(counts[name].values()),
             "range": window,
+            "disclaimer": SOC2_DISCLAIMER,
+            "scope": SOC2_SCOPE,
         }
         for name, criterion in SOC2_CRITERIA.items()
     }
@@ -561,13 +636,15 @@ def _eu_article_entry(article: str, name: str) -> dict:
 def export_compliance_evidence(session_factory=None, public_key_pem=None) -> dict:
     """CMP-03/04 — a one-call evidence bundle: the control->framework mapping grouped by framework,
     the EU AI Act article set with the controls bearing on each (and an explicit note where nothing
-    does), and pointers to the CONCRETE evidence behind the Art. 12 / Art. 26 claims. When a store
-    is supplied, include LIVE evidence: audit-record count, checkpoint count, whether the chain
+    does), and pointers to the CONCRETE records behind Art. 12 and Art. 14. When a store is
+    supplied, include LIVE evidence: audit-record count, checkpoint count, whether the chain
     currently verifies (AUD-05) — the record-keeping proof itself — and the operator-declared risk
     classification of every registered agent.
 
-    EVIDENCE, NOT A CONFORMITY CLAIM (D-8). The `eu_ai_act` section carries its disclaimer inside
-    itself rather than beside itself, so the articles cannot be extracted and forwarded alone."""
+    EVIDENCE, NOT A CONFORMITY CLAIM (D-8). Everything article-keyed lives under `eu_ai_act`, which
+    carries its disclaimer inside itself rather than beside itself — so no sub-object a consumer
+    would plausibly lift (`frameworks`, `evidence`) contains an article reference at all, and the
+    article map cannot be extracted and forwarded without the statement of what it is not."""
     controls = [
         {
             "control": m.control,
@@ -589,17 +666,35 @@ def export_compliance_evidence(session_factory=None, public_key_pem=None) -> dic
     by_eu = {
         art: _eu_article_entry(art, name) for art, name in EU_AI_ACT.items()
     }
-    eu_section: dict = {"articles": by_eu, "disclaimer": EU_AI_ACT_DISCLAIMER}
+    eu_section: dict = {
+        "articles": by_eu,
+        # Article-keyed pointers live INSIDE the disclaimed section, not beside it under a generic
+        # `evidence` key: an "Art. 12 / Art. 14" claim lifted out of the bundle is the same
+        # lift-and-forward exposure as the article map itself.
+        "evidence_pointers": {
+            "eu_art12_record_keeping": "hash-chained, per-record-signed, fail-closed-redacted audit log (AUD-01/03/04/08) + Merkle inclusion proofs against anchored epoch roots (AUD-06)",
+            # Art. 14 is "Human oversight"; Art. 26 is "Obligations of deployers of high-risk AI
+            # systems". These four controls are the oversight mechanisms, so the key names Art. 14
+            # — pointing an auditor at the wrong article for the obligation named is precisely the
+            # citation error a compliance bundle must not carry.
+            "eu_art14_human_oversight": "require_approval + temporary_exception + governance_review + kill switch (POL-07/13/14, RUN-01/02)",
+        },
+        "disclaimer": EU_AI_ACT_DISCLAIMER,
+    }
+    # `frameworks` deliberately holds only the two taxonomies with no legal weight. The article map
+    # appears ONCE, under `eu_ai_act`, so there is no path to it that does not also carry the
+    # disclaimer — a second copy here is the obvious sub-object to lift for a "framework coverage"
+    # view, and it would forward article->control mappings to a regulator saying nothing about what
+    # they are not.
     bundle = {
-        "frameworks": {"owasp_agentic_2026": by_owasp, "nist_ai_rmf": by_nist, "eu_ai_act": by_eu},
+        "frameworks": {"owasp_agentic_2026": by_owasp, "nist_ai_rmf": by_nist},
         "eu_ai_act": eu_section,
         "controls": controls,
-        "evidence": {
-            "eu_art12_record_keeping": "hash-chained, per-record-signed, fail-closed-redacted audit log (AUD-01/03/04/08) + Merkle inclusion proofs against anchored epoch roots (AUD-06)",
-            "eu_art26_human_oversight": "require_approval + temporary_exception + governance_review + kill switch (POL-07/13/14, RUN-01/02)",
-        },
     }
     if session_factory is not None:
+        # Same reasoning as `risk_classifications` below: with no store we know nothing about any
+        # fleet, and an empty `evidence: {}` is a claim rather than a silence.
+        bundle["evidence"] = {}
         from sqlalchemy import func, select
 
         from agentos_controlplane.audit_verify import verify_chain
@@ -610,11 +705,25 @@ def export_compliance_evidence(session_factory=None, public_key_pem=None) -> dic
             bundle["evidence"]["checkpoints"] = s.scalar(select(func.count()).select_from(ChainCheckpoint))
             # CMP-04. Added ONLY with a registry to read: an empty `risk_classifications: {}` would
             # read as "this fleet has no agents", which is a claim about a fleet we cannot see.
+            declared = s.execute(
+                select(Agent.agent_id, Agent.risk_classification).order_by(Agent.agent_id)
+            ).all()
+            # LAST GATE, fail-closed — the same discipline as the AUD-04 body scan. The column is a
+            # plain string on every backend and `Registry.declare_risk_classification` gates only
+            # the path that goes through it; a value written around it (a future API route, a
+            # direct UPDATE, a migration) would otherwise be echoed verbatim into a
+            # regulator-facing bundle as if it were a recognised tier. Refusing to emit the bundle
+            # is the honest failure: silently rewriting the value to "undeclared" would replace one
+            # false statement with a different one — "no operator declared a class for this agent".
+            for agent_id, classification in declared:
+                if classification is not None and classification not in RISK_CLASSIFICATIONS:
+                    raise ValueError(
+                        f"agent {agent_id!r} carries an unrecognised EU AI Act risk classification "
+                        f"{classification!r}; expected one of {sorted(RISK_CLASSIFICATIONS)} or "
+                        "NULL (undeclared). Refusing to emit a compliance bundle containing it."
+                    )
             eu_section["risk_classifications"] = {
-                agent_id: classification or UNDECLARED
-                for agent_id, classification in s.execute(
-                    select(Agent.agent_id, Agent.risk_classification).order_by(Agent.agent_id)
-                ).all()
+                agent_id: classification or UNDECLARED for agent_id, classification in declared
             }
             eu_section["risk_classification_source"] = RISK_CLASSIFICATION_SOURCE
         result = verify_chain(session_factory, public_key_pem=public_key_pem)

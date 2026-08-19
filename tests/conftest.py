@@ -187,3 +187,46 @@ def pipeline_without_principle(constitution_wasm_no_egress) -> WiredPipeline:
     meaningless — so this asserting `allow` is what makes the regression lock bite.
     """
     return _wire(_engine(constitution_wasm_no_egress))
+
+
+# --- CMP-04/05 (D-8): the conformity-language guard, shared by the EU and SOC 2 halves ----
+#
+# The verbs that actually manufacture assurance. The original list held only the seven loudest
+# phrases, which meant a control whose evidence read "this deployment SATISFIES the record-keeping
+# obligation of Art. 12 and DEMONSTRATES CONFORMITY with it" passed untouched, and so did a
+# disclaimer softened to "evidence indicating this deployment MEETS THE OBLIGATIONS these articles
+# create" (the words "not a conformity assessment" still appeared further down the string). Each
+# entry is a determination belonging to a notified body, an auditor, or a licensed CPA firm — never
+# to the system under examination. None of them can appear inside a negated disclaimer, which is
+# why "conformity assessment" and "SOC 2 report" are deliberately NOT here.
+CONFORMITY_CLAIMS = (
+    "is compliant",
+    "fully compliant",
+    "certified",
+    "conformity assessment passed",
+    "guarantees compliance",
+    "compliance certificate",
+    "attests compliance",
+    "satisfies",
+    "demonstrates conformity",
+    "conformity assessed",
+    "operated effectively",
+    "operating effectively",
+    "complies with",
+    "in compliance with",
+    "deemed compliant",
+    "audit opinion",
+    "meets the obligation",
+)
+
+
+@pytest.fixture
+def assert_no_conformity_claim():
+    """Assert a serialized compliance artifact states no conformity determination."""
+
+    def _assert(blob: str) -> None:
+        lowered = blob.lower()
+        for forbidden in CONFORMITY_CLAIMS:
+            assert forbidden not in lowered, forbidden
+
+    return _assert

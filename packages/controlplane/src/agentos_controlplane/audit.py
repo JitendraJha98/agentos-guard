@@ -149,6 +149,10 @@ EVENT_KINDS = frozenset(
         # ECON-01 (Slice 11b): what an action cost. Short identifiers + numbers only — never the
         # prompt that produced the tokens.
         "cost_recorded",
+        # CMP-04 (Slice 11e): an operator declared (or withdrew) an EU AI Act risk classification.
+        # Short identifiers only. The column holds the CURRENT value; this is the only record that
+        # it ever said something else, who said so, and when — which is what a regulator asks.
+        "risk_classification_declared",
     }
 )
 

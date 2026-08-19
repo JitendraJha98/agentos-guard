@@ -28,7 +28,11 @@ def test_bundle_has_all_three_framework_sections():
     for controls in nist.values():
         assert isinstance(controls, list)
 
-    eu = fw["eu_ai_act"]
+    # The EU article map lives under `eu_ai_act`, NEVER under `frameworks` — `frameworks` holds
+    # only the two taxonomies with no legal weight, so there is no copy of the articles that a
+    # consumer can lift for a coverage view without the disclaimer that travels with them.
+    assert "eu_ai_act" not in fw
+    eu = b["eu_ai_act"]["articles"]
     # CMP-04 widened Phase 6's minimal Art.12/26 pointer to the article set a high-risk deployment
     # actually faces. Art.5 and Art.6 are here as explicit NON-claims (see the mapping tests).
     assert set(eu) == {
@@ -36,7 +40,8 @@ def test_bundle_has_all_three_framework_sections():
         "Art.26", "Art.72",
     }
     assert len(eu["Art.12"]["controls"]) >= 1  # record-keeping backed by >=1 control
-    assert len(eu["Art.26"]["controls"]) >= 1  # human oversight backed by >=1 control
+    assert len(eu["Art.14"]["controls"]) >= 1  # human oversight (Art.14) backed by >=1 control
+    assert len(eu["Art.26"]["controls"]) >= 1  # deployer obligations backed by >=1 control
 
 
 def test_bundle_has_controls_list_and_evidence_pointers():
@@ -44,15 +49,16 @@ def test_bundle_has_controls_list_and_evidence_pointers():
     assert isinstance(b["controls"], list) and b["controls"]
     sample = b["controls"][0]
     assert {"control", "name", "owasp", "nist_rmf", "eu_ai_act", "evidence"} <= set(sample)
-    ev = b["evidence"]
-    assert ev["eu_art12_record_keeping"]  # concrete Art.12 evidence pointer
-    assert ev["eu_art26_human_oversight"]  # concrete Art.26 evidence pointer
+    # Article-keyed pointers sit inside the disclaimed section, not beside it under a generic key.
+    ptr = b["eu_ai_act"]["evidence_pointers"]
+    assert ptr["eu_art12_record_keeping"]  # concrete Art.12 evidence pointer
+    assert ptr["eu_art14_human_oversight"]  # concrete Art.14 evidence pointer
 
 
 def test_bundle_without_store_has_no_live_counts():
-    b = export_compliance_evidence()
-    assert "audit_records" not in b["evidence"]
-    assert "chain_verifies" not in b["evidence"]
+    """Omitted, not empty: with no store we know nothing about any fleet, and `evidence: {}` reads
+    as "we have no evidence" — the same false silence an empty `risk_classifications` would be."""
+    assert "evidence" not in export_compliance_evidence()
 
 
 def test_bundle_is_json_serializable():
@@ -120,7 +126,7 @@ def test_live_store_adds_audit_counts_and_chain_verifies(tmp_path):
     assert "checkpoints" in ev
     assert ev["chain_verifies"] is True
     # the static bundle is still present alongside the live evidence
-    assert set(b["frameworks"]) == {"owasp_agentic_2026", "nist_ai_rmf", "eu_ai_act"}
+    assert set(b["frameworks"]) == {"owasp_agentic_2026", "nist_ai_rmf"}
 
 
 # --- CLI --------------------------------------------------------------------
@@ -135,7 +141,7 @@ def test_cli_prints_valid_json(tmp_path, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     parsed = json.loads(out)  # valid JSON
-    assert set(parsed["frameworks"]) == {"owasp_agentic_2026", "nist_ai_rmf", "eu_ai_act"}
+    assert set(parsed["frameworks"]) == {"owasp_agentic_2026", "nist_ai_rmf"}
     assert parsed["evidence"]["audit_records"] >= 2
     assert parsed["evidence"]["chain_verifies"] is True
 
@@ -144,4 +150,5 @@ def test_cli_without_db_prints_static_bundle(capsys):
     rc = _main([])
     assert rc == 0
     parsed = json.loads(capsys.readouterr().out)
-    assert "audit_records" not in parsed["evidence"]
+    assert "evidence" not in parsed
+    assert parsed["eu_ai_act"]["articles"]
