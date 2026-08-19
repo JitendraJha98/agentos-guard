@@ -30,6 +30,13 @@ observability sink must never be able to halt governance state.
 Reconcilers are SYNCHRONOUS callables run in a thread via `asyncio.to_thread`:
 they do blocking SQLAlchemy I/O, and running that on the event loop would stall
 the pipeline's async audit writes.
+
+The one exception is a reconciler whose work is genuinely awaiting something —
+TEST-08's validation pass drives the LIVE pipeline — which declares itself by
+exposing `reconcile_async` instead, and is awaited on the loop. Two shapes rather
+than one because the choice is not stylistic: blocking DB I/O on the loop stalls
+the hot path, and a coroutine driven from a worker thread would need a SECOND
+event loop for state that belongs to the first.
 """
 
 from __future__ import annotations
@@ -49,6 +56,10 @@ DEFAULT_INTERVALS = {
     # ECON-02: tighter than trust because spend does NOT move slowly — a runaway loop burns a
     # budget in seconds, and this interval is how far a multi-process fleet's view of spend can lag.
     "budget": 30.0,
+    # TEST-08: re-running the corpus is pure CPU against the in-process PDP, but it is still N
+    # evaluations per pass; 15 minutes is often enough to catch a regression the same working day
+    # and rare enough that it never competes with real traffic.
+    "validation": 900.0,
 }
 
 
@@ -60,6 +71,25 @@ class Reconciler(Protocol):
     interval_s: float
 
     def reconcile(self) -> int: ...
+
+
+@runtime_checkable
+class AsyncReconciler(Protocol):
+    """A reconciler whose work is genuinely awaited (TEST-08 drives the live pipeline).
+
+    A DIFFERENT method name, not an `async def reconcile`, and that is the point: the loop would
+    hand an async `reconcile` to `asyncio.to_thread`, `int()` the coroutine it got back, and report
+    a TypeError every pass while the work never ran. Naming the shape makes the mismatch unable to
+    happen quietly.
+    """
+
+    name: str
+    interval_s: float
+
+    async def reconcile_async(self) -> int: ...
+
+
+AnyReconciler = Reconciler | AsyncReconciler
 
 
 @dataclass(frozen=True)
@@ -76,8 +106,8 @@ class ReconcilerResult:
 
 
 def periodic(
-    reconcilers: list[Reconciler], *, last_run: dict[str, float], now: float
-) -> list[Reconciler]:
+    reconcilers: list[AnyReconciler], *, last_run: dict[str, float], now: float
+) -> list[AnyReconciler]:
     """The reconcilers due at `now`, each on its OWN interval.
 
     A reconciler with no recorded run is always due, so a fresh loop converges
@@ -93,7 +123,7 @@ class ReconciliationLoop:
 
     def __init__(
         self,
-        reconcilers: list[Reconciler],
+        reconcilers: list[AnyReconciler],
         *,
         on_result: Callable[[ReconcilerResult], None] | None = None,
         tick_s: float = 1.0,
@@ -111,11 +141,16 @@ class ReconciliationLoop:
     def running(self) -> bool:
         return self._task is not None and not self._task.done()
 
-    async def _run(self, r: Reconciler) -> ReconcilerResult:
+    async def _run(self, r: AnyReconciler) -> ReconcilerResult:
         try:
-            # to_thread: reconcilers do blocking DB I/O; on the event loop they
-            # would stall the pipeline's async audit writes.
-            changed = await asyncio.to_thread(r.reconcile)
+            if hasattr(r, "reconcile_async"):
+                # Awaited HERE rather than in a thread: this shape's work is awaiting collaborators
+                # (the live pipeline) whose async state is bound to THIS loop.
+                changed = await r.reconcile_async()
+            else:
+                # to_thread: reconcilers do blocking DB I/O; on the event loop they
+                # would stall the pipeline's async audit writes.
+                changed = await asyncio.to_thread(r.reconcile)
             return ReconcilerResult(r.name, changed=int(changed))
         except Exception as exc:
             # Isolation: a broken reconciler degrades ONE derived view, and says so.
@@ -130,7 +165,7 @@ class ReconciliationLoop:
             # The sink is observability. It may never halt reconciliation.
             pass
 
-    async def run_once(self, reconcilers: list[Reconciler] | None = None) -> list[ReconcilerResult]:
+    async def run_once(self, reconcilers: list[AnyReconciler] | None = None) -> list[ReconcilerResult]:
         """Run one pass over `reconcilers` (default: all). Never raises."""
         results = []
         for r in reconcilers if reconcilers is not None else self._reconcilers:
