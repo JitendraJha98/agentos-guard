@@ -24,6 +24,7 @@ from agentos_controlplane.circuit_breaker import CircuitBreakerStore
 from agentos_controlplane.budget import BudgetLedger
 from agentos_controlplane.compliance import export_evidence_bundle, parse_time_bound
 from agentos_controlplane.economics import CostRecorder
+from agentos_controlplane.forensics import EvidenceGraph
 from agentos_controlplane.framework_discovery import FrameworkDetector
 from agentos_controlplane.graph import AgentGraphStore
 from agentos_controlplane.health import HealthStore
@@ -396,6 +397,8 @@ def build_inventory_router(
     validation: ValidationStore | None = None,
     # OBS-04: likewise appended last.
     health: HealthStore | None = None,
+    # AUD-09 / OBS-05: likewise appended last.
+    forensics: EvidenceGraph | None = None,
 ) -> APIRouter:
     """DISC-01/02 — read API over the authoritative agent inventory, plus the DISC-03 framework
     inventory, the DISC-04 shadow-agent sightings, the DISC-05 rogue-agent findings, the DISC-06
@@ -705,6 +708,31 @@ def build_inventory_router(
             raise HTTPException(status_code=404, detail="health monitoring is not wired")
         return health.fleet(window=timedelta(hours=hours))
 
+    @router.get("/forensics/chain/{action_id}")
+    def evidence_chain(action_id: str) -> dict:
+        """AUD-09 — the causal chain leading to one action, reconstructed at query time.
+
+        Gated, and the most revealing read in the product: a chain says which agent set which other
+        agent in motion. It carries `lineage` for a reason — `identity_verified` authenticates who
+        ACTED, not that `parent_action_id` names a real delegation, so this is what the fleet
+        CLAIMED about its own causation rather than proof of it. `truncated` says whether a cycle or
+        the depth cap cut it short; both are reachable by the agent under investigation.
+        """
+        if forensics is None:
+            raise HTTPException(status_code=404, detail="the evidence graph is not wired")
+        return forensics.ancestors(action_id).as_dict()
+
+    @router.get("/forensics/conversation/{conversation_id}")
+    def conversation(conversation_id: str) -> dict:
+        """OBS-05 — one conversation reconstructed across tools and delegations.
+
+        An unknown id returns an EMPTY chain rather than a 404: during an incident "nothing matched"
+        is an answer, while a 404 reads as "this route is wrong".
+        """
+        if forensics is None:
+            raise HTTPException(status_code=404, detail="the evidence graph is not wired")
+        return forensics.conversation(conversation_id).as_dict()
+
     return router
 
 
@@ -761,6 +789,8 @@ def create_app(
     validation: ValidationStore | None = None,
     # OBS-04: likewise appended last.
     health: HealthStore | None = None,
+    # AUD-09 / OBS-05: likewise appended last.
+    forensics: EvidenceGraph | None = None,
 ) -> FastAPI:
     # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
     # explicit arg -> AGENTOS_API_TOKEN env -> ephemeral random (logged) — never silently open.
@@ -807,6 +837,7 @@ def create_app(
                 session_factory,
                 validation,
                 health,
+                forensics,
             ),
             dependencies=guard,
         )
