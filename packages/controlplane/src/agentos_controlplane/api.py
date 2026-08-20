@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
+from agentos_controlplane.amendments import AmendmentStore
 from agentos_controlplane.approvals import AlreadyResolvedError, ApprovalStore
 from agentos_controlplane.auth import make_require_token, resolve_api_token
 from agentos_controlplane.circuit_breaker import CircuitBreakerStore
@@ -71,6 +72,40 @@ class ClearRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
     set_by: str = Field(max_length=128)
+
+
+class ProposeAmendmentIn(BaseModel):
+    """POL-10 — an amendment proposal. Bounded like every operator/agent input in this module.
+
+    `source` is the WHOLE proposed constitution rather than a diff: a diff would have to be applied
+    to whatever the constitution says at ratification time, so what a human ratified would not be
+    what took effect.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    title: str = Field(min_length=1, max_length=255)
+    rationale: str = Field(default="", max_length=4096)
+    proposed_by: str = Field(min_length=1, max_length=255)
+    source: dict
+
+
+class RatifyAmendmentIn(BaseModel):
+    """POL-10 — the human half. `ratified_by` is required because "human-ratified" is the entire
+    claim this transition makes, and an unattributed ratification is not one."""
+
+    model_config = {"extra": "forbid"}
+
+    ratified_by: str = Field(min_length=1, max_length=128)
+    note: str | None = Field(default=None, max_length=512)
+
+
+class ResolveAmendmentIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    status: Literal["rejected", "withdrawn"]
+    resolved_by: str = Field(min_length=1, max_length=128)
+    note: str | None = Field(default=None, max_length=512)
 
 
 class EmergencyShutdownRequest(BaseModel):
@@ -402,6 +437,8 @@ def build_inventory_router(
     forensics: EvidenceGraph | None = None,
     # POL-11: likewise appended last.
     conflicts: ConflictEngine | None = None,
+    # POL-10: likewise appended last.
+    amendments: AmendmentStore | None = None,
 ) -> APIRouter:
     """DISC-01/02 — read API over the authoritative agent inventory, plus the DISC-03 framework
     inventory, the DISC-04 shadow-agent sightings, the DISC-05 rogue-agent findings, the DISC-06
@@ -763,6 +800,87 @@ def build_inventory_router(
             raise HTTPException(status_code=404, detail="the conflict engine is not wired")
         return conflicts.closure(action_id)
 
+    @router.get("/amendments")
+    def list_amendments(status: str | None = None) -> list[dict]:
+        """POL-10 — proposed and resolved amendments to the Constitution."""
+        if amendments is None:
+            raise HTTPException(status_code=404, detail="amendments are not wired")
+        return amendments.list_amendments(status=status)
+
+    @router.post("/amendments")
+    async def propose_amendment(body: ProposeAmendmentIn) -> dict:
+        """POL-10 — propose a change to the Constitution.
+
+        Gated but AGENT-usable: proposing is the half of POL-10 an agent is meant to do. Ratifying is
+        not, and it is a separate route for exactly that reason. A proposal is INERT — nothing on the
+        decision path reads it — so this route changes no outcome.
+
+        The proposal is compiled before it is stored, so an uncompilable amendment fails here in
+        front of the proposer rather than later in front of the ratifier, who cannot fix it.
+        """
+        if amendments is None:
+            raise HTTPException(status_code=404, detail="amendments are not wired")
+        try:
+            amendment_id = await amendments.propose(
+                body.title, body.rationale, body.proposed_by, body.source
+            )
+        except ConstitutionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"id": amendment_id, "status": "proposed"}
+
+    @router.post("/amendments/{amendment_id}/ratify")
+    async def ratify_amendment(amendment_id: UUID, body: RatifyAmendmentIn) -> dict:
+        """POL-10 — the human half, and the ONLY route in this product that changes what the
+        Constitution says.
+
+        A system that could ratify its own amendments could rewrite the rules it is governed by, so
+        `ratified_by` is required and the previous constitution text is retained rather than replaced.
+        """
+        if amendments is None:
+            raise HTTPException(status_code=404, detail="amendments are not wired")
+        try:
+            version = await amendments.ratify(amendment_id, body.ratified_by, note=body.note)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown amendment") from None
+        except AlreadyResolvedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except ConstitutionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"id": str(amendment_id), "status": "ratified", "constitution_version": version}
+
+    @router.post("/amendments/{amendment_id}/resolve")
+    async def resolve_amendment(amendment_id: UUID, body: ResolveAmendmentIn) -> dict:
+        """POL-10 — reject or withdraw. Terminal, audited, and constitutionally inert."""
+        if amendments is None:
+            raise HTTPException(status_code=404, detail="amendments are not wired")
+        try:
+            await amendments.resolve_without_ratifying(
+                amendment_id, body.status, body.resolved_by, note=body.note
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown amendment") from None
+        except AlreadyResolvedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"id": str(amendment_id), "status": body.status}
+
+    @router.get("/constitution/history")
+    def constitution_history() -> list[dict]:
+        """POL-10 — what the Constitution has said, when, and on whose authority.
+
+        A version with `amendment: null` was an operator's DIRECT write — a different act from a
+        ratified amendment, and reported as such so a reader can tell "nobody ratified this" from
+        "we lost the record".
+        """
+        if amendments is None:
+            raise HTTPException(status_code=404, detail="amendments are not wired")
+        return amendments.constitution_history()
+
     return router
 
 
@@ -823,6 +941,8 @@ def create_app(
     forensics: EvidenceGraph | None = None,
     # POL-11: likewise appended last.
     conflicts: ConflictEngine | None = None,
+    # POL-10: likewise appended last.
+    amendments: AmendmentStore | None = None,
 ) -> FastAPI:
     # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
     # explicit arg -> AGENTOS_API_TOKEN env -> ephemeral random (logged) — never silently open.
@@ -871,6 +991,7 @@ def create_app(
                 health,
                 forensics,
                 conflicts,
+                amendments,
             ),
             dependencies=guard,
         )

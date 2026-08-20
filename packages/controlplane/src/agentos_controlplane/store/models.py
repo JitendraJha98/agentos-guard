@@ -309,6 +309,41 @@ class ConstitutionResource(Base):
     )
 
 
+class Amendment(Base):
+    """POL-10 — a proposed change to the Constitution, and its human ratification.
+
+    An amendment is a proposal ABOUT THE RULES, so it may never bypass them: `proposed_by` may be an
+    agent, `ratified_by` may only be a human operator, and a row in `proposed` has no effect on any
+    decision. That is the POL-13 shape — the interpreter may recommend a temporary exception but
+    never grant one — applied to the governing document itself.
+
+    `source` is the FULL proposed constitution, not a diff. A diff would have to be applied to
+    whatever the constitution said at RATIFICATION time, which may not be what it said when the
+    proposal was written; storing the whole document means what a human ratifies is exactly what
+    takes effect.
+
+    `constitution_version` is the provenance the requirement's "versioned like a legal document"
+    asks for. It stays NULL until ratification, and a constitution version with no amendment behind
+    it was an operator's direct write — a different act, shown as such rather than as a blank.
+    """
+
+    __tablename__ = "amendment"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    proposed_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="proposed")
+    ratified_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    constitution_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    proposed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class PolicyResource(Base):
     """The compile-on-write output for a Constitution version (API-02). Stores the Rego + the
     reviewable YAML middle layer + graduated/lists/sequences metadata the engine consumes.

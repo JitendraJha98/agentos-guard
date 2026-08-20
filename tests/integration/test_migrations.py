@@ -188,3 +188,26 @@ def test_the_migration_chain_has_exactly_one_head(alembic_on_a_scratch_db) -> No
     heads = ScriptDirectory.from_config(config).get_revisions("heads")
 
     assert len(heads) == 1, [h.revision for h in heads]
+
+
+def test_0029_adds_the_amendment_table_and_is_reversible(alembic_on_a_scratch_db) -> None:
+    """POL-10's table is NEW and empty, so there is no backfill question — what matters is that an
+    operator can back it out. A migration nobody can reverse is one they will hesitate to apply."""
+    config, engine = alembic_on_a_scratch_db
+    command.upgrade(config, "head")
+
+    with engine.begin() as c:
+        columns = {r[1] for r in c.execute(text("PRAGMA table_info(amendment)"))}
+    assert {"title", "proposed_by", "status", "ratified_by", "constitution_version"} <= columns
+
+    command.downgrade(config, "0028_redteam_runs")
+
+    with engine.begin() as c:
+        tables = {r[0] for r in c.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))}
+    assert "amendment" not in tables
+
+    command.upgrade(config, "head")  # and forward again, so the branch is not one-way
+
+    with engine.begin() as c:
+        tables = {r[0] for r in c.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))}
+    assert "amendment" in tables

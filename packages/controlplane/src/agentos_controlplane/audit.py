@@ -160,6 +160,10 @@ EVENT_KINDS = frozenset(
         # Counts and identifiers only — the signed votes live in the certificate.
         "quorum_certified",
         "voter_equivocated",
+        # POL-10 (Slice 13a): the Constitution's own change log. Short identifiers only — the
+        # proposed text lives in the amendment row, not in the chain.
+        "amendment_proposed",
+        "amendment_resolved",
     }
 )
 
