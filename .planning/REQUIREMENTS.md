@@ -44,9 +44,10 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **POL-07** [P0]: A `require_approval` outcome parks an `ApprovalRequest` with full action context, fired principles, and risk/trust scores; the action blocks until resolved or times out to a safe default
 - [x] **POL-08** [P0]: Every `Decision` records the exact Constitution/Policy version that evaluated the action
 - [x] **POL-09** [P1]: A `require_consensus` outcome requires 2-of-3 agent agreement before the action proceeds
-- [ ] **POL-10** [P2]: Agents or the self-play trainer can propose Constitution amendments; humans review and ratify; the Constitution is versioned like a legal document
-- [ ] **POL-11** [P2]: A conflict-resolution engine computes transitive permissions across delegation chains and flags emergent capability conflicts
-- [ ] **POL-12** [P2]: BFT consensus backs multi-agent agreement for `require_consensus` at scale
+- [x] **POL-10** [P2]: Agents or the self-play trainer can propose Constitution amendments; humans review and ratify; the Constitution is versioned like a legal document
+- [x] **POL-11** [P2]: A conflict-resolution engine computes transitive permissions across delegation chains and flags emergent capability conflicts
+- [x] **POL-12** [P2]: BFT consensus backs multi-agent agreement for `require_consensus` at scale
+  - **Scoped, and narrower than the words suggest.** Shipped: signed votes (a ballot cannot be forged or replayed onto another action *or outcome*), 3f+1 Byzantine quorum arithmetic, equivocation detection that voids a voter, and a quorum certificate verifiable offline. **NOT shipped: a replicated state machine** — no leader, no view change, no liveness guarantee under partition, no PBFT/Tendermint/HotStuff. A real protocol needs a network consensus layer and multi-node partition testing, neither of which exists here (D-14); one built without them would pass single-process tests and have never survived a partition, which is worse than this because the NAME would promise a guarantee nothing verified. Enforced by a test that scans the module docstring for the disclaimers and for over-claims. A genuine replicated protocol remains open work.
 - [x] **POL-13** [P0]: A `temporary_exception` outcome grants a **human-ratified, time-boxed** `allow` (carries `expires_at`) that auto-revokes on expiry; the semantic interpreter may recommend but can never grant one (upholds POL-05's policy-floor invariant)
 - [x] **POL-14** [P0]: A `governance_review` outcome lets the action proceed while opening an **asynchronous, non-blocking** governance review (distinct from `require_approval`, which blocks)
 
@@ -247,9 +248,9 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | POL-07 | Phase 3 | Complete |
 | POL-08 | Phase 3 | Complete |
 | POL-09 | Phase 9 | Complete |
-| POL-10 | Phase 13 | Pending |
-| POL-11 | Phase 13 | Pending |
-| POL-12 | Phase 13 | Pending |
+| POL-10 | Phase 13 | Complete |
+| POL-11 | Phase 13 | Complete |
+| POL-12 | Phase 13 | Complete (scoped — Byzantine quorum, NOT a replicated protocol; see the requirement note) |
 | POL-13 | Phase 3 | Complete |
 | POL-14 | Phase 3 | Complete |
 | SEC-01 | Phase 1 | Complete |

@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: phase_in_progress
-stopped_at: 2026-08-19 — Phase 12 COMPLETE (6/6 slices), still on branch phase-10-gateway-adapter-graph (the operator asked Phases 11 and 12 to continue there), pending PR into development. Red-team moved from a one-shot CI claim to a continuous one with trends, campaigns exercise the SEC-13 correlator no single-shot probe can reach, health and the query-time evidence graph give an operator something to read before and after a failure, and all of it surfaces on the console. Phase 6's OSS-01 (first tagged PyPI release) remains the sole open item across Phases 6-12; Phase 13 not started.
-last_updated: 2026-08-19
-last_activity: 2026-08-19
+stopped_at: 2026-08-20 — Phase 13 COMPLETE (3/3 slices), still on branch phase-10-gateway-adapter-graph (the operator asked Phases 11-13 to continue there), pending PR into development. The Constitution is now amendable with human ratification and readable provenance, transitive permissions are computed across delegation chains with conflicts flagged as findings rather than denials, and require_consensus is backed by signed votes with 3f+1 arithmetic. POL-12 shipped SCOPED — Byzantine quorum, not a replicated protocol; the caveat is on the requirement itself. Phase 6's OSS-01 (first tagged PyPI release) remains the sole open item across Phases 6-13; Phase 14 not started.
+last_updated: 2026-08-20
+last_activity: 2026-08-20
 progress:
   total_phases: 14
-  completed_phases: 11
-  total_plans: 67
-  completed_plans: 67
-  percent: 82
+  completed_phases: 12
+  total_plans: 70
+  completed_plans: 70
+  percent: 89
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-01)
 
 **Core value:** Every agent action is intercepted at runtime and returned an explainable, graduated decision grounded in policy + a human-readable constitution, with tamper-evident audit evidence — making unsafe agent behavior structurally impossible rather than merely unlikely.
-**Current focus:** Phase 13 — Constitution Amendments & Conflict Reasoning (not started). Phases 9-12 complete; all pending PR.
+**Current focus:** Phase 14 — Self-Play, ZK Proofs, Decentralized Identity & Rust Hot Path (not started, and hard-gated on the P0/P1 substrate). Phases 9-13 complete; all pending PR.
 
 ## Current Position
 
-Phase: 12 COMPLETE (2026-08-19) — branch `phase-10-gateway-adapter-graph` (Phases 11 and 12 continued there at the operator's request), pending PR into `development`
+Phase: 13 COMPLETE (2026-08-20) — branch `phase-10-gateway-adapter-graph` (Phases 11-13 continued there at the operator's request), pending PR into `development`
 Plan: Phase 11 delivered as 6 slices covering all 7 requirements — 11a AUD-06 Merkle audit, 11b ECON-01 cost attribution, 11c ECON-02 budget as policy, 11d ECON-03 GPU/downstream attribution, 11e CMP-04/05 EU AI Act + SOC 2, 11f CMP-06 evidence export. Built via the superpowers workflow (spec -> per-slice plan -> subagent implement + two-stage adversarial review + fix + re-review). EVERY slice came back NOT APPROVED on its first review pass; the findings were real and the reasoning is recorded in the commit messages.
-Status: Phases 1–5, 7–12 complete; Phase 6 ~5/6 (OSS-01 first PyPI release the sole open item). Phase 13 not started.
+Status: Phases 1–5, 7–13 complete; Phase 6 ~5/6 (OSS-01 first PyPI release the sole open item). Phase 14 not started.
 Last activity: 2026-08-19
 
-Progress: [███████████████] 11/14 phases fully done (1–5, 7–12) + Phase 6 ~5/6
+Progress: [████████████████] 12/14 phases fully done (1–5, 7–13) + Phase 6 ~5/6
 
 ## Performance Metrics
 
@@ -134,6 +134,12 @@ Recent decisions affecting current work:
 - [Phase 12]: [12e] AUD-09 joins at query time with NO separate graph database, and an iterative walk rather than a recursive CTE — both backends support WITH RECURSIVE but the JSON extraction differs, and a query that works on SQLite and breaks on Postgres is worse than an honest loop. parent_action_id is caller-supplied, so a cycle is assertable and an unbounded walk hangs the tool an operator reaches for DURING an incident. Lineage is CLAIMED, not proven, and every chain says so in its payload (TRST-04 cross-check is Phase 13).
 - [Phase 12]: [12f] A template is where a carefully-qualified number gets reduced to a percentage, so the dashboard tests assert the RENDERED page: the failure rate with its denominator, no liveness verdict, "n/a" rather than 0% for unmeasured, and "no validation runs yet" rather than 0%. Graph layout is deterministic so a refresh cannot be mistaken for a topology change.
 
+- [Phase 13]: [13a] POL-10's ratification step is only meaningful if a PENDING amendment changes nothing, so that is asserted at both the storage and HTTP layers. An agent may propose (its own route) and only a human may ratify (a separate one) — POL-13's recommend-never-grant rule applied to the governing document. Deliberately did NOT rebuild versioning: ConstitutionResource was already append-only with a unique content-hash version, so the slice added provenance + history rather than a second source of truth about what the constitution said. Stores the WHOLE proposed document, not a diff, because a diff resolves against the text at RATIFICATION time and what a human ratified would not be what took effect.
+- [Phase 13]: [13b] POL-11 folds TRST-04's own intersect_scope along the chain — reused, not reimplemented, so one-hop and many-hop rules cannot drift. NEVER a union: that would let a chain manufacture a capability nobody in it held. Tested over 30 random chains, and the mutation proves the property earns its keep — a union fails 43 of 51 tests where an example test catches nothing. It REPORTS and never denies (asserted structurally: no Outcome, no GovernanceDenied, no raise in the module), because an engine deciding on its own authority would be a second enforcer beside the constitution.
+- [Phase 13]: [13b] `unauthorized_lineage` is how far Phase 12's claimed-lineage gap can honestly close: NOT CORROBORATED, not false. The TRST-04 ledger is in-process, non-persistent and FIFO-evicted by its own documentation, so an absent entry is routine rather than evidence — "unverified" and "false" are different accusations and a test asserts which one is made.
+- [Phase 13]: [13c] POL-12 shipped SCOPED and the caveat lives on the requirement, not in a commit message. Signed votes bind the action AND the outcome (without the latter, approval of a `sandbox` replays as approval of an `allow` — the voter agreed to containment, not execution); 3f+1 arithmetic is refused at CONSTRUCTION when below threshold; equivocation VOIDS a voter rather than last-write-wins handing one liar the outcome; the certificate verifies as a pure function. Votes are NOT verified through audit.verify_record_signature — that prepends the AUDIT domain, and borrowing it would put votes and audit records in one signing domain with the same key often signing both.
+- [Phase 13]: [13c] It also made an existing default honest: POL-09's shipped 2-of-3 survives one voter being DOWN, not one voter LYING, and `byzantine_tolerance(3) == 0` says so rather than rounding up.
+
 ### Pending Todos
 
 [From .planning/todos/pending/ — ideas captured during sessions]
@@ -143,6 +149,8 @@ None yet.
 ### Blockers/Concerns
 
 [Issues that affect future work]
+
+- **POL-12 is scoped, and the remainder is real open work.** A genuine replicated consensus protocol (PBFT/Tendermint/HotStuff — leader election, view change, partition liveness) was NOT built, because it needs a network consensus layer and multi-node partition testing that do not exist here (D-14). What ships is Byzantine-tolerant quorum arithmetic over authenticated votes. The caveat is recorded on the POL-12 requirement and in the roadmap, and a test keeps the module from over-claiming — but anyone reading "BFT consensus backs require_consensus" in the requirement title should read the note under it.
 
 - **Two guards shipped with tests that could not fail, both caught by mutation rather than by review (Phase 12).** 12f's dangling-edge probe seeded 5 agents and never reached the 60-node page budget; its health probe asserted a percentage the fixture cannot produce. Both passed against the mutant. The lesson is now house practice: a security or honesty guard is not done until a mutant of it turns the suite red.
 - **The harness OOMs (`0xC0000409`) under this workflow, and a crash leaves live pytest processes behind.** Two orphans (one at 144s CPU) inflated the suite from 94s to 379s and manufactured 20 failures + 43 errors that looked like a broken `api.py` — nothing was wrong with it. After any crash: `Get-Process python*`, kill, then re-run before trusting a timing-sensitive result. Mitigation on the harness side is `NODE_OPTIONS=--max-old-space-size=8192`; on the agent side, one workflow at a time rather than parallel waves.
