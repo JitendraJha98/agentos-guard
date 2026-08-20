@@ -23,6 +23,7 @@ from agentos_controlplane.auth import make_require_token, resolve_api_token
 from agentos_controlplane.circuit_breaker import CircuitBreakerStore
 from agentos_controlplane.budget import BudgetLedger
 from agentos_controlplane.compliance import export_evidence_bundle, parse_time_bound
+from agentos_controlplane.conflicts import ConflictEngine
 from agentos_controlplane.economics import CostRecorder
 from agentos_controlplane.forensics import EvidenceGraph
 from agentos_controlplane.framework_discovery import FrameworkDetector
@@ -399,6 +400,8 @@ def build_inventory_router(
     health: HealthStore | None = None,
     # AUD-09 / OBS-05: likewise appended last.
     forensics: EvidenceGraph | None = None,
+    # POL-11: likewise appended last.
+    conflicts: ConflictEngine | None = None,
 ) -> APIRouter:
     """DISC-01/02 — read API over the authoritative agent inventory, plus the DISC-03 framework
     inventory, the DISC-04 shadow-agent sightings, the DISC-05 rogue-agent findings, the DISC-06
@@ -733,6 +736,33 @@ def build_inventory_router(
             raise HTTPException(status_code=404, detail="the evidence graph is not wired")
         return forensics.conversation(conversation_id).as_dict()
 
+    @router.get("/conflicts")
+    def list_conflicts() -> dict:
+        """POL-11 — emergent capability conflicts across delegation chains.
+
+        FINDINGS, NOT DECISIONS. Nothing here denies an action; the constitution remains the only
+        thing that does, and an engine deciding on its own authority would be a second enforcer
+        beside the policy floor.
+
+        `unauthorized_lineage` says a claimed delegation edge is NOT CORROBORATED by the ledger —
+        weaker than false, because the ledger is in-process and FIFO-evicted, so an absent entry is
+        routine rather than evidence the delegation never happened.
+        """
+        if conflicts is None:
+            raise HTTPException(status_code=404, detail="the conflict engine is not wired")
+        return conflicts.conflicts()
+
+    @router.get("/conflicts/closure/{action_id}")
+    def permission_closure(action_id: str) -> dict:
+        """POL-11 — what the chain reaching this action effectively confers.
+
+        Scope narrows at every hop and never widens: a union would let a chain manufacture a
+        capability nobody in it held. Carries the same claimed-lineage qualifier the chain does.
+        """
+        if conflicts is None:
+            raise HTTPException(status_code=404, detail="the conflict engine is not wired")
+        return conflicts.closure(action_id)
+
     return router
 
 
@@ -791,6 +821,8 @@ def create_app(
     health: HealthStore | None = None,
     # AUD-09 / OBS-05: likewise appended last.
     forensics: EvidenceGraph | None = None,
+    # POL-11: likewise appended last.
+    conflicts: ConflictEngine | None = None,
 ) -> FastAPI:
     # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
     # explicit arg -> AGENTOS_API_TOKEN env -> ephemeral random (logged) — never silently open.
@@ -838,6 +870,7 @@ def create_app(
                 validation,
                 health,
                 forensics,
+                conflicts,
             ),
             dependencies=guard,
         )
