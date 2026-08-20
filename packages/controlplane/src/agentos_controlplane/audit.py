@@ -156,6 +156,10 @@ EVENT_KINDS = frozenset(
         # TEST-07 (Slice 12a): a red-team suite was run against an agent's decision path. Short
         # identifiers and counts only — never an attack payload.
         "validation_run",
+        # POL-12 (Slice 13c): the Byzantine quorum certificate, and a voter caught equivocating.
+        # Counts and identifiers only — the signed votes live in the certificate.
+        "quorum_certified",
+        "voter_equivocated",
     }
 )
 
