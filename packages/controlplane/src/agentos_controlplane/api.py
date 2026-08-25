@@ -9,6 +9,7 @@ store, not here, so every writer is audited identically.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 from uuid import UUID
@@ -975,6 +976,28 @@ def create_app(
     # class, is a map of where to attack it. OBS-04's health read closes the set: which agents are
     # quiet, which are being blocked and which are held by a breaker is a map of where a fleet is
     # weakest right now.
+    # Twelve feature surfaces ride the inventory router, so `inventory_store=None` unmounts ALL of
+    # them at once — a caller who supplied, say, `graph_store` would get a silent 404 on the very
+    # route it was passed for. Supplying a dependent store is unambiguous intent to serve it, so
+    # the mismatch is reported rather than swallowed. Passing NOTHING dependent stays silent: a
+    # deliberately minimal control plane is a valid composition, not a mistake.
+    if inventory_store is None:
+        orphaned = sorted(
+            name for name, dep in (
+                ("framework_detector", framework_detector), ("shadow_store", shadow_store),
+                ("rogue_detector", rogue_detector), ("graph_store", graph_store),
+                ("sealer", sealer), ("cost", cost), ("budget", budget),
+                ("validation", validation), ("health", health), ("forensics", forensics),
+                ("conflicts", conflicts), ("amendments", amendments),
+            ) if dep is not None
+        )
+        if orphaned:
+            logging.getLogger(__name__).warning(
+                "agentos-guard: %s supplied without `inventory_store`, so their routes are NOT "
+                "mounted and will answer 404. The inventory router carries every one of these "
+                "surfaces — pass `inventory_store` to serve them.",
+                ", ".join(orphaned),
+            )
     if inventory_store is not None:
         app.include_router(
             build_inventory_router(

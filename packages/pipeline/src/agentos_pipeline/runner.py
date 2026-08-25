@@ -335,6 +335,47 @@ class Pipeline:
         # that cannot depend on the operator remembering a second seam.
         if self._delegation is not None and self._privilege is not None:
             self._delegation.use_ring_lookup(self._privilege)
+        # "No silent gaps" (the INT-06 principle, applied to composition). Computed AFTER the
+        # auto-wiring above so it reports what is actually live, not what was passed in.
+        self._dormant_seams = frozenset(
+            name for name, wired in (
+                ("interpreter", self._interpreter),
+                ("exceptions", self._exceptions),
+                ("correlator", self._correlator),
+                ("kill_switch", self._kill_switch),
+                ("delegation", self._delegation),
+                ("card_verifier", self._card_verifier),
+                ("mcp_quarantine", self._mcp_quarantine),
+                ("intent_classifier", self._intent_classifier),
+                ("privilege", self._privilege),
+                ("breaker", self._breaker),
+                ("shadow", self._shadow),
+                ("budget", self._budget),
+            ) if wired is None
+        )
+        if self._dormant_seams:
+            # Dormancy is a DESIGN choice (each None default is backward-compatible), but it must
+            # never be silent: an unwired ENFORCEMENT seam fails closed in enforce.py, while an
+            # unwired DETECTION seam here fails OPEN — the stage is skipped and the action
+            # proceeds unchecked. An operator who forgot `kill_switch` would otherwise run a fleet
+            # whose emergency stop (RUN-01/02) does nothing, with every test still green.
+            logging.getLogger(__name__).warning(
+                "agentos-guard: %d pipeline seam(s) are DORMANT and their stages will never run: "
+                "%s. Each unwired detection seam fails OPEN (the action proceeds unchecked). "
+                "Wire them at composition time or accept the gap deliberately.",
+                len(self._dormant_seams),
+                ", ".join(sorted(self._dormant_seams)),
+            )
+
+    @property
+    def dormant_seams(self) -> frozenset[str]:
+        """The optional seams left unwired — each names a stage that will NEVER run.
+
+        Exposed so a deployment can assert its own composition in a test (the composition-time
+        analogue of INT-06's `verify_coverage()`), rather than discovering a dormant kill switch
+        during an incident. Empty means every optional stage is live.
+        """
+        return self._dormant_seams
 
     async def evaluate(self, action: AgentAction) -> Decision:
         # OBS-02: ensure an app-level correlation id exists (the SDK sets it across a

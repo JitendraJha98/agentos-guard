@@ -4,7 +4,9 @@ policy metadata is derived in-process from the demo constitution via the pure-Py
 
 It is also the reference WIRING: allow, deny, and — via the `QuarantineSandbox` seam (RUN-03) —
 a contained `sandbox` outcome. An unwired sandbox seam fails closed as a hard block, so it belongs
-in the minimum wiring an integrator copies."""
+in the minimum wiring an integrator copies. The `KillSwitchStore` seam (RUN-01/02) is here for the
+opposite reason: unwired it fails OPEN — the stage is skipped and the emergency stop enforces
+nothing — which is exactly the kind of gap `Pipeline.dormant_seams` now reports."""
 from __future__ import annotations
 
 import asyncio
@@ -20,6 +22,7 @@ from agentos_contract import ActionType, AgentAction, Outcome
 from agentos_controlplane.audit import AuditWriter
 from agentos_controlplane.auth import resolve_api_token
 from agentos_controlplane.framework_discovery import FrameworkDetector
+from agentos_controlplane.killswitch import KillSwitchStore
 from agentos_controlplane.registry import Registry
 from agentos_controlplane.sandbox import QuarantineSandbox
 from agentos_controlplane.store.engine import create_all, create_session_factory
@@ -81,12 +84,19 @@ def run(db_path: str | None = None) -> QuickstartResult:
     low_trust_token = registry.register(LOW_TRUST_AGENT, trust_score=0.1)
     policy_engine, allow_host = _build_engine()
     audit = AuditWriter(sf, signer=registry.identity)  # ONE writer per store (chain head)
+    # RUN-01/02: the stage-0 kill-switch seam is the ONLY place kill state is consulted on the hot
+    # path — nothing in the SDK or the gateway checks it independently. Left unwired the stage is
+    # skipped, so an operator kill would be recorded by the API and enforce NOTHING while every
+    # test stayed green. It is the emergency stop, so it belongs in the minimum wiring, not the
+    # extras — same reasoning as the sandbox seam below.
+    kill_switch = KillSwitchStore(sf, audit)
     pipeline = Pipeline(
         identity=IdentityStage(registry.identity),
         policy=policy_engine,
         scorers=[PromptInjectionScorer()],
         audit=audit,
         posture=PostureMap(),
+        kill_switch=kill_switch,
     )
     # RUN-03: `sandbox` is where every MID-RISK action lands, and it is enforced through
     # this seam. Wire it or the outcome fails CLOSED as a hard block with no approval path
