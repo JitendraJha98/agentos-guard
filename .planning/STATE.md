@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: phase_in_progress
-stopped_at: 2026-08-20 — Phase 13 COMPLETE (3/3 slices), still on branch phase-10-gateway-adapter-graph (the operator asked Phases 11-13 to continue there), pending PR into development. The Constitution is now amendable with human ratification and readable provenance, transitive permissions are computed across delegation chains with conflicts flagged as findings rather than denials, and require_consensus is backed by signed votes with 3f+1 arithmetic. POL-12 shipped SCOPED — Byzantine quorum, not a replicated protocol; the caveat is on the requirement itself. Phase 6's OSS-01 (first tagged PyPI release) remains the sole open item across Phases 6-13; Phase 14 not started.
-last_updated: 2026-08-20
-last_activity: 2026-08-20
+stopped_at: 2026-08-25 — Phase 13 COMPLETE (3/3 slices); Phases 9-13 are now MERGED into development (CI green on the merge commit) and their feature branches are deleted. The Constitution is now amendable with human ratification and readable provenance, transitive permissions are computed across delegation chains with conflicts flagged as findings rather than denials, and require_consensus is backed by signed votes with 3f+1 arithmetic. POL-12 shipped SCOPED — Byzantine quorum, not a replicated protocol; the caveat is on the requirement itself. Phase 6's OSS-01 (first tagged PyPI release) remains the sole open item across Phases 6-13; Phase 14 not started.
+last_updated: 2026-08-25
+last_activity: 2026-08-25
 progress:
   total_phases: 14
   completed_phases: 12
@@ -21,11 +21,11 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-01)
 
 **Core value:** Every agent action is intercepted at runtime and returned an explainable, graduated decision grounded in policy + a human-readable constitution, with tamper-evident audit evidence — making unsafe agent behavior structurally impossible rather than merely unlikely.
-**Current focus:** Phase 14 — Self-Play, ZK Proofs, Decentralized Identity & Rust Hot Path (not started, and hard-gated on the P0/P1 substrate). Phases 9-13 complete; all pending PR.
+**Current focus:** Phase 14 — Self-Play, ZK Proofs, Decentralized Identity & Rust Hot Path (not started, and hard-gated on the P0/P1 substrate). Phases 9-13 complete and merged into `development`.
 
 ## Current Position
 
-Phase: 13 COMPLETE (2026-08-20) — branch `phase-10-gateway-adapter-graph` (Phases 11-13 continued there at the operator's request), pending PR into `development`
+Phase: 13 COMPLETE (2026-08-20) — merged into `development` on 2026-08-25 (Phases 10-13 landed together from `phase-10-gateway-adapter-graph`, where Phases 11-13 continued at the operator's request); CI green, branch deleted
 Plan: Phase 11 delivered as 6 slices covering all 7 requirements — 11a AUD-06 Merkle audit, 11b ECON-01 cost attribution, 11c ECON-02 budget as policy, 11d ECON-03 GPU/downstream attribution, 11e CMP-04/05 EU AI Act + SOC 2, 11f CMP-06 evidence export. Built via the superpowers workflow (spec -> per-slice plan -> subagent implement + two-stage adversarial review + fix + re-review). EVERY slice came back NOT APPROVED on its first review pass; the findings were real and the reasoning is recorded in the commit messages.
 Status: Phases 1–5, 7–13 complete; Phase 6 ~5/6 (OSS-01 first PyPI release the sole open item). Phase 14 not started.
 Last activity: 2026-08-19
