@@ -299,8 +299,24 @@ def test_two_secret_shaped_ids_stay_distinct_in_the_chain(store, shadow) -> None
 
 
 def test_list_shadow_agents_shape_and_ordering(store, shadow) -> None:
+    from datetime import datetime, timezone
+
+    from agentos_controlplane.store.models import ShadowAgent
+
     asyncio.run(shadow.record("first", "tool_call"))
     asyncio.run(shadow.record("second", "mcp_call"))
+
+    # Give the two sightings DISTINCT times before asserting recency. Recording back-to-back is
+    # not enough: `last_seen_at` carries only the platform clock's resolution (~15.6ms on
+    # Windows), so both rows can land on the same instant, and then NO ordering — however
+    # implemented — can separate them. This assertion previously depended on the clock happening
+    # to tick between the two records, which made it ~7% flaky here. Writing the timestamps tests
+    # the ordering rule itself, on every platform.
+    with store() as s:
+        by_id = {r.claimed_agent_id: r for r in s.scalars(select(ShadowAgent)).all()}
+        by_id["first"].last_seen_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        by_id["second"].last_seen_at = datetime(2026, 1, 2, tzinfo=timezone.utc)
+        s.commit()
 
     rows = shadow.list_shadow_agents()
     assert [r["claimed_agent_id"] for r in rows] == ["second", "first"]  # newest sighting first
@@ -315,6 +331,29 @@ def test_list_shadow_agents_shape_and_ordering(store, shadow) -> None:
     # The digest is what tells two rows apart when their display text collides.
     assert rows[0]["claimed_id_digest"] == claimed_id_digest("second")
     assert rows[0]["first_seen_at"] and rows[0]["last_seen_at"]
+
+
+def test_sightings_sharing_one_timestamp_still_list_in_a_stable_order(store, shadow) -> None:
+    """Ties cannot be recency-ordered, but they MUST NOT reshuffle between reads.
+
+    Same-tick sightings compare equal on `last_seen_at`, so without a tiebreaker the database
+    returns them in whatever order it likes and the same operator page can list them differently
+    on consecutive loads. The `id` tiebreak buys stability, which is the honest guarantee here.
+    """
+    from datetime import datetime, timezone
+
+    from agentos_controlplane.store.models import ShadowAgent
+
+    for name in ("alpha", "beta", "gamma"):
+        asyncio.run(shadow.record(name, "tool_call"))
+    tied = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    with store() as s:
+        for row in s.scalars(select(ShadowAgent)).all():
+            row.last_seen_at = tied
+        s.commit()
+
+    orders = {tuple(r["claimed_agent_id"] for r in shadow.list_shadow_agents()) for _ in range(10)}
+    assert len(orders) == 1, f"tied sightings listed in {len(orders)} different orders: {orders}"
 
 
 def test_concurrent_sightings_of_one_id_still_append_exactly_one_event(store, shadow) -> None:

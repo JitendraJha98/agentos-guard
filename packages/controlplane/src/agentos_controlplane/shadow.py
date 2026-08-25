@@ -201,7 +201,14 @@ class ShadowAgentStore:
         with self._sf() as s:
             rows = s.scalars(
                 select(ShadowAgent)
-                .order_by(ShadowAgent.last_seen_at.desc())
+                # The primary key breaks the tie, the same discipline amendments/economics/
+                # validation already apply with THEIR keys. `last_seen_at` carries only the
+                # platform clock's resolution (~15.6ms on Windows), so two sightings inside one
+                # tick compare EQUAL and the order the database happens to return is arbitrary —
+                # the same operator page could list them differently on consecutive loads. The
+                # tiebreak does not make the pair recency-ordered (nothing at this resolution
+                # can); it makes the listing STABLE.
+                .order_by(ShadowAgent.last_seen_at.desc(), ShadowAgent.claimed_id_digest.desc())
                 .limit(self._max_rows + 1)  # the tracked ids + the overflow bucket
             ).all()
             return [

@@ -354,6 +354,15 @@ class PolicyResource(Base):
     __tablename__ = "policy"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    # Monotonic insertion order — the AuditRecord discipline ("ordering derives from `seq`, never
+    # from `created_at`") applied here for the same reason. Microsecond `created_at` was NOT enough:
+    # its resolution is the platform clock's, ~15.6ms on Windows, so two applies inside one tick
+    # still tie, and ORDER BY created_at could return the OLDER policy — a stale GET /policies/latest
+    # and a cache reconciler warming to the WRONG constitution. Assigned by the single writer
+    # (`ResourceStore.apply_constitution`) rather than by a default, exactly as `AuditRecord.seq` is:
+    # UNIQUE makes a concurrent apply that computed the same number fail loudly and be retried,
+    # instead of two policies silently sharing an ordering key.
+    seq: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True)
     constitution_version: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     yaml_policy: Mapped[str] = mapped_column(Text, nullable=False)
     rego: Mapped[str] = mapped_column(Text, nullable=False)

@@ -46,6 +46,7 @@ def test_models_round_trip(store) -> None:
                 graduated_config={},
                 lists={},
                 sequences=[],
+                seq=1,
             )
         )
         s.commit()
@@ -170,6 +171,7 @@ def test_apply_constitution_concurrent_same_version_collapses_to_idempotent(stor
                         graduated_config=bundle.graduated_config,
                         lists=bundle.lists,
                         sequences=bundle.sequences,
+                        seq=1,  # the injected winner is the only policy row in this store
                     )
                 )
                 w.commit()
@@ -186,3 +188,59 @@ def test_apply_constitution_concurrent_same_version_collapses_to_idempotent(stor
     assert con.name == "winner"  # proves we returned the re-fetched committed row
     # exactly one row each — the loser's INSERT was rolled back.
     assert len(rs.list_constitutions()) == 1
+
+
+@pytest.mark.regression_lock
+def test_latest_policy_ignores_created_at_and_follows_seq(store) -> None:
+    """Regression lock: `latest` must not be decided by the wall clock.
+
+    The earlier fix gave `created_at` a Python-side default for microsecond resolution, but a
+    Python default carries only the PLATFORM clock's resolution — ~15.6ms on Windows — so two
+    applies inside one tick still tied and `get_latest_policy()` could return the OLDER policy
+    (a stale GET /policies/latest, and an API-04 CacheReconciler warming the hot path to the
+    WRONG constitution). Ordering derives from `seq` now, as it does for AuditRecord.
+
+    The two rows here are written with an INVERTED `created_at` — the newer policy is stamped
+    EARLIER — so a timestamp-based ORDER BY is guaranteed to pick the wrong one on every
+    platform. That makes this lock independent of clock resolution, unlike the timing-sensitive
+    e2e test that only exposed the bug on a coarse-clock machine.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from agentos_controlplane.resources import ResourceStore
+    from agentos_controlplane.store.models import PolicyResource
+
+    now = datetime.now(timezone.utc)
+    with store() as s:
+        s.add(PolicyResource(
+            constitution_version="older", yaml_policy="y", rego="r",
+            graduated_config={}, lists={}, sequences=[], seq=1, created_at=now,
+        ))
+        s.add(PolicyResource(
+            constitution_version="newer", yaml_policy="y", rego="r",
+            graduated_config={}, lists={}, sequences=[], seq=2,
+            created_at=now - timedelta(seconds=10),  # stamped EARLIER, applied LATER
+        ))
+        s.commit()
+
+    assert ResourceStore(store).get_latest_policy().constitution_version == "newer"
+
+
+def test_apply_assigns_strictly_increasing_policy_seq(store) -> None:
+    from agentos_controlplane.resources import ResourceStore
+    from agentos_controlplane.store.models import PolicyResource
+
+    rs = ResourceStore(store)
+    src = yaml.safe_load(_FIXTURE.read_text(encoding="utf-8"))
+    rs.apply_constitution("t", src)
+    second = dict(src)
+    second["principles"] = list(src["principles"]) + [{
+        "id": "4.1", "title": "Destructive intent requires approval",
+        "statement": "Destructive actions require human approval.", "effect": "require_approval",
+        "when": {"field": "intent.class", "op": "eq", "value": "DATA_DESTRUCTION"},
+    }]
+    _, newest = rs.apply_constitution("t", second)
+
+    with store() as s:
+        assert sorted(p.seq for p in s.query(PolicyResource).all()) == [1, 2]
+    assert rs.get_latest_policy().constitution_version == newest.constitution_version

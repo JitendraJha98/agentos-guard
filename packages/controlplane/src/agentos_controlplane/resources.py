@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
@@ -31,6 +31,13 @@ from agentos_controlplane.store.models import (
     PolicyResource,
     TrustProfile,
 )
+
+
+# How many times an apply re-reads `PolicyResource.seq` after losing the UNIQUE(seq) race to a
+# concurrent apply of a DIFFERENT constitution. Each loss means a rival COMMITTED, so contention
+# this deep implies far more concurrent distinct applies than a control plane ever sees; the bound
+# exists so the loop cannot spin forever, not because the retries are expected to be used.
+_SEQ_RETRIES = 5
 
 
 class VersionConflict(Exception):
@@ -230,40 +237,65 @@ class ResourceStore:
         # 1) validate + compile FIRST — no DB work happens if either fails (fail-closed).
         bundle = self.validate_constitution(source)
         version = bundle.constitution_version
-        # 2) persist atomically; idempotent on version.
-        with self._sf() as s:
-            existing = self._fetch_version(s, version)
-            if existing is not None:
-                return existing
-            # A Constitution row may exist WITHOUT its Policy — the compiled half can be
-            # lost independently (a partial restore, a failed migration, an operator
-            # deleting the derived row). That state is precisely what the API-04
-            # ConstitutionReconciler repairs, so re-applying must ADD the missing Policy
-            # rather than re-insert the Constitution and trip UNIQUE(version).
-            con = s.scalar(
-                select(ConstitutionResource).where(ConstitutionResource.version == version)
-            )
-            if con is None:
-                con = ConstitutionResource(name=name, version=version, source=source)
-                s.add(con)
-            pol = PolicyResource(
-                constitution_version=version,
-                yaml_policy=bundle.yaml_policy,
-                rego=bundle.rego,
-                graduated_config=bundle.graduated_config,
-                lists=bundle.lists,
-                sequences=bundle.sequences,
-            )
-            s.add(pol)
-            try:
-                s.commit()
-            except IntegrityError:
-                # IDEMPOTENCY race: a concurrent apply of the SAME version committed between our
-                # existing-check and this commit, tripping UNIQUE(version). Collapse the loser into
-                # the idempotent path — re-fetch the winner's committed rows and return 200, never 500.
-                s.rollback()
-                return self._fetch_version(s, version)
-            return self._con(con), self._pol(pol)
+        # 2) persist atomically; idempotent on version. Bounded retry: a lost UNIQUE(seq) race
+        # is retried with a freshly read number, never surfaced to the caller.
+        for _ in range(_SEQ_RETRIES):
+            with self._sf() as s:
+                existing = self._fetch_version(s, version)
+                if existing is not None:
+                    return existing
+                # Read the ordering key BEFORE anything is added to the session. This SELECT
+                # triggers an autoflush, and flushing a pending INSERT early would push it into
+                # the transaction ahead of a concurrent writer — changing which side of a race
+                # loses, and breaking the idempotent-collapse guarantee below.
+                next_seq = self._next_seq(s)
+                # A Constitution row may exist WITHOUT its Policy — the compiled half can be
+                # lost independently (a partial restore, a failed migration, an operator
+                # deleting the derived row). That state is precisely what the API-04
+                # ConstitutionReconciler repairs, so re-applying must ADD the missing Policy
+                # rather than re-insert the Constitution and trip UNIQUE(version).
+                con = s.scalar(
+                    select(ConstitutionResource).where(ConstitutionResource.version == version)
+                )
+                if con is None:
+                    con = ConstitutionResource(name=name, version=version, source=source)
+                    s.add(con)
+                pol = PolicyResource(
+                    constitution_version=version,
+                    yaml_policy=bundle.yaml_policy,
+                    rego=bundle.rego,
+                    graduated_config=bundle.graduated_config,
+                    lists=bundle.lists,
+                    sequences=bundle.sequences,
+                    seq=next_seq,
+                )
+                s.add(pol)
+                try:
+                    s.commit()
+                except IntegrityError:
+                    # TWO different races trip UNIQUE here, and they need OPPOSITE answers.
+                    s.rollback()
+                    winner = self._fetch_version(s, version)
+                    if winner is not None:
+                        # IDEMPOTENCY race: a concurrent apply of the SAME version committed
+                        # between our existing-check and this commit, tripping UNIQUE(version).
+                        # Collapse the loser into the idempotent path — 200, never 500.
+                        return winner
+                    # SEQ race: a concurrent apply of a DIFFERENT version took the number we
+                    # computed, tripping UNIQUE(seq). Our version is still unwritten, so
+                    # returning the (absent) winner would hand the caller None. Retry instead.
+                    continue
+                return self._con(con), self._pol(pol)
+        # Every attempt lost the same race. Fail loudly rather than return None: a caller that
+        # believes a constitution was applied when it was not is the worse outcome.
+        raise ConstitutionError(
+            f"could not assign a policy ordering key after {_SEQ_RETRIES} attempts (contention)"
+        )
+
+    @staticmethod
+    def _next_seq(s: Session) -> int:
+        """The next monotonic policy ordering key (see `PolicyResource.seq`)."""
+        return (s.scalar(select(func.max(PolicyResource.seq))) or 0) + 1
 
     def _fetch_version(
         self, s: Session, version: str
@@ -301,9 +333,11 @@ class ResourceStore:
 
     def get_latest_policy(self) -> PolicyData | None:
         with self._sf() as s:
-            row = s.scalar(
-                select(PolicyResource).order_by(PolicyResource.created_at.desc()).limit(1)
-            )
+            # ORDER BY `seq`, never `created_at` (see `PolicyResource.seq`): `created_at` carries
+            # only the platform clock's resolution, so two applies inside one tick tied and this
+            # could return the OLDER policy — a stale answer here and, through the API-04
+            # CacheReconciler that reads it, a hot path warmed to the WRONG constitution.
+            row = s.scalar(select(PolicyResource).order_by(PolicyResource.seq.desc()).limit(1))
             return self._pol(row) if row else None
 
     def get_policy(self, version: str) -> PolicyData | None:
