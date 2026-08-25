@@ -58,7 +58,19 @@ ALL_SEAMS = frozenset({
 
 
 class StubPolicy:
-    """A no-match policy engine: the floor becomes the class posture (PIPE-05)."""
+    """A no-match policy engine: the floor becomes the class posture (PIPE-05).
+
+    `principles_meta` is read by the explainability stage (PIPE-08), so a stub without it
+    raises AttributeError mid-evaluate and the pipeline fail-closes — which looks like a
+    normal deny unless the test inspects the reason. `test_a_fully_wired_pipeline_evaluates`
+    asserts the fail-safe reason is ABSENT for exactly that reason.
+    """
+
+    # The whole engine contract the runner reads: `evaluate` plus these three. POL-08 requires
+    # every Decision to record the exact versions that judged it, so they are not optional.
+    principles_meta: dict = {}
+    constitution_version: str = "sha256:stub"
+    policy_version: str = "stub-1"
 
     def evaluate(self, input: dict) -> ConstitutionResult:
         return ConstitutionResult(matched=(), no_match=True)
@@ -138,8 +150,15 @@ def test_every_optional_seam_composes_and_reports_no_dormancy() -> None:
     assert pipeline.dormant_seams == frozenset()
 
 
-def test_a_fully_wired_pipeline_still_evaluates_an_action() -> None:
-    # Composition that constructs but cannot decide would be a worse trap than dormancy.
+def test_a_fully_wired_pipeline_evaluates_without_hitting_the_fail_safe() -> None:
+    """Composition that constructs but cannot DECIDE would be a worse trap than dormancy.
+
+    The load-bearing assertion is the absence of a `control_plane_failure_*` reason. The
+    pipeline fail-closes on ANY stage exception, so a broken collaborator produces a plain
+    `deny` that is indistinguishable from a policy deny unless the reasons are inspected —
+    an earlier version of this test asserted only `outcome is not None` and passed while
+    every seam after the first was being skipped by the fail-safe.
+    """
     pipeline, token = _fully_wired()
     action = AgentAction(
         agent_id=AGENT_ID, type=ActionType.tool_call, target="http_get",
@@ -147,7 +166,9 @@ def test_a_fully_wired_pipeline_still_evaluates_an_action() -> None:
         identity_token=token,
     )
     decision = asyncio.run(pipeline.evaluate(action))
-    assert decision.outcome is not None and decision.reasons
+    failures = [r for r in decision.reasons if (r.code or "").startswith("control_plane_failure")]
+    assert not failures, f"a wired collaborator broke evaluate: {[r.detail for r in failures]}"
+    assert decision.outcome is not None
 
 
 def test_dormant_seams_names_exactly_what_was_left_unwired() -> None:
