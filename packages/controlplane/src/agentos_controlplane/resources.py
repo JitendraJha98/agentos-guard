@@ -207,16 +207,28 @@ class ResourceStore:
             return [self._abom(r) for r in s.scalars(select(Abom).order_by(Abom.agent_id)).all()]
 
     # ---- Constitution / Policy (compile-on-write, API-02) ----
+    def validate_constitution(self, source: dict):
+        """Validate + compile WITHOUT persisting, returning the compiled bundle.
+
+        Extracted from `apply_constitution` rather than duplicated: POL-10 needs to check a proposed
+        amendment at PROPOSAL time — so the error lands in front of the proposer, who can fix it,
+        rather than the ratifier, who cannot — and a second copy of this logic would be a second
+        answer to "is this constitution valid", with the two drifting apart silently.
+
+        Raises ConstitutionError on invalid or uncompilable source, and writes nothing either way.
+        """
+        try:
+            constitution = Constitution.model_validate(source)
+            return compile_constitution(constitution)
+        except (ValidationError, ValueError) as exc:
+            raise ConstitutionError(str(exc)) from exc
+
     def apply_constitution(self, name: str, source: dict) -> tuple[ConstitutionData, PolicyData]:
         """API-02 — validate + compile + persist Constitution and its Policy in ONE transaction.
         Idempotent on the content-hash version: re-applying the same source returns the existing
         rows. Validation/compile failure -> ConstitutionError (no write)."""
         # 1) validate + compile FIRST — no DB work happens if either fails (fail-closed).
-        try:
-            constitution = Constitution.model_validate(source)
-            bundle = compile_constitution(constitution)
-        except (ValidationError, ValueError) as exc:
-            raise ConstitutionError(str(exc)) from exc
+        bundle = self.validate_constitution(source)
         version = bundle.constitution_version
         # 2) persist atomically; idempotent on version.
         with self._sf() as s:

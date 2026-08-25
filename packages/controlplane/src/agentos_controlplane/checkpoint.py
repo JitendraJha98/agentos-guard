@@ -24,6 +24,42 @@ from agentos_controlplane.store.models import AuditRecord, ChainCheckpoint
 
 CHECKPOINT_DOMAIN = b"agentos-guard/audit-checkpoint/v1\x00"
 
+# Which anchor kinds carry an authority the operator does NOT control.
+#
+# `anchor_kind` is a bare enum, and an artifact that leaves the building is read by someone who has
+# never seen this module: to them `local_ed25519_v1` and `rfc3161_v1` are two opaque strings that
+# both make `anchored` true. Only one of them means a third party vouched for the root. Naming the
+# difference in words — and counting on the SET rather than on the string — is what stops a
+# durability signature from being read as independent attestation.
+EXTERNAL_AUTHORITY_KINDS = frozenset({"rfc3161_v1"})
+
+_ANCHOR_AUTHORITY = {
+    "local_ed25519_v1": (
+        "the control plane's OWN key, over its own root — durability and proof of mechanism, NOT "
+        "independent attestation: this is the same key that signs the audit records, so whoever "
+        "could fabricate the records could fabricate this anchor"
+    ),
+    "rfc3161_v1": (
+        "an RFC-3161 timestamp authority outside the operator, whose signing key the operator does "
+        "not hold — worth what verifying the token against that authority's root certificate proves"
+    ),
+}
+
+
+def anchor_authority(kind: str | None) -> str | None:
+    """WHO vouches for a root anchored with `kind`, in a sentence rather than as an enum.
+
+    An unrecognised kind is named as unrecognised rather than dropped to None: `anchor_kind` is
+    attacker-writable, and a kind nothing can verify must not read the same as no anchor at all.
+    """
+    if kind is None:
+        return None
+    return _ANCHOR_AUTHORITY.get(
+        kind,
+        f"unrecognised anchor kind {kind!r} — nothing here can verify it, so nothing vouches for "
+        "this root",
+    )
+
 
 class CheckpointVerifyUnavailable(RuntimeError):
     """The verification material for a checkpoint kind was not supplied (skip, not a violation)."""

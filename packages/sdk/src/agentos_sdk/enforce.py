@@ -36,6 +36,12 @@ so it is reported to the `CircuitReporter` seam. Governance blocks are explicitl
 NOT reported — the PDP's graduated path already counted those, and counting them
 here too would trip every breaker at twice the intended rate.
 
+Cost attribution (ECON-01, Slice 11b) rides `_run_reported` too, on the SUCCESS
+path only: a denied action ran nothing, so billing it would inflate the very
+budget that blocked it. Metering NEVER raises — the action already happened, and
+an exception there would both lie to the agent and feed a phantom execution
+failure to the breaker above.
+
 Review obligation survives escalation (D5): the review opens when the outcome is
 `governance_review` OR any fired principle's effect was — a risk-escalated floor
 keeps its review.
@@ -66,7 +72,10 @@ from agentos_contract import (
     Outcome,
     PipelineProtocol,
     SandboxResult,
+    Usage,
 )
+
+from agentos_sdk.usage import extract_usage
 
 _T = TypeVar("_T")
 
@@ -177,6 +186,30 @@ class CircuitReporter(Protocol):
     """
 
     async def record_failure(self, agent_id: str, target: str) -> None: ...
+
+
+class CostMeter(Protocol):
+    """ECON-01 seam (PEP side): attribute what an executed action cost.
+
+    The concrete implementation is `agentos_controlplane.economics.CostRecorder`. Applied at the ONE
+    execution site, so every PEP form — LangChain middleware, the async wrappers, the OpenAI Agents
+    adapter, the network gateway — attributes cost identically. A second recording path would let
+    two PEPs disagree about what the same agent spent, and the disagreement would surface as a
+    budget decision (Slice 11c) nobody can explain.
+
+    TWO KNOWN UNDER-COUNTS, stated because a silent gap in a ledger is worse than a named one:
+
+    - A `sandbox` outcome (RUN-03) is metered by whatever the sandbox runner does, not here — that
+      path never reaches `_run_reported`. Tokens burned inside containment do not reach the ledger.
+    - A post-hoc RUN-05 breach (a memory overrun, or a wall deadline the handler blew through and
+      still completed) re-raises before metering. The provider WAS called and those tokens WERE
+      billed; the result is withheld from the agent and its usage goes with it.
+
+    Both are consistent — the ledger under-states, never over-states — but a budget engine reading
+    it must not treat a contained or budget-breaching agent's $0.00 as evidence it spent nothing.
+    """
+
+    async def record(self, action: AgentAction, decision: Decision, usage: Usage) -> None: ...
 
 
 class GovernanceDenied(Exception):
@@ -501,12 +534,16 @@ async def _run_reported(
     decision: Decision,
     governor: ResourceGovernor | None,
     reporter: CircuitReporter | None,
+    meter: CostMeter | None = None,
 ) -> _T:
     """RUN-06: a governed execution that RAISES is an error signal for the breaker. A governance block
     the PDP already counted is NOT an execution error — double-counting it would trip breakers twice as
-    fast — but a RUN-05 budget breach is, because the PDP counted a PERMITTED decision for it."""
+    fast — but a RUN-05 budget breach is, because the PDP counted a PERMITTED decision for it.
+
+    ECON-01 rides here too, on the SUCCESS path only: this is the one site every PEP form funnels
+    through, which is what makes "what did this agent cost" the same question in all of them."""
     try:
-        return await _run_within_limits(run, action, decision, governor)
+        result = await _run_within_limits(run, action, decision, governor)
     except GovernanceResourceExceeded:
         # Raised at the EXECUTION site, after the PDP recorded a permitted decision — so nothing has
         # counted this yet. An agent that blows its wall/memory budget on every call must be able to
@@ -522,6 +559,28 @@ async def _run_reported(
         if reporter is not None:
             await reporter.record_failure(action.agent_id, action.target)
         raise
+    if meter is not None:
+        # ECON-01: attribute AFTER a successful run and never let metering break the call. A
+        # bookkeeping failure must not turn a completed action into an exception the agent sees —
+        # the action already happened, and raising here would report a phantom execution failure to
+        # the RUN-06 breaker as well. Unreported usage records NOTHING (spec D-7): a zero row would
+        # claim the action was free, which is a different statement from "we do not know".
+        try:
+            usage = extract_usage(result)
+            if usage is not None:
+                await meter.record(action, decision, usage)
+        except Exception:
+            # ERROR, not warning: this swallow is the only thing standing between a broken ledger
+            # and a budget engine that reads it as "spent nothing", so it has to clear the level a
+            # deployment actually alerts on. The values that used to make it attacker-REACHABLE (a
+            # token count too large for the column, an over-long model name) are now refused where
+            # the `Usage` is built, so what lands here is an infrastructure fault, not an agent.
+            logging.getLogger(__name__).error(
+                "cost metering failed for action %s — this agent's spend is now under-counted",
+                action.id,
+                exc_info=True,
+            )
+    return result
 
 
 async def governed_call(
@@ -535,6 +594,7 @@ async def governed_call(
     consensus: ConsensusCoordinator | None = None,
     governor: ResourceGovernor | None = None,
     reporter: CircuitReporter | None = None,
+    meter: CostMeter | None = None,
 ) -> _T:
     """Evaluate `action` and enforce the outcome map; `run` executes only when
     the map says so (after the approval resolves, for blocking outcomes).
@@ -561,7 +621,7 @@ async def governed_call(
             )
     outcome = decision.outcome
     if outcome in _EXECUTABLE:
-        return await _run_reported(run, action, decision, governor, reporter)
+        return await _run_reported(run, action, decision, governor, reporter, meter)
     if outcome is Outcome.deny:
         raise GovernanceDenied(decision)
     if outcome is Outcome.sandbox:
@@ -586,7 +646,7 @@ async def governed_call(
             raise GovernanceDenied(decision)  # quorum not reached
         # The SAME execution helper as every other run site: consensus approval buys the
         # action a run, not an exemption from RUN-05 budgets or RUN-06 error reporting.
-        return await _run_reported(run, action, decision, governor, reporter)
+        return await _run_reported(run, action, decision, governor, reporter, meter)
     # The one remaining blocking outcome: require_approval (POL-07).
     if coordinator is None:
         raise GovernanceDenied(decision)  # fail-closed: nothing can block-await
@@ -595,4 +655,4 @@ async def governed_call(
         raise GovernanceDenied(decision)
     # RUN-05 applies to the POST-APPROVAL run site too — otherwise requesting approval would be a
     # trivial way to buy an unbudgeted execution. RUN-06 reporting wraps it for the same reason.
-    return await _run_reported(run, action, decision, governor, reporter)
+    return await _run_reported(run, action, decision, governor, reporter, meter)

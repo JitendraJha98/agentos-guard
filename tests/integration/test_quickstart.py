@@ -51,9 +51,39 @@ def test_quickstart_run_governs_allow_and_deny_with_no_opa_cli(monkeypatch, tmp_
     assert result.allow_outcome is Outcome.allow
     assert result.deny_outcome is Outcome.deny
     # allow + deny + the sandbox demo decision, plus its `sandbox_executed` containment
-    # event — all on the one hash-chained, signed chain.
-    assert result.audit_records == 4
+    # event — all on the one hash-chained, signed chain. DISC-03 adds one
+    # `framework_discovered` event per framework the scan actually found, which depends on
+    # what is installed, so it is counted rather than hard-coded.
+    assert result.audit_records == 4 + result.frameworks
     assert result.api_token  # a dev API token is surfaced
+
+
+def test_quickstart_wires_framework_discovery(tmp_path) -> None:
+    """DISC-03: the quickstart WIRES `FrameworkDetector`, so the discovery table is populated by
+    the reference wiring rather than staying empty forever. The count is whatever this interpreter
+    genuinely has installed (the guard's own dependencies excluded) — but the row/event evidence
+    must be internally consistent with it."""
+    from sqlalchemy import create_engine, func, select
+
+    from agentos_controlplane.store.engine import create_session_factory
+    from agentos_controlplane.store.models import AuditRecord, DiscoveredFramework
+    from agentos_sdk.quickstart import run
+
+    db = tmp_path / "quickstart.db"
+    result = run(db_path=str(db))
+
+    sf = create_session_factory(create_engine(f"sqlite+pysqlite:///{db}"))
+    with sf() as s:
+        rows = s.scalars(select(DiscoveredFramework)).all()
+        events = [
+            r
+            for r in s.scalars(select(AuditRecord))
+            if r.body.get("kind") == "framework_discovered"
+        ]
+        total = s.scalar(select(func.count()).select_from(AuditRecord))
+    assert len(rows) == result.frameworks == len(events)  # one chain entry per row, no orphans
+    assert all(r.observer for r in rows)  # every row says WHICH instance observed it
+    assert total == 4 + result.frameworks
 
 
 def test_quickstart_wires_the_sandbox_seam_and_quarantines(tmp_path) -> None:

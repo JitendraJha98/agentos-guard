@@ -17,9 +17,10 @@ from langchain_core.messages import AIMessage, HumanMessage
 from sqlalchemy import create_engine, select
 
 from agentos_controlplane.audit import AuditWriter
+from agentos_controlplane.economics import CostRecorder, PriceBook
 from agentos_controlplane.registry import Registry
 from agentos_controlplane.store.engine import create_all, create_session_factory
-from agentos_controlplane.store.models import AuditRecord
+from agentos_controlplane.store.models import AuditRecord, CostRecord
 from agentos_pipeline.identity import IdentityStage
 from agentos_pipeline.policy import ConstitutionPolicyEngine
 from agentos_pipeline.risk import PromptInjectionScorer
@@ -115,3 +116,35 @@ def test_real_agent_model_deny_terminates_cleanly(constitution_wasm) -> None:
     assert len(rows) == 1
     assert rows[0].body["action_type"] == "model_invocation"
     assert rows[0].body["outcome"] == "deny"
+
+
+def test_real_agent_cost_is_attributed_through_the_model_hook(constitution_wasm) -> None:
+    """ECON-01 through the REAL agent loop (the reason this file exists).
+
+    Driven with a handler stub, the model hook appeared to meter: the stub returned an `AIMessage`.
+    The framework never does — `awrap_model_call`'s handler returns a `ModelResponse` wrapping the
+    messages — so the ledger stayed empty for `model_invocation`, the one action type that carries a
+    token cost, and the test suite said otherwise. A stub cannot prove this; only the loop can.
+    """
+    pipeline, token, sf = _wire(constitution_wasm)
+    reply = AIMessage(
+        content="hello",
+        usage_metadata={"input_tokens": 1000, "output_tokens": 500, "total_tokens": 1500},
+        response_metadata={"model_name": "gpt-4o-2026-05-01"},
+    )
+    cost = CostRecorder(
+        sf, AuditWriter(sf), PriceBook({"gpt-4o-2026-05-01": (2.5, 10.0)}, version="2026-08")
+    )
+    agent = create_agent(
+        model=_ToolCapableFake(messages=iter([reply])),
+        tools=[http_get],
+        middleware=[GovernanceMiddleware(pipeline, token, meter=cost)],
+    )
+
+    asyncio.run(agent.ainvoke({"messages": [HumanMessage(content="say hello")]}))
+
+    with sf() as session:
+        row = session.scalars(select(CostRecord)).one()
+    assert (row.action_type, row.input_tokens, row.output_tokens) == ("model_invocation", 1000, 500)
+    assert row.model == "gpt-4o-2026-05-01"
+    assert row.cost_micro_usd == 7_500_000 and row.price_book_version == "2026-08"

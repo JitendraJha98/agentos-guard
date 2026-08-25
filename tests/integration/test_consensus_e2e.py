@@ -14,13 +14,12 @@ as a wrong-outcome error rather than silently passing for the wrong reason.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.pool import StaticPool
 
-from _opa import BuiltPolicy, build_constitution_wasm, find_opa
+from _opa import BuiltPolicy
 from agentos_contract import ActionType, AgentAction, Outcome
 from agentos_controlplane.audit import AuditWriter
 from agentos_controlplane.audit_verify import verify_chain
@@ -37,15 +36,8 @@ from agentos_sdk import GovernanceMiddleware
 from agentos_sdk.enforce import GovernanceDenied, governed_call
 
 AGENT_ID = "consensus-agent"
-CONSENSUS_YAML = Path("tests/fixtures/test_constitution_consensus.yaml")
-
-
-@pytest.fixture(scope="session")
-def consensus_wasm(tmp_path_factory) -> BuiltPolicy:
-    """The consensus test constitution, compiled ONCE per session."""
-    if find_opa() is None:
-        pytest.skip("no OPA binary (vendored tools/opa/opa.exe or PATH)")
-    return build_constitution_wasm(CONSENSUS_YAML, tmp_path_factory.mktemp("wasm_consensus"))
+# `consensus_wasm` (the require_consensus constitution, compiled once per session) lives in
+# tests/conftest.py — the gateway PEP e2e drives the same outcome through the same fixture.
 
 
 class _Voter:

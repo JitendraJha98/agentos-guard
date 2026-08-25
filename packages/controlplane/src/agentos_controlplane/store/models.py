@@ -55,6 +55,14 @@ class Agent(Base):
     cert_serial: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # TRST-01 seed: a single 0-1 score consumed by the graduated-response stage.
     trust_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    # CMP-04 — the EU AI Act risk class the OPERATOR declares for this agent's use case. Never
+    # inferred: the same agent is high-risk in a hiring pipeline and minimal-risk summarizing
+    # meeting notes, and the difference lives in the deployment, not in anything observable here.
+    # NULL means UNDECLARED, which the compliance export reports as undeclared rather than
+    # defaulting to a class. Accepted values are gated at `Registry.declare_risk_classification`
+    # (the single writer) rather than by a DB constraint — the same discipline as
+    # `ApprovalRequest.status`, so the column stays a plain string on every backend (D-14).
+    risk_classification: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -301,6 +309,41 @@ class ConstitutionResource(Base):
     )
 
 
+class Amendment(Base):
+    """POL-10 — a proposed change to the Constitution, and its human ratification.
+
+    An amendment is a proposal ABOUT THE RULES, so it may never bypass them: `proposed_by` may be an
+    agent, `ratified_by` may only be a human operator, and a row in `proposed` has no effect on any
+    decision. That is the POL-13 shape — the interpreter may recommend a temporary exception but
+    never grant one — applied to the governing document itself.
+
+    `source` is the FULL proposed constitution, not a diff. A diff would have to be applied to
+    whatever the constitution said at RATIFICATION time, which may not be what it said when the
+    proposal was written; storing the whole document means what a human ratifies is exactly what
+    takes effect.
+
+    `constitution_version` is the provenance the requirement's "versioned like a legal document"
+    asks for. It stays NULL until ratification, and a constitution version with no amendment behind
+    it was an operator's direct write — a different act, shown as such rather than as a blank.
+    """
+
+    __tablename__ = "amendment"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    proposed_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="proposed")
+    ratified_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    constitution_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    proposed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class PolicyResource(Base):
     """The compile-on-write output for a Constitution version (API-02). Stores the Rego + the
     reviewable YAML middle layer + graduated/lists/sequences metadata the engine consumes.
@@ -353,9 +396,10 @@ class Abom(Base):
 
 class InventoryComponent(Base):
     """DISC-01/02 — an authoritative inventory row: one component (a tool/prompt/memory/etc.) tied to
-    an agent. `source` is 'declared' (registration manifest, authoritative) or 'observed' (reconciled
-    from activity). Unique on (agent_id, kind, name) so declare+observe of the same component
-    reconcile into ONE row."""
+    an agent. `source` is 'declared' (registration manifest, authoritative), 'observed' (this exact
+    component was used) or 'observed_class' (the class-level placeholder `enrich_from_audit` writes,
+    where name == kind, because the audit body omits the per-action target). Unique on (agent_id,
+    kind, name) so declare+observe of the same component reconcile into ONE row."""
 
     __tablename__ = "inventory_component"
     __table_args__ = (UniqueConstraint("agent_id", "kind", "name", name="uq_inventory_component"),)
@@ -522,3 +566,354 @@ class ConsensusVote(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class DiscoveredFramework(Base):
+    """DISC-03 — an agent framework observed in this deployment, by ONE observing instance.
+
+    `name` is the catalogue key (stable), `distribution` the PyPI name actually found, and
+    `version` what was installed at detection time — bounded + charset-restricted at the detector,
+    since METADATA is supply-chain input and the column widths here are enforced on Postgres.
+
+    Keyed by (observer, name): the CURRENT observation per framework PER scanning instance, with
+    first/last-seen bracketing it. The observer dimension is load-bearing — keyed by `name` alone,
+    two replicas that disagree about a version overwrite each other on every pass and emit an
+    unbounded stream of `framework_discovered` events for an unchanged fleet. The audit chain
+    carries the immutable history.
+    """
+
+    __tablename__ = "discovered_framework"
+
+    observer: Mapped[str] = mapped_column(String(128), primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    distribution: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ShadowAgent(Base):
+    """DISC-04 — an actor that ACTED without being registered.
+
+    `claimed_agent_id` is ATTACKER-CONTROLLED: it is whatever an unverified caller put in its
+    token, so it is bounded to 255 chars and sanitized before it ever reaches this row. It is
+    stored to give an operator something to recognise, never trusted — the action itself was
+    already denied at stage 1 (IDN-02), and this row exists so a flood of such denies reads as one
+    incident instead of vanishing into routine noise.
+
+    The KEY is `claimed_id_digest` (sha256 of the FULL raw id), not that display text: sanitizing
+    is lossy — every disallowed character maps to `?` and anything past 255 chars is dropped — so
+    keying by it would merge distinct attackers into one row. The store also uses the key for its
+    `<overflow>` bucket, which no real digest can collide with.
+    """
+
+    __tablename__ = "shadow_agent"
+
+    claimed_id_digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    claimed_agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    action_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class RogueFinding(Base):
+    """DISC-05 — a REGISTERED agent used a component it never declared.
+
+    Advisory evidence, not a verdict: the manifest may simply be stale, so this records a
+    divergence for an operator to judge and adds no deny path. `resolved` lets that operator
+    acknowledge a finding without deleting the history the audit chain already carries.
+
+    UNIQUE on (agent_id, kind, name) so a scheduled sweep of an unchanged fleet writes nothing —
+    the idempotence that keeps a repeat scan from bloating the table or the hash chain is enforced
+    by the schema, not only by the detector's read-before-write.
+
+    An agent names its own components, so `agent_id`/`kind`/`name` are caller text: the detector
+    bounds and sanitizes them to these widths BEFORE they reach the row (SQLite does not enforce
+    String(n), and on Postgres an over-long value would fail the INSERT and abort the sweep), and a
+    value it had to alter carries a digest of the original so two components cannot merge into one
+    finding.
+    """
+
+    __tablename__ = "rogue_finding"
+    __table_args__ = (UniqueConstraint("agent_id", "kind", "name", name="uq_rogue_finding"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)  # tool|memory|mcp|model|...
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    resolved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class GraphNode(Base):
+    """DISC-06 — one node in the live agent graph: an agent, or a component an agent uses.
+
+    UNIQUE on (kind, name) so a repeated materialization pass converges on the same row rather
+    than growing a second copy of the graph on every sweep.
+
+    `kind`/`name` are CALLER text — an agent names itself in the audit body it caused — so the
+    store bounds and sanitizes them to these widths before the row (SQLite does not enforce
+    String(n); on Postgres an over-long value fails the INSERT and aborts the whole sweep), and
+    caps how many distinct agent nodes exist at all.
+
+    `source` records the FIDELITY of the row the way `inventory_component.source` does — 'declared'
+    (the registration manifest), 'observed' (this exact agent really acted) or 'observed_class'
+    (the class-level placeholder named after its own class, because the audit body omits the
+    per-action target). Without it a placeholder is byte-identical to a genuine component that
+    happens to be named 'tool'.
+    """
+
+    __tablename__ = "graph_node"
+    __table_args__ = (UniqueConstraint("kind", "name", name="uq_graph_node"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    # agent | tool | model | mcp | memory | delegation | prompt
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="observed"
+    )  # declared|observed|observed_class
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class GraphEdge(Base):
+    """DISC-06 — a directed edge in the live agent graph.
+
+    `uses` is agent -> component; `delegates` is agent -> agent, its lineage derived from the audit
+    body's `parent_action_id` by resolving which agent performed the parent action.
+
+    `observations` counts ACTIONS — one per audit record consumed for this edge, exactly once,
+    because the materialization pass is incremental (each record is read once, past a persisted
+    watermark). It does NOT count sweeps: a sweep-counter would rank a one-off agent above a hot
+    path purely for having existed longer. A DECLARED edge starts at 0, so "declared but never
+    exercised" stays distinguishable from "used once". BigInteger because a hot edge on a busy
+    fleet outgrows int4.
+
+    `source` mirrors `graph_node.source` (declared > observed > observed_class), so a Phase-13
+    transitive walk can tell a class-level placeholder from real evidence.
+
+    UNIQUE on the (src, dst, relation) 5-tuple for the same reason `graph_node` is unique on
+    (kind, name): a scheduled sweep must converge, not accumulate.
+    """
+
+    __tablename__ = "graph_edge"
+    __table_args__ = (
+        UniqueConstraint(
+            "src_kind", "src_name", "dst_kind", "dst_name", "relation", name="uq_graph_edge"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    src_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    src_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    dst_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    dst_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    relation: Mapped[str] = mapped_column(String(32), nullable=False)  # uses | delegates
+    observations: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="observed"
+    )  # declared|observed|observed_class
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class GraphWatermark(Base):
+    """DISC-06 — how far the graph materialization has consumed the audit chain.
+
+    One row, keyed by a constant. It is what makes the pass INCREMENTAL: without it every sweep
+    re-read the whole audit log and re-issued a statement per record, so the cost grew with the log
+    forever and the long write transaction blocked the AuditWriter appending to the SAME database —
+    a stalled append drives the pipeline's fail-safe, i.e. observation degrading enforcement.
+    Persisted rather than in-process so a restart does not pay for all of history again.
+    """
+
+    __tablename__ = "graph_watermark"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)  # constant — one row
+    seq: Mapped[int] = mapped_column(BigInteger, nullable=False)  # last AuditRecord.seq consumed
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class MerkleRoot(Base):
+    """AUD-06 — a sealed epoch: the Merkle root over a contiguous audit `seq` range.
+
+    Epochs are contiguous and non-overlapping by construction (`seq_start` is the previous epoch's
+    `seq_end + 1`), so no record can slip between two epochs and escape coverage — a record in no
+    epoch could never be proven to an auditor at all.
+
+    A separate table rather than a reuse of `ChainCheckpoint`: that row binds {seq, record_hash},
+    and stuffing a root into `record_hash` would make the column mean two different things
+    depending on the row. It also has to be self-contained for export (CMP-06) — root, range and
+    anchor travelling together is exactly what a disclosure bundle serializes.
+
+    The anchor columns are nullable and filled by a SEPARATE operator step: sealing is cheap and
+    local, anchoring costs a network round-trip to a TSA. Making them one operation would mean a
+    TSA outage stops the log from being sealed at all.
+    """
+
+    __tablename__ = "merkle_root"
+
+    epoch: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    seq_start: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    seq_end: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    root: Mapped[str] = mapped_column(String(64), nullable=False)  # sha256 hex
+    leaf_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # AUD-05 reuse: the SAME anchor kinds and the SAME verify dispatch as ChainCheckpoint.
+    anchor_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    proof: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    tsa_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class CostRecord(Base):
+    """ECON-01 — what one action actually cost, attributed to one agent.
+
+    Money is INTEGER micro-USD, not a float. Floating-point money accumulates representation error
+    across a sum, and a budget decision (Slice 11c) made on a drifting total is a decision the
+    operator cannot reproduce. Integers also mean the same value round-trips identically through
+    SQLite and Postgres, which a NUMERIC would not.
+
+    `cost_micro_usd` is NULLABLE and stays null when the model is unpriced: tokens are a fact we
+    observed, dollars are a conversion we can only do with a rate the operator gave us. Writing a
+    zero there would read as 'this action was free'.
+
+    `price_book_version` pins WHICH rates produced the figure, so a bill can be re-derived — and so
+    a rate correction does not silently rewrite history.
+
+    ECON-03 widens the same row rather than adding a second table: downstream API spend and GPU time
+    are what an action cost, and splitting them off would let two tables disagree about one action.
+    """
+
+    __tablename__ = "cost_record"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    action_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    action_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cost_micro_usd: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    price_book_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # ECON-03 — downstream (non-model) consumption. `provider` is the action's own target, a FACT
+    # the PEP already normalized; it is never an inferred vendor name. Inferring "this target is
+    # really AWS" would put a guess into a cost report an operator reconciles against a real invoice.
+    provider: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # ECON-03 — GPU, recorded only when something actually reported it, never zero-filled.
+    gpu_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    gpu_memory_mib: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # WHICH THING WAS MEASURED, stored beside the number because a figure that loses its qualifier
+    # becomes a bill nobody can challenge. 'process' = attributable to THIS process;
+    # 'device_shared' = a device-wide counter that cannot be honestly divided among concurrent
+    # agents, so it is explicitly NOT a per-agent bill and no roll-up may total it as one.
+    gpu_attribution: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+    )
+
+
+class AgentBudget(Base):
+    """ECON-02 — an operator-set spending limit for one agent.
+
+    `period` is the window the limit applies over ('day' | 'month' | 'total'); spend is summed from
+    `cost_record` inside the current window. Micro-USD integers for the same reason CostRecord uses
+    them: a budget DECISION must be reproducible, and float money is not.
+
+    A MISSING ROW MEANS NO BUDGET CONFIGURED, which is not the same as a budget of zero. The ledger
+    reports a used-ratio of 0.0 for an unconfigured agent, so an operator who has set no budgets
+    cannot have their whole fleet deadlocked by the mere presence of this feature — absence of a
+    budget is not evidence of a breach.
+
+    `version` counts assignments so an operator can see a limit was RAISED between two decisions:
+    raising a budget is how an over-budget agent is unblocked, and a limit that changes with no
+    trace is the one an incident review cannot reconstruct. It is SQLAlchemy's `version_id_col`, so
+    that trace is also a guard: every UPDATE is emitted as `... WHERE agent_id = :id AND
+    version = :current`, and a row already advanced by a concurrent writer matches zero rows ->
+    StaleDataError. Same reasoning as TrustProfile — an atomic SQL-level guard that survives the
+    Postgres target (distinct connections, READ COMMITTED), not a non-atomic Python read-then-write
+    in which one of two concurrent raises silently vanishes.
+    """
+
+    __tablename__ = "agent_budget"
+
+    agent_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    period: Mapped[str] = mapped_column(String(16), nullable=False, default="day")
+    limit_micro_usd: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    __mapper_args__ = {"version_id_col": version}
+
+
+class RedTeamRun(Base):
+    """TEST-07 — one execution of one red-team suite against one agent's DECISION path.
+
+    A run is the unit a trend is built from, and it stores COUNTS rather than a rate: the rate is a
+    lossy summary of `blocked` and `total`, and the number it loses is the one that says whether to
+    trust it. Two attacks with one slipped and five hundred with two hundred and fifty slipped are
+    both "50%" on a chart.
+
+    It records what the guard SAID it would do, never what an attack did — `agentos_sdk.redteam`
+    asks the PDP and never invokes a handler (spec D-1). So a rising rate here means the guard
+    changed, not that an agent was compromised.
+
+    `suite` is the attack CLASS the requirement asks to break the rate down by. It is a bounded
+    vocabulary (`agentos_sdk.redteam.suites()`), NOT free text — this column is a GROUP BY key on an
+    operator-facing trend, and Phase 6's Slice 6b review already found a metric-cardinality DoS in
+    exactly this shape.
+    """
+
+    __tablename__ = "redteam_run"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    suite: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    total: Mapped[int] = mapped_column(Integer, nullable=False)
+    blocked: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    ran_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+    )
+
+
+class RedTeamResult(Base):
+    """TEST-07 — one attack within a run.
+
+    The per-attack rows are what make a regression DIAGNOSABLE rather than merely visible: a trend
+    that moves tells an operator something broke, and only the attack id tells them what.
+
+    `attack_id` is a corpus identifier, never the payload it names. The payloads are our own rather
+    than a secret, but this table is read back by tools, by operators, and eventually by a model —
+    it is not a place to store text engineered to be interpreted as an instruction.
+    """
+
+    __tablename__ = "redteam_result"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(Uuid, nullable=False, index=True)
+    attack_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    blocked: Mapped[bool] = mapped_column(Boolean, nullable=False)

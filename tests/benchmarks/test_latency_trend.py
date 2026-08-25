@@ -236,3 +236,108 @@ def test_metrics_overhead_stays_bounded(pipeline_with_principle) -> None:
         f"metrics p95 overhead +{d_p95 * 1000:.3f} ms exceeds {_OVERHEAD_P95_BUDGET_S * 1000:.0f} ms "
         f"vs the no-op baseline (OBS-03)"
     )
+
+
+# --------------------------------------------------------- ECON-01 metering on the EXECUTION path
+#
+# The gate above measures `pipeline.evaluate` — the DECISION. Metering (Slice 11b) hangs off
+# `_run_reported`, on the far side of that boundary, so the PIPE-04 budget is structurally blind to
+# it: a metered deployment could grow arbitrary per-action cost and every latency gate would stay
+# green. This is the missing half.
+#
+# Delta-based and load-invariant, exactly like the OBS-01/OBS-03 overhead proofs above: an
+# in-memory SQLite store is the FLOOR of what metering costs (production adds network round trips
+# to Postgres), so the ceiling here is deliberately loose. What it is built to catch is a change of
+# KIND — a per-action network call, an extra query, a lock held across I/O — not a few hundred
+# microseconds of drift.
+
+_METER_MEAN_BUDGET_S = 0.005
+_METER_P95_BUDGET_S = 0.010
+_METER_ROUNDS = 60
+
+
+def _metering_store():
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    from agentos_controlplane.store.engine import create_all, create_session_factory
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    create_all(engine)
+    return create_session_factory(engine)
+
+
+def _measure_execution(meter) -> tuple[float, float]:
+    """One sample: (mean, p95) over `_METER_ROUNDS` governed executions with `meter` wired."""
+    from agentos_contract import Decision, Reason, Usage
+    from agentos_sdk.enforce import governed_call
+
+    class _Pipeline:
+        async def evaluate(self, action):
+            return Decision(
+                action_id=action.id,
+                outcome=Outcome.allow,
+                reasons=[Reason(stage="policy", code="ok")],
+            )
+
+    class _Result:
+        usage = Usage(1000, 500, "gpt-4o")
+
+    async def _run():
+        return _Result()
+
+    pipeline = _Pipeline()
+    times: list[float] = []
+    for _ in range(_METER_ROUNDS):
+        action = AgentAction(
+            agent_id="bench-agent",
+            type=ActionType.model_invocation,
+            target="chat",
+            payload={"model": "gpt-4o"},
+        )
+        start = time.perf_counter()
+        asyncio.run(governed_call(pipeline, action, _run, meter=meter))
+        times.append(time.perf_counter() - start)
+    times.sort()
+    return sum(times) / len(times), times[int(0.95 * (len(times) - 1))]
+
+
+@pytest.mark.latency
+def test_metering_overhead_on_the_execution_path_stays_bounded() -> None:
+    """ECON-01: attributing cost must stay a bookkeeping write, not a second pipeline.
+
+    Asserts the DELTA between a metered and an unmetered `governed_call` over interleaved pairs
+    (load-invariant — both halves inflate together under scheduler load, and the MIN across pairs
+    rejects a spike that hit only one). A gross regression — batching to a remote ledger, an extra
+    round trip, a lock held across I/O — breaches it in every pair.
+    """
+    from agentos_controlplane.audit import AuditWriter
+    from agentos_controlplane.economics import CostRecorder, PriceBook
+
+    store = _metering_store()
+    meter = CostRecorder(store, AuditWriter(store), PriceBook({"gpt-4o": (2.5, 10.0)}, version="b"))
+
+    _measure_execution(None)  # warmup: import, SQLite first write, chain-head cache
+    _measure_execution(meter)
+
+    d_means, d_p95s = [], []
+    for _ in range(_SAMPLES):
+        base_mean, base_p95 = _measure_execution(None)
+        met_mean, met_p95 = _measure_execution(meter)
+        d_means.append(met_mean - base_mean)
+        d_p95s.append(met_p95 - base_p95)
+    d_mean, d_p95 = min(d_means), min(d_p95s)
+
+    print(f"metering overhead: mean +{d_mean * 1000:.3f} ms  p95 +{d_p95 * 1000:.3f} ms")
+    assert d_mean < _METER_MEAN_BUDGET_S, (
+        f"metering mean overhead +{d_mean * 1000:.3f} ms exceeds "
+        f"{_METER_MEAN_BUDGET_S * 1000:.0f} ms per governed action (ECON-01)"
+    )
+    assert d_p95 < _METER_P95_BUDGET_S, (
+        f"metering p95 overhead +{d_p95 * 1000:.3f} ms exceeds "
+        f"{_METER_P95_BUDGET_S * 1000:.0f} ms per governed action (ECON-01)"
+    )

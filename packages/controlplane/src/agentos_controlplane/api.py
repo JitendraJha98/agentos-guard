@@ -9,22 +9,46 @@ store, not here, so every writer is audited identically.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.exc import StaleDataError
 
+from agentos_controlplane.amendments import AmendmentStore
 from agentos_controlplane.approvals import AlreadyResolvedError, ApprovalStore
 from agentos_controlplane.auth import make_require_token, resolve_api_token
 from agentos_controlplane.circuit_breaker import CircuitBreakerStore
+from agentos_controlplane.budget import BudgetLedger
+from agentos_controlplane.compliance import export_evidence_bundle, parse_time_bound
+from agentos_controlplane.conflicts import ConflictEngine
+from agentos_controlplane.economics import CostRecorder
+from agentos_controlplane.forensics import EvidenceGraph
+from agentos_controlplane.framework_discovery import FrameworkDetector
+from agentos_controlplane.graph import AgentGraphStore
+from agentos_controlplane.health import HealthStore
 from agentos_controlplane.inventory import InventoryStore
 from agentos_controlplane.killswitch import EmergencyActiveError, KillSwitchStore
+from agentos_controlplane.merkle import MerkleError, MerkleIntegrityError, MerkleSealer
 from agentos_controlplane.registry import Registry
 from agentos_controlplane.resources import ConstitutionError, ResourceStore, VersionConflict
+from agentos_controlplane.rogue import RogueDetector
+from agentos_controlplane.shadow import ShadowAgentStore
 from agentos_controlplane.supply_chain import KnownBad, SupplyChainChecker
+from agentos_controlplane.validation import ValidationStore
 from agentos_controlplane.store.models import ApprovalRequest, GovernanceReview
+
+# TEST-07: the longest `days` window the trend route accepts. Not a tidiness bound —
+# `datetime.now() - timedelta(days=999999999)` raises OverflowError, so an unbounded `days` turns
+# one query parameter into a 500 on a gated operator route. Ten years is past any plausible
+# retention, so anything beyond it is a typo rather than a question.
+_MAX_WINDOW_DAYS = 3650
+# OBS-04: the same bound, in the unit the health route asks for. Same reasoning — an unbounded
+# `hours` raises OverflowError building the timedelta, turning one query parameter into a 500.
+_MAX_WINDOW_HOURS = _MAX_WINDOW_DAYS * 24
 
 
 class ResolveRequest(BaseModel):
@@ -48,6 +72,40 @@ class ClearRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
     set_by: str = Field(max_length=128)
+
+
+class ProposeAmendmentIn(BaseModel):
+    """POL-10 — an amendment proposal. Bounded like every operator/agent input in this module.
+
+    `source` is the WHOLE proposed constitution rather than a diff: a diff would have to be applied
+    to whatever the constitution says at ratification time, so what a human ratified would not be
+    what took effect.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    title: str = Field(min_length=1, max_length=255)
+    rationale: str = Field(default="", max_length=4096)
+    proposed_by: str = Field(min_length=1, max_length=255)
+    source: dict
+
+
+class RatifyAmendmentIn(BaseModel):
+    """POL-10 — the human half. `ratified_by` is required because "human-ratified" is the entire
+    claim this transition makes, and an unattributed ratification is not one."""
+
+    model_config = {"extra": "forbid"}
+
+    ratified_by: str = Field(min_length=1, max_length=128)
+    note: str | None = Field(default=None, max_length=512)
+
+
+class ResolveAmendmentIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    status: Literal["rejected", "withdrawn"]
+    resolved_by: str = Field(min_length=1, max_length=128)
+    note: str | None = Field(default=None, max_length=512)
 
 
 class EmergencyShutdownRequest(BaseModel):
@@ -360,8 +418,34 @@ def build_resource_router(resources: ResourceStore, known_bad: "KnownBad | None"
     return router
 
 
-def build_inventory_router(inventory: InventoryStore) -> APIRouter:
-    """DISC-01/02 — read API over the authoritative agent inventory."""
+def build_inventory_router(
+    inventory: InventoryStore,
+    detector: FrameworkDetector | None = None,
+    shadow: ShadowAgentStore | None = None,
+    rogue: RogueDetector | None = None,
+    graph: AgentGraphStore | None = None,
+    sealer: MerkleSealer | None = None,
+    cost: CostRecorder | None = None,
+    budget: BudgetLedger | None = None,
+    # CMP-06: appended last, like every collaborator before it.
+    session_factory=None,
+    # TEST-07: likewise appended last.
+    validation: ValidationStore | None = None,
+    # OBS-04: likewise appended last.
+    health: HealthStore | None = None,
+    # AUD-09 / OBS-05: likewise appended last.
+    forensics: EvidenceGraph | None = None,
+    # POL-11: likewise appended last.
+    conflicts: ConflictEngine | None = None,
+    # POL-10: likewise appended last.
+    amendments: AmendmentStore | None = None,
+) -> APIRouter:
+    """DISC-01/02 — read API over the authoritative agent inventory, plus the DISC-03 framework
+    inventory, the DISC-04 shadow-agent sightings, the DISC-05 rogue-agent findings, the DISC-06
+    live agent graph, the AUD-06 sealed audit epochs, the ECON-01 cost roll-up, the ECON-02
+    budgets and the CMP-06 evidence export: further collaborators on the SAME router rather than
+    new ones, so the gated surface over "what is actually out there" — and what happened, what it
+    cost, and what it may cost — stays one place."""
     router = APIRouter()
 
     @router.get("/inventory")
@@ -371,6 +455,431 @@ def build_inventory_router(inventory: InventoryStore) -> APIRouter:
     @router.get("/inventory/{agent_id}")
     def get_inventory(agent_id: str) -> list[dict]:
         return [vars(d) for d in inventory.get_inventory(agent_id)]
+
+    @router.get("/discovery/frameworks")
+    def list_frameworks() -> list[dict]:
+        """DISC-03 — the frameworks observed in this deployment, per observing instance."""
+        if detector is None:
+            raise HTTPException(status_code=404, detail="framework discovery is not wired")
+        return detector.list_frameworks()
+
+    @router.post("/discovery/scan")
+    async def scan_frameworks() -> list[dict]:
+        """DISC-03 — run a discovery pass NOW and return the resulting inventory.
+
+        The WRITE half of the surface: without a caller the table stays empty and the read route
+        above is hollow. Deliberately operator-driven (an ops schedule can poll it) and behind the
+        same gate — a scan reads `importlib.metadata` and appends to the audit chain, and touches
+        the per-action hot path nowhere. Idempotent: an unchanged environment appends no event.
+        """
+        if detector is None:
+            raise HTTPException(status_code=404, detail="framework discovery is not wired")
+        await detector.scan()
+        return detector.list_frameworks()
+
+    @router.get("/discovery/shadow-agents")
+    def list_shadow_agents() -> list[dict]:
+        """DISC-04 — actors seen acting without registration.
+
+        Read-only by design: the rows are written by the pipeline's identity short-circuit, which
+        is the only place that knows an actor acted unregistered. There is no write route because
+        there is no operator action to take here — the action was already denied.
+        """
+        if shadow is None:
+            raise HTTPException(status_code=404, detail="shadow detection is not wired")
+        return shadow.list_shadow_agents()
+
+    @router.get("/discovery/rogue-agents")
+    def list_rogue_findings(include_resolved: bool = False) -> list[dict]:
+        """DISC-05 — registered agents observed outside their declared scope.
+
+        ADVISORY: read-only, and there is no deny route to pair with it. A declaration gap is
+        evidence, not proof — a manifest goes stale — so an operator judges it and escalates with
+        Phase-9 containment if warranted. Resolved findings are filtered out by default rather
+        than deleted; the audit chain keeps the sighting regardless.
+        """
+        if rogue is None:
+            raise HTTPException(status_code=404, detail="rogue detection is not wired")
+        return rogue.list_findings(include_resolved=include_resolved)
+
+    @router.get("/discovery/graph")
+    def agent_graph() -> dict:
+        """DISC-06 — the live agent graph: nodes + edges, delegation lineage included.
+
+        A read over the materialized view only — the rebuild is the `GraphReconciler`'s batch
+        pass, so this route adds no materialization work. It is not free of the hot path though:
+        the view lives in the database the AuditWriter appends to, which is why the read is
+        bounded (`max_nodes` / `max_edges`) rather than serializing every row a prober can create.
+        """
+        if graph is None:
+            raise HTTPException(status_code=404, detail="the agent graph is not wired")
+        view = graph.view()
+        return {"nodes": view.nodes, "edges": view.edges}
+
+    @router.get("/audit/epochs")
+    def list_epochs() -> dict:
+        """AUD-06 — the sealed Merkle epochs and their anchor status, newest first."""
+        if sealer is None:
+            raise HTTPException(status_code=404, detail="merkle sealing is not wired")
+        return sealer.list_epochs()
+
+    @router.get("/audit/disclose/{seq}")
+    def disclose(seq: int) -> dict:
+        """AUD-06 — a partial-disclosure bundle for ONE audit record: the record, its inclusion
+        proof, and the anchored root. Gated: which actions an agent took is not public."""
+        if sealer is None:
+            raise HTTPException(status_code=404, detail="merkle sealing is not wired")
+        try:
+            return sealer.disclose(seq)
+        except MerkleIntegrityError as exc:
+            # 409, not 404: the record EXISTS and its evidence does not check out. A 404 here would
+            # tell an operator's monitoring that tampering under a sealed root is the same event as
+            # asking for a seq that was never written.
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except MerkleError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.get("/compliance/export/{framework}")
+    def export_bundle(
+        framework: str,
+        start: str | None = None,
+        end: str | None = None,
+        verify_chain: bool = False,
+    ) -> dict:
+        """CMP-06 — the one-click evidence bundle: this framework's mapping, the evidence derived
+        for this range, the in-range audit records, and their inclusion proofs against an anchored
+        root.
+
+        Gated like the AUD-06 disclosure route beside it: an evidence bundle is a curated disclosure
+        of who did what, and deciding who receives it is the operator's call rather than a URL's.
+
+        A 422 means this request cannot produce an HONEST bundle — an unparseable bound, an unknown
+        framework, or a store whose contents the mapping refuses to describe. Every one of those is
+        answered with a refusal rather than a smaller bundle, because the alternative to a bad range
+        is the whole log and the alternative to a bad framework is an empty artifact that reads as
+        "no evidence exists". A 409 is the different, louder failure the disclosure route already
+        draws: the records exist and their evidence does not check out.
+
+        `verify_chain` is OFF by default here and nowhere else. That pass reads EVERY audit record
+        whatever range was asked for, so leaving it on would make one gated GET cost a full
+        materialization of the audit table — the memory event `_MAX_RECORDS` exists to prevent,
+        reintroduced by the one field it does not bound. Off, the bundle reports its chain fields as
+        null with a note saying the pass did not run; the per-record proofs, which are the evidence,
+        are unaffected either way.
+        """
+        if session_factory is None:
+            raise HTTPException(status_code=404, detail="evidence export is not wired")
+        try:
+            return export_evidence_bundle(
+                framework,
+                session_factory,
+                start=parse_time_bound(start),
+                end=parse_time_bound(end),
+                verify_whole_chain=verify_chain,
+            )
+        except MerkleIntegrityError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @router.get("/economics/costs")
+    def cost_totals(limit: int = 200, offset: int = 0) -> list[dict]:
+        """ECON-01 — per-agent cost roll-up. Gated: what an agent costs is commercial information.
+
+        Tokens and dollars are reported side by side with the count of actions each covers, because
+        the dollar sum omits every unpriced action and an operator reading it as the whole bill
+        would under-count exactly the models they have not supplied rates for.
+
+        Paged for the same reason the per-agent route is: the aggregation reads the WHOLE cost
+        table, which grows with every governed action the fleet ever takes, and an unbounded scan
+        on a gated read route is still a scan of everything.
+
+        THE `gpu_process_*` FIGURES ARE NOT ADDITIVE ACROSS AGENTS. They are process-level
+        observations made while that agent was acting — an upper bound on what it was responsible
+        for, never a division of a shared number. One process can host several agents, and the
+        INT-07 gateway governs agents that run in no process of its own, so three agents under one
+        8 GiB allocation each report `gpu_process_memory_mib_max: 8192`; a dashboard summing that
+        column shows 24576 MiB on an 8192 MiB box. `gpu_device_shared_actions` is a COUNT and not a
+        quantity for the same reason, taken further: a host-wide GPU figure cannot be attributed to
+        one agent at all, so this route reports how often one was observed and never how large it
+        was. NULL in any of these means nothing measured a GPU, which is not the same as zero.
+        """
+        if cost is None:
+            raise HTTPException(status_code=404, detail="cost attribution is not wired")
+        return cost.totals(limit=max(1, min(limit, 1000)), offset=max(0, offset))
+
+    @router.get("/economics/costs/{agent_id}")
+    def cost_for_agent(agent_id: str, limit: int = 200, offset: int = 0) -> list[dict]:
+        """ECON-01 — the actions behind one agent's total (the per-ACTION half of the requirement).
+
+        Paged, and the page bound is exposed rather than hidden: the read is capped (the table
+        grows with every governed action), so an operator reconciling a busy agent against an
+        invoice MUST be able to walk past the first page — otherwise this route and the roll-up
+        above report different money for the same agent with nothing to explain the gap.
+        """
+        if cost is None:
+            raise HTTPException(status_code=404, detail="cost attribution is not wired")
+        return cost.for_agent(agent_id, limit=max(1, min(limit, 1000)), offset=max(0, offset))
+
+    @router.get("/economics/providers")
+    def cost_by_provider(limit: int = 200, offset: int = 0) -> list[dict]:
+        """ECON-03 — downstream (non-model) consumption per (agent, provider).
+
+        The provider on each row is the action's own target, so this reports which third-party
+        services an agent is actually consuming from facts the PEP recorded — nothing here infers a
+        vendor from a hostname, because a guessed vendor lands in a report an operator reconciles
+        line-by-line against a real invoice.
+
+        Gated and paged for the same reasons as the cost roll-up: which vendors an agent calls is
+        commercial information, and the aggregation reads the whole cost table.
+        """
+        if cost is None:
+            raise HTTPException(status_code=404, detail="cost attribution is not wired")
+        return cost.by_provider(limit=max(1, min(limit, 1000)), offset=max(0, offset))
+
+    @router.get("/economics/budgets")
+    def list_budgets() -> list[dict]:
+        """ECON-02 — the configured spending limits and what has been spent against them.
+
+        Unpaged deliberately, unlike the cost routes above: this table holds one row per agent an
+        operator explicitly budgeted, not one per action, so it does not grow with fleet activity.
+        """
+        if budget is None:
+            raise HTTPException(status_code=404, detail="budgets are not wired")
+        return budget.list_budgets()
+
+    @router.put("/economics/budgets/{agent_id}")
+    def set_budget(agent_id: str, body: dict) -> dict:
+        """ECON-02 — set an agent's spending limit.
+
+        Gated like every route on this router, and that gate is load-bearing here rather than
+        merely consistent: raising a budget is how an over-budget agent is unblocked, so an agent
+        that could call this route would have no budget at all.
+
+        A malformed limit is refused rather than coerced. A negative limit or an unknown period is a
+        typo, and a typo that lands as a stored budget is a spend control that looks configured and
+        enforces nothing.
+        """
+        if budget is None:
+            raise HTTPException(status_code=404, detail="budgets are not wired")
+        try:
+            limit = int(body["limit_micro_usd"])
+            period = str(body.get("period", "day"))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422, detail="limit_micro_usd (int) is required"
+            ) from exc
+        if limit < 0 or period not in {"day", "month", "total"}:
+            raise HTTPException(status_code=422, detail="invalid limit or period")
+        try:
+            budget.set_budget(agent_id, limit_micro_usd=limit, period=period)
+        except (StaleDataError, IntegrityError) as exc:
+            # 409, not 500 and not a silent overwrite: another operator moved this budget between
+            # our read and our write. The caller retries against the value that actually won —
+            # a lost raise is an agent that stays blocked, or keeps spending, for no logged reason.
+            raise HTTPException(
+                status_code=409, detail="budget changed concurrently; re-read and retry"
+            ) from exc
+        return {"agent_id": agent_id, "limit_micro_usd": limit, "period": period}
+
+    @router.get("/validation/trend")
+    def validation_trend(
+        agent_id: str | None = None,
+        days: int | None = Query(default=None, ge=1, le=_MAX_WINDOW_DAYS),
+    ) -> list[dict]:
+        """TEST-07 — attack-success-rate per agent and attack class, over a window.
+
+        Gated: how well an agent's guard is holding, broken down by attack class, is a map of where
+        to attack it. A read-only route over what the EVALUATE-ONLY harness already produced — it
+        starts no run and executes no attack payload (spec D-1).
+
+        Every row carries `total` and `runs` beside the rate, because this is the surface a
+        dashboard reads and a dashboard is exactly where a rate gets plotted without its
+        denominator. An `attack_success_rate` of null means the window contained runs that tested
+        nothing; it is not a zero.
+
+        `days` is validated rather than coerced. A negative window would put `since` in the FUTURE
+        and answer 200 with an empty trend — indistinguishable from "this guard has never been
+        validated" — and an unbounded one raises OverflowError building the timedelta. Both are 422:
+        a window that means something other than what was asked for is worse than a refusal.
+        """
+        if validation is None:
+            raise HTTPException(status_code=404, detail="validation tracking is not wired")
+        since = None if days is None else datetime.now(timezone.utc) - timedelta(days=days)
+        return validation.trend(agent_id=agent_id, since=since)
+
+    @router.get("/validation/runs/{agent_id}")
+    def validation_runs(agent_id: str) -> list[dict]:
+        """TEST-07 — the runs behind one agent's trend, newest first, with the attacks that slipped.
+
+        The diagnosis half: a trend that moves tells an operator something broke, and only the run
+        and its attack ids tell them what. Identifiers and counts only — never an attack payload.
+        """
+        if validation is None:
+            raise HTTPException(status_code=404, detail="validation tracking is not wired")
+        return validation.runs_for(agent_id)
+
+    @router.get("/health/agents")
+    def fleet_health(
+        hours: int = Query(default=24, ge=1, le=_MAX_WINDOW_HOURS),
+    ) -> list[dict]:
+        """OBS-04 — per-agent liveness, error rate and circuit-breaker state.
+
+        `last_seen_at` is a FACT, not a verdict: an idle agent and a dead one look identical from
+        here and only the operator's own expectation separates them, so nothing on this route
+        claims to. A null one means "not within `window_hours`", which is why the window is
+        returned beside it — widening `hours` is what tells "idle for a week" apart from "never
+        seen at all".
+
+        The failure rate counts EXECUTION failures over EXECUTED actions, and both counts travel
+        with it. A governance block is not an error; folding blocks in would make the
+        best-governed agent in the fleet look like the worst one, and the fix an operator reaches
+        for to make that chart green is to loosen the guard.
+
+        Gated like every route on this router: which agents are quiet, which are being blocked and
+        which are held by a breaker is a map of where a fleet is weakest right now.
+
+        `hours` is validated rather than coerced, for the same reasons as the TEST-07 trend's
+        `days`. A non-positive window puts its start in the FUTURE and answers 200 with an empty
+        fleet — indistinguishable from "every agent is silent" — and an unbounded one raises
+        OverflowError building the timedelta. Both are 422.
+        """
+        if health is None:
+            raise HTTPException(status_code=404, detail="health monitoring is not wired")
+        return health.fleet(window=timedelta(hours=hours))
+
+    @router.get("/forensics/chain/{action_id}")
+    def evidence_chain(action_id: str) -> dict:
+        """AUD-09 — the causal chain leading to one action, reconstructed at query time.
+
+        Gated, and the most revealing read in the product: a chain says which agent set which other
+        agent in motion. It carries `lineage` for a reason — `identity_verified` authenticates who
+        ACTED, not that `parent_action_id` names a real delegation, so this is what the fleet
+        CLAIMED about its own causation rather than proof of it. `truncated` says whether a cycle or
+        the depth cap cut it short; both are reachable by the agent under investigation.
+        """
+        if forensics is None:
+            raise HTTPException(status_code=404, detail="the evidence graph is not wired")
+        return forensics.ancestors(action_id).as_dict()
+
+    @router.get("/forensics/conversation/{conversation_id}")
+    def conversation(conversation_id: str) -> dict:
+        """OBS-05 — one conversation reconstructed across tools and delegations.
+
+        An unknown id returns an EMPTY chain rather than a 404: during an incident "nothing matched"
+        is an answer, while a 404 reads as "this route is wrong".
+        """
+        if forensics is None:
+            raise HTTPException(status_code=404, detail="the evidence graph is not wired")
+        return forensics.conversation(conversation_id).as_dict()
+
+    @router.get("/conflicts")
+    def list_conflicts() -> dict:
+        """POL-11 — emergent capability conflicts across delegation chains.
+
+        FINDINGS, NOT DECISIONS. Nothing here denies an action; the constitution remains the only
+        thing that does, and an engine deciding on its own authority would be a second enforcer
+        beside the policy floor.
+
+        `unauthorized_lineage` says a claimed delegation edge is NOT CORROBORATED by the ledger —
+        weaker than false, because the ledger is in-process and FIFO-evicted, so an absent entry is
+        routine rather than evidence the delegation never happened.
+        """
+        if conflicts is None:
+            raise HTTPException(status_code=404, detail="the conflict engine is not wired")
+        return conflicts.conflicts()
+
+    @router.get("/conflicts/closure/{action_id}")
+    def permission_closure(action_id: str) -> dict:
+        """POL-11 — what the chain reaching this action effectively confers.
+
+        Scope narrows at every hop and never widens: a union would let a chain manufacture a
+        capability nobody in it held. Carries the same claimed-lineage qualifier the chain does.
+        """
+        if conflicts is None:
+            raise HTTPException(status_code=404, detail="the conflict engine is not wired")
+        return conflicts.closure(action_id)
+
+    @router.get("/amendments")
+    def list_amendments(status: str | None = None) -> list[dict]:
+        """POL-10 — proposed and resolved amendments to the Constitution."""
+        if amendments is None:
+            raise HTTPException(status_code=404, detail="amendments are not wired")
+        return amendments.list_amendments(status=status)
+
+    @router.post("/amendments")
+    async def propose_amendment(body: ProposeAmendmentIn) -> dict:
+        """POL-10 — propose a change to the Constitution.
+
+        Gated but AGENT-usable: proposing is the half of POL-10 an agent is meant to do. Ratifying is
+        not, and it is a separate route for exactly that reason. A proposal is INERT — nothing on the
+        decision path reads it — so this route changes no outcome.
+
+        The proposal is compiled before it is stored, so an uncompilable amendment fails here in
+        front of the proposer rather than later in front of the ratifier, who cannot fix it.
+        """
+        if amendments is None:
+            raise HTTPException(status_code=404, detail="amendments are not wired")
+        try:
+            amendment_id = await amendments.propose(
+                body.title, body.rationale, body.proposed_by, body.source
+            )
+        except ConstitutionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"id": amendment_id, "status": "proposed"}
+
+    @router.post("/amendments/{amendment_id}/ratify")
+    async def ratify_amendment(amendment_id: UUID, body: RatifyAmendmentIn) -> dict:
+        """POL-10 — the human half, and the ONLY route in this product that changes what the
+        Constitution says.
+
+        A system that could ratify its own amendments could rewrite the rules it is governed by, so
+        `ratified_by` is required and the previous constitution text is retained rather than replaced.
+        """
+        if amendments is None:
+            raise HTTPException(status_code=404, detail="amendments are not wired")
+        try:
+            version = await amendments.ratify(amendment_id, body.ratified_by, note=body.note)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown amendment") from None
+        except AlreadyResolvedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except ConstitutionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"id": str(amendment_id), "status": "ratified", "constitution_version": version}
+
+    @router.post("/amendments/{amendment_id}/resolve")
+    async def resolve_amendment(amendment_id: UUID, body: ResolveAmendmentIn) -> dict:
+        """POL-10 — reject or withdraw. Terminal, audited, and constitutionally inert."""
+        if amendments is None:
+            raise HTTPException(status_code=404, detail="amendments are not wired")
+        try:
+            await amendments.resolve_without_ratifying(
+                amendment_id, body.status, body.resolved_by, note=body.note
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown amendment") from None
+        except AlreadyResolvedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"id": str(amendment_id), "status": body.status}
+
+    @router.get("/constitution/history")
+    def constitution_history() -> list[dict]:
+        """POL-10 — what the Constitution has said, when, and on whose authority.
+
+        A version with `amendment: null` was an operator's DIRECT write — a different act from a
+        ratified amendment, and reported as such so a reader can tell "nobody ratified this" from
+        "we lost the record".
+        """
+        if amendments is None:
+            raise HTTPException(status_code=404, detail="amendments are not wired")
+        return amendments.constitution_history()
 
     return router
 
@@ -406,8 +915,34 @@ def create_app(
     breaker_store: CircuitBreakerStore | None = None,
     api_token: str | None = None,
     registry: Registry | None = None,
+    # Also enables the CMP-06 export route (see build_inventory_router): the store IS the audit log
+    # the bundle is evidence from, so there is no second collaborator to supply for it.
     session_factory=None,
     dashboard: bool = False,
+    # DISC-03: appended LAST so no existing positional caller shifts.
+    framework_detector: FrameworkDetector | None = None,
+    # DISC-04: likewise appended last.
+    shadow_store: ShadowAgentStore | None = None,
+    # DISC-05: likewise appended last.
+    rogue_detector: RogueDetector | None = None,
+    # DISC-06: likewise appended last.
+    graph_store: AgentGraphStore | None = None,
+    # AUD-06: likewise appended last.
+    sealer: MerkleSealer | None = None,
+    # ECON-01: likewise appended last.
+    cost: CostRecorder | None = None,
+    # ECON-02: likewise appended last.
+    budget: BudgetLedger | None = None,
+    # TEST-07: likewise appended last.
+    validation: ValidationStore | None = None,
+    # OBS-04: likewise appended last.
+    health: HealthStore | None = None,
+    # AUD-09 / OBS-05: likewise appended last.
+    forensics: EvidenceGraph | None = None,
+    # POL-11: likewise appended last.
+    conflicts: ConflictEngine | None = None,
+    # POL-10: likewise appended last.
+    amendments: AmendmentStore | None = None,
 ) -> FastAPI:
     # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
     # explicit arg -> AGENTOS_API_TOKEN env -> ephemeral random (logged) — never silently open.
@@ -424,8 +959,42 @@ def create_app(
         app.include_router(build_resource_router(resource_store), dependencies=guard)
     # DISC-01/02: the inventory read router rides the same gate; absent an inventory_store the
     # routes are not wired (GET /inventory -> 404), keeping existing create_app callers working.
+    # DISC-03: the framework-discovery read route rides this SAME router and gate; absent a
+    # framework_detector it answers 404 rather than opening an ungated surface. DISC-04's
+    # shadow-agent route does the same — who is probing the fleet unregistered is never public.
+    # DISC-05's rogue-agent route likewise: which agents are outside their declared scope is not
+    # public information either. DISC-06's graph route most of all — who talks to whom is a map of
+    # the fleet's blast radius. AUD-06's disclosure route likewise: an operator chooses what to
+    # disclose and to whom, so the bundle is never a public endpoint. ECON-01's cost roll-up too:
+    # what an agent spends maps onto which workloads a deployment runs and how heavily. ECON-02's
+    # budget routes need the gate most of all — they WRITE, and raising a budget is how an
+    # over-budget agent is unblocked, so an ungated one would be a governance bypass. CMP-06's
+    # export is the same call as AUD-06's disclosure taken in bulk: a curated statement of who did
+    # what, addressed to one recipient the operator chose. TEST-07's validation trend belongs here
+    # for the same reason as DISC-06's graph: how well an agent's guard is holding, per attack
+    # class, is a map of where to attack it. OBS-04's health read closes the set: which agents are
+    # quiet, which are being blocked and which are held by a breaker is a map of where a fleet is
+    # weakest right now.
     if inventory_store is not None:
-        app.include_router(build_inventory_router(inventory_store), dependencies=guard)
+        app.include_router(
+            build_inventory_router(
+                inventory_store,
+                framework_detector,
+                shadow_store,
+                rogue_detector,
+                graph_store,
+                sealer,
+                cost,
+                budget,
+                session_factory,
+                validation,
+                health,
+                forensics,
+                conflicts,
+                amendments,
+            ),
+            dependencies=guard,
+        )
     # RUN-06: the breaker router rides the same gate; absent a breaker_store the /circuit routes are
     # not wired (GET /circuit -> 404), keeping existing create_app callers working.
     if breaker_store is not None:

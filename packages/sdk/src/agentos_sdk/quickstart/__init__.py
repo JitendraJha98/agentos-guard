@@ -19,6 +19,7 @@ from agentos_constitution import compile_constitution, load_constitution
 from agentos_contract import ActionType, AgentAction, Outcome
 from agentos_controlplane.audit import AuditWriter
 from agentos_controlplane.auth import resolve_api_token
+from agentos_controlplane.framework_discovery import FrameworkDetector
 from agentos_controlplane.registry import Registry
 from agentos_controlplane.sandbox import QuarantineSandbox
 from agentos_controlplane.store.engine import create_all, create_session_factory
@@ -46,6 +47,8 @@ class QuickstartResult:
     audit_records: int
     api_token: str
     db_path: str
+    # DISC-03: appended LAST with a default so no existing positional caller shifts.
+    frameworks: int = 0
 
 
 def _build_engine() -> tuple[ConstitutionPolicyEngine, str]:
@@ -89,6 +92,12 @@ def run(db_path: str | None = None) -> QuickstartResult:
     # this seam. Wire it or the outcome fails CLOSED as a hard block with no approval path
     # and no containment record — so this line is part of the minimum wiring, not an extra.
     sandbox = QuarantineSandbox(sf, audit)
+    # DISC-03: you cannot govern what you cannot see. Discovery has no automatic driver — an
+    # unwired detector leaves `discovered_framework` empty and GET /discovery/frameworks a hollow
+    # surface forever — so the reference wiring runs a pass. It is a SCAN (importlib + one chain
+    # entry per NEW framework), never part of the per-action path; operators drive it on a
+    # schedule via POST /discovery/scan.
+    frameworks = asyncio.run(FrameworkDetector(sf, audit).scan())
 
     def act(url: str, agent_id: str = DEMO_AGENT, identity_token: str = token) -> AgentAction:
         return AgentAction(agent_id=agent_id, type=ActionType.tool_call, target="http_get",
@@ -120,7 +129,7 @@ def run(db_path: str | None = None) -> QuickstartResult:
 
     api_token = resolve_api_token(None)
     return QuickstartResult(
-        allow.outcome, deny.outcome, sandbox_outcome, runs, n, api_token, db_path
+        allow.outcome, deny.outcome, sandbox_outcome, runs, n, api_token, db_path, len(frameworks)
     )
 
 
@@ -131,6 +140,7 @@ def main() -> None:
     print(f"  exfil action    -> {r.deny_outcome.value}")
     print(f"  low-trust action-> {r.sandbox_outcome.value} — quarantined, the tool never ran "
           f"({r.sandbox_runs} sandbox_run row)")
+    print(f"  frameworks seen -> {r.frameworks} (DISC-03 inventory of this instance)")
     print(f"  audit records   -> {r.audit_records} (hash-chained, signed)")
     print(f"  sqlite db       -> {r.db_path}")
     print(f"\n  dev API token (for the control-plane API / dashboard): {r.api_token}")

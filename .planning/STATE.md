@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: phase_in_progress
-stopped_at: 2026-08-11 — Phase 9 COMPLETE (6/6 slices) on branch phase-9-runtime-containment-consensus, pending PR into development. Every graduated outcome now has real enforcement (the sandbox/require_consensus approval substitution is retired). Phase 6's OSS-01 (first tagged PyPI release) remains the sole open item across Phases 6-9; Phase 10 not started.
-last_updated: 2026-08-11
-last_activity: 2026-08-11
+stopped_at: 2026-08-20 — Phase 13 COMPLETE (3/3 slices), still on branch phase-10-gateway-adapter-graph (the operator asked Phases 11-13 to continue there), pending PR into development. The Constitution is now amendable with human ratification and readable provenance, transitive permissions are computed across delegation chains with conflicts flagged as findings rather than denials, and require_consensus is backed by signed votes with 3f+1 arithmetic. POL-12 shipped SCOPED — Byzantine quorum, not a replicated protocol; the caveat is on the requirement itself. Phase 6's OSS-01 (first tagged PyPI release) remains the sole open item across Phases 6-13; Phase 14 not started.
+last_updated: 2026-08-20
+last_activity: 2026-08-20
 progress:
   total_phases: 14
-  completed_phases: 8
-  total_plans: 49
-  completed_plans: 49
-  percent: 61
+  completed_phases: 12
+  total_plans: 70
+  completed_plans: 70
+  percent: 89
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-01)
 
 **Core value:** Every agent action is intercepted at runtime and returned an explainable, graduated decision grounded in policy + a human-readable constitution, with tamper-evident audit evidence — making unsafe agent behavior structurally impossible rather than merely unlikely.
-**Current focus:** Phase 10 — Gateway PEP, Second Adapter & Live Graph (not started). Phase 9 complete, pending PR.
+**Current focus:** Phase 14 — Self-Play, ZK Proofs, Decentralized Identity & Rust Hot Path (not started, and hard-gated on the P0/P1 substrate). Phases 9-13 complete; all pending PR.
 
 ## Current Position
 
-Phase: 9 COMPLETE (2026-08-11) — branch `phase-9-runtime-containment-consensus`, pending PR into `development`
-Plan: Phase 9 delivered as 6 slices covering all 6 requirements — 9a RUN-03 sandbox/quarantine, 9b RUN-04 privilege rings, 9c RUN-05 resource isolation, 9d RUN-06 circuit breakers, 9e RUN-07 emergency shutdown, 9f POL-09 2-of-3 consensus. Built via the superpowers workflow (spec -> per-slice plan -> subagent implement + two-stage adversarial review + fix + re-review).
-Status: Phases 1–5, 7, 8, 9 complete; Phase 6 ~5/6 (OSS-01 first PyPI release the sole open item). Phase 10 not started.
-Last activity: 2026-08-11
+Phase: 13 COMPLETE (2026-08-20) — branch `phase-10-gateway-adapter-graph` (Phases 11-13 continued there at the operator's request), pending PR into `development`
+Plan: Phase 11 delivered as 6 slices covering all 7 requirements — 11a AUD-06 Merkle audit, 11b ECON-01 cost attribution, 11c ECON-02 budget as policy, 11d ECON-03 GPU/downstream attribution, 11e CMP-04/05 EU AI Act + SOC 2, 11f CMP-06 evidence export. Built via the superpowers workflow (spec -> per-slice plan -> subagent implement + two-stage adversarial review + fix + re-review). EVERY slice came back NOT APPROVED on its first review pass; the findings were real and the reasoning is recorded in the commit messages.
+Status: Phases 1–5, 7–13 complete; Phase 6 ~5/6 (OSS-01 first PyPI release the sole open item). Phase 14 not started.
+Last activity: 2026-08-19
 
-Progress: [████████████] 8/14 phases fully done (1–5, 7, 8, 9) + Phase 6 ~5/6
+Progress: [████████████████] 12/14 phases fully done (1–5, 7–13) + Phase 6 ~5/6
 
 ## Performance Metrics
 
@@ -108,6 +108,38 @@ Recent decisions affecting current work:
 - [Phase 8]: [8g] MCP gateway quarantine is STICKY — a rug-pull can't un-poison by serving a clean manifest; only operator release lifts it. Note: `(?m)` inline-flag mid-regex is illegal on Python 3.11+ — use `re.MULTILINE`.
 - [Phase 8]: [8h] SEC-14 is ambiguity-gated (runs only when the deterministic SEC-12 tag is None) and STRICTLY advisory — a probabilistic match becomes an inferred_intent label + advisory risk finding (0.5, sandbox-at-most), NEVER a deterministic policy floor. Follows the POL-04 interpreter precedent: offline HashingEmbedder default (honest lexical proxy, NOT semantic) + pluggable real adapter behind the Embedder Protocol.
 
+- [Phase 9]: [9a] `sandbox` is CONTAINMENT, not an approval path — see the operator-visible behavior change under Blockers.
+
+- [Phase 10]: [10a] INT-07 gateway = a reverse proxy in front of the model/tool endpoint, so an agent in ANY language/framework is governed with no SDK in its process. The governed target IS the forwarded target — resolved once, decided on, then sent — because a proxy that decides on one URL and forwards another has no enforcement at all, only a log.
+- [Phase 10]: [10a] The gateway reuses `governed_call` rather than re-implementing outcomes, so a new PEP form can never drift from the SDK's allow/deny/sandbox/consensus semantics. Upstream faults propagate OUT of the governed callable (the 502 is built outside it) so RUN-06 circuit breakers still see the failure they exist to count.
+- [Phase 10]: [10b] INT-08 = OpenAI Agents SDK adapter, governing the arguments the tool BODY receives (post-parse), not a pre-normalization copy — governing a different value than the one that executes is the same TOCTOU class as 10a's target bug.
+- [Phase 10]: [10b] INT-06 coverage registry became `dict[ActionType, set[str]]` — with two adapters, a single owner per action type would have silently overwritten one PEP's claim and hidden a real gap behind a green check.
+- [Phase 10]: [10c] DISC-03 detection resolves against INSTALLED distributions (`importlib.metadata`), never a stray import name — a false positive puts a framework in the operator's inventory that is not there, which is worse than silence.
+- [Phase 10]: [10d/10e] Discovery output is BOUNDED with visible overflow (`<overflow>`), because every input is attacker-controlled: shadow identities come from unregistered callers and rogue components from caller-supplied manifests. Silent truncation would read as "nothing more to see"; overflow says otherwise.
+- [Phase 10]: [10e] DISC-05 separates "never declared anything" from "declared and exceeded" via observed-class provenance — without it, every agent that has not published a manifest floods the finding stream on first contact and the signal drowns.
+- [Phase 10]: [10f] DISC-06 builds only from IDENTITY-VERIFIED actions and advances a watermark (incremental, not a full rescan). The read returns a subgraph that is bounded AND closed — an edge is admitted only while both endpoints fit the node budget, since a view containing edges to absent nodes is wrong, not partial. **Lineage is CLAIMED, not proven:** `identity_verified` authenticates who ACTED, not that `parent_action_id` names a real delegation; closing that half needs the TRST-04 authority cross-check (Phase 13).
+
+- [Phase 11]: [11a] AUD-06 is ADDITIVE — an RFC-6962 tree over `record_hash` values the chain already holds. Replacing the chain would have invalidated the very evidence the phase exists to make provable. `verify_bundle` is what an auditor runs; `verify_inclusion` alone binds only a hash and must never be handed to one. A root proves INCLUSION, not COMPLETENESS: no root can testify that nothing was withheld before sealing (witness quorum, Phase 14).
+- [Phase 11]: [11a] The epoch row is attacker-writable, so the verifier measures it against the chain's own `merkle_epoch_sealed` announcement — and requires that announcement to be SIGNED, because appending is free and only signing is not. Deleting an epoch row is caught too: the chain still announces the epoch, so a missing row is a violation rather than a check that silently did not run.
+- [Phase 11]: [11b] Usage is REPORTED, never inferred. Unrecognized usage records NOTHING (not zero — "free" and "unknown" must not collapse), an unpriced model keeps its tokens with a null cost, and usage is refused from any result a provider did not vouch for: an untrusted tool/MCP result forged $1.25M onto one call in review. Money is integer micro-USD because 11c makes DECISIONS on the sum.
+- [Phase 11]: [11c] ECON-02's claim is proven by DELETING the principle and requiring the over-budget action to become an allow — if anything else still blocked, that would be the parallel enforcer the requirement forbids. Overshoot is bounded by what is IN FLIGHT, not by one action; the gate reads accumulated fact because a call's cost is unknowable before it returns. An agent with no budget row is NOT over budget: absence of a budget is not evidence of a breach.
+- [Phase 11]: [11d] Every GPU figure carries the label saying WHAT IT MEASURED (process | device_shared), and the label travels with the number into the audit body. A device-wide counter cannot be honestly divided among concurrent agents — this is Slice 9c's tracemalloc finding on different hardware. `provider` is the action's own target, never a vendor inferred from it, and it is the first roll-up key an AGENT chooses, so it is ordered by call volume rather than alphabetically.
+- [Phase 11]: [11e] EVIDENCE, NEVER CONFORMITY (D-8). Risk classification is operator-declared because the same agent is high-risk in a hiring pipeline and minimal-risk summarizing notes — guessing harms in both directions. Every citation was verified against primary sources (EUR-Lex consolidated OJ; the AICPA TSP 100 PDF) and anything unverifiable was DROPPED. Every "Art." in a section — key or list value — requires the disclaimer in that same section; the earlier key-only guard had a documented blind spot and something was duly threaded through it.
+- [Phase 11]: [11f] CMP-06 is the payoff: a bundle verifiable STANDALONE against an anchored root, so an auditor gets the records they are entitled to and learns nothing about the rest. Its counters say what was actually CHECKED (records_anchor_verified, records_externally_anchored, records_signature_verified) rather than what was promised — the HTTP route holds no public key, so it checks no signatures, and the artifact now says so instead of claiming otherwise.
+
+- [Phase 12]: [12a] A rate is a lossy summary of two numbers and the lost one says whether to believe it, so counts are stored and `n` travels with every rate a caller can obtain. An empty history is an empty trend, never 0.0 — that is the claim "every attack was blocked".
+- [Phase 12]: [12b] Validation ASKS the guard, it never ATTACKS through it. Every probe goes through evaluate() and nothing invokes a handler: an executing probe on a timer, against a deployment whose guard has a hole, would PERFORM the exfiltration it was checking for. The review also found the loop would trip the validated agent's own breaker and floor its reputation — the health check taking the patient offline, more reliably the better the guard is — so the probe identity is now a separate required principal.
+- [Phase 12]: [12c] Campaign steps share one conversation_id, which is the key the SEC-13 correlator windows on; without it a campaign silently degrades into N single-shot probes that merely run in order. The score is the STEP it was blocked at, because "blocked" collapses the opening move being caught with four hostile actions having already run.
+- [Phase 12]: [12d] Health is a READ over facts already recorded — a health writer would be a second source that can disagree with the audit log, discovered while diagnosing an incident. Idle is not dead (a timestamp, no verdict) and a governance deny is not an error (counted apart, with the denominator named): folding them makes the best-governed agent look like the sickest and the operator's fix is to loosen the guard.
+- [Phase 12]: [12e] AUD-09 joins at query time with NO separate graph database, and an iterative walk rather than a recursive CTE — both backends support WITH RECURSIVE but the JSON extraction differs, and a query that works on SQLite and breaks on Postgres is worse than an honest loop. parent_action_id is caller-supplied, so a cycle is assertable and an unbounded walk hangs the tool an operator reaches for DURING an incident. Lineage is CLAIMED, not proven, and every chain says so in its payload (TRST-04 cross-check is Phase 13).
+- [Phase 12]: [12f] A template is where a carefully-qualified number gets reduced to a percentage, so the dashboard tests assert the RENDERED page: the failure rate with its denominator, no liveness verdict, "n/a" rather than 0% for unmeasured, and "no validation runs yet" rather than 0%. Graph layout is deterministic so a refresh cannot be mistaken for a topology change.
+
+- [Phase 13]: [13a] POL-10's ratification step is only meaningful if a PENDING amendment changes nothing, so that is asserted at both the storage and HTTP layers. An agent may propose (its own route) and only a human may ratify (a separate one) — POL-13's recommend-never-grant rule applied to the governing document. Deliberately did NOT rebuild versioning: ConstitutionResource was already append-only with a unique content-hash version, so the slice added provenance + history rather than a second source of truth about what the constitution said. Stores the WHOLE proposed document, not a diff, because a diff resolves against the text at RATIFICATION time and what a human ratified would not be what took effect.
+- [Phase 13]: [13b] POL-11 folds TRST-04's own intersect_scope along the chain — reused, not reimplemented, so one-hop and many-hop rules cannot drift. NEVER a union: that would let a chain manufacture a capability nobody in it held. Tested over 30 random chains, and the mutation proves the property earns its keep — a union fails 43 of 51 tests where an example test catches nothing. It REPORTS and never denies (asserted structurally: no Outcome, no GovernanceDenied, no raise in the module), because an engine deciding on its own authority would be a second enforcer beside the constitution.
+- [Phase 13]: [13b] `unauthorized_lineage` is how far Phase 12's claimed-lineage gap can honestly close: NOT CORROBORATED, not false. The TRST-04 ledger is in-process, non-persistent and FIFO-evicted by its own documentation, so an absent entry is routine rather than evidence — "unverified" and "false" are different accusations and a test asserts which one is made.
+- [Phase 13]: [13c] POL-12 shipped SCOPED and the caveat lives on the requirement, not in a commit message. Signed votes bind the action AND the outcome (without the latter, approval of a `sandbox` replays as approval of an `allow` — the voter agreed to containment, not execution); 3f+1 arithmetic is refused at CONSTRUCTION when below threshold; equivocation VOIDS a voter rather than last-write-wins handing one liar the outcome; the certificate verifies as a pure function. Votes are NOT verified through audit.verify_record_signature — that prepends the AUDIT domain, and borrowing it would put votes and audit records in one signing domain with the same key often signing both.
+- [Phase 13]: [13c] It also made an existing default honest: POL-09's shipped 2-of-3 survives one voter being DOWN, not one voter LYING, and `byzantine_tolerance(3) == 0` says so rather than rounding up.
+
 ### Pending Todos
 
 [From .planning/todos/pending/ — ideas captured during sessions]
@@ -117,6 +149,15 @@ None yet.
 ### Blockers/Concerns
 
 [Issues that affect future work]
+
+- **POL-12 is scoped, and the remainder is real open work.** A genuine replicated consensus protocol (PBFT/Tendermint/HotStuff — leader election, view change, partition liveness) was NOT built, because it needs a network consensus layer and multi-node partition testing that do not exist here (D-14). What ships is Byzantine-tolerant quorum arithmetic over authenticated votes. The caveat is recorded on the POL-12 requirement and in the roadmap, and a test keeps the module from over-claiming — but anyone reading "BFT consensus backs require_consensus" in the requirement title should read the note under it.
+
+- **Two guards shipped with tests that could not fail, both caught by mutation rather than by review (Phase 12).** 12f's dangling-edge probe seeded 5 agents and never reached the 60-node page budget; its health probe asserted a percentage the fixture cannot produce. Both passed against the mutant. The lesson is now house practice: a security or honesty guard is not done until a mutant of it turns the suite red.
+- **The harness OOMs (`0xC0000409`) under this workflow, and a crash leaves live pytest processes behind.** Two orphans (one at 144s CPU) inflated the suite from 94s to 379s and manufactured 20 failures + 43 errors that looked like a broken `api.py` — nothing was wrong with it. After any crash: `Get-Process python*`, kill, then re-run before trusting a timing-sensitive result. Mitigation on the harness side is `NODE_OPTIONS=--max-old-space-size=8192`; on the agent side, one workflow at a time rather than parallel waves.
+
+- **Undeclared package dependency (pre-existing since Phase 9, found independently by two Phase-11 reviewers):** `packages/controlplane/src/agentos_controlplane/resource_governor.py` imports `agentos_sdk.enforce.ResourceLimits` while `packages/controlplane/pyproject.toml` declares only `agentos-contract`. So "the control plane cannot import from the SDK" is a convention, not a fact, and the control plane is not installable standalone. Phase 11 added no new edge (its `Usage` went to `agentos-contract`, the seam both sides already share). Left alone deliberately as out of scope, but it should be tracked and closed.
+- **Phase 11 carry-overs, disclosed rather than silently deferred:** `BudgetReconciler` is wired by no composition root (this repo has none — the Phase-7 reconcilers are operator-wired too), so a multi-process deployment gets no budget convergence until an operator builds the loop. `MerkleSealer.seal()` likewise has no scheduled caller, so the epoch table stays empty and `/audit/disclose` 404s until an operator drives it. The evidence-export route passes no operator public key, so its self-verification checks no signatures — reported honestly as `records_signature_verified: 0` rather than hidden behind a green `chain_verifies`.
+- **Postgres remains unverified for Phases 9-11 (D-14, no Docker on this machine).** Migrations 0023-0027 were applied and reverted on SQLite only. Two Phase-11 findings were specifically Postgres-shaped and unobservable locally: a VARCHAR length SQLite does not enforce, and tied-`recorded_at` paging that SQLite happens to order by rowid.
 
 - **OPERATOR-VISIBLE BEHAVIOR CHANGE (Phase 9, Slice 9a — RUN-03): mid-risk actions are no longer approvable.** `sandbox` used to be substituted onto the approval path, so a mid-risk action parked for a human, could be approved, and then executed. It is now enforced through the new `SandboxRunner` seam: the real handler is NEVER awaited, so the action is contained rather than approvable. **Any deployment that wires a coordinator but not a sandbox runner must add one** — `GovernanceMiddleware(pipeline, token, sandbox=QuarantineSandbox(session_factory, audit))` — or every `sandbox` outcome (the default band above `sandbox_at=0.4`, plus every `allow` hardened by low trust) fails closed as a hard `Blocked by agentos-guard` with no approval request and no `sandbox_run` containment record. Wiring shown in `packages/sdk/README.md` and run end-to-end by `agentos_sdk.quickstart`. Contained outcomes now also return `ToolMessage(status="error")`, so a consumer branching on LangChain's tool-failure convention no longer reads a quarantine as a success.
 - **EU AI Act clock (hard external date):** high-risk obligations bind **2026-08-02**. CMP-03 (minimal Art. 12/26 evidence claim) is **delivered** (PR #16 — `agentos_controlplane.compliance.export_compliance_evidence` + CLI). Resolved.

@@ -31,10 +31,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 7: Trust, Reputation & Identity Hardening** - Longitudinal reputation, bounded delegation trust chains, agent certificates, and reconciliation loops (completed 2026-07-17)
 - [x] **Phase 8: Full Security Engine & MCP Gateway** - Data-exfil, secret-leakage, tool-poisoning, supply-chain, plus the ASI05/06/07 gap detectors and an MCP security gateway (completed 2026-07-17)
 - [x] **Phase 9: Runtime Containment & Consensus** - Sandbox execution, privilege rings, resource isolation, circuit breakers, emergency shutdown, and 2-of-3 multi-agent consensus
-- [ ] **Phase 10: Gateway PEP, Second Adapter & Live Graph** - Framework-agnostic gateway PEP, a second framework adapter, framework/shadow/rogue discovery, and the live agent graph
-- [ ] **Phase 11: Merkle Audit, Economics, ABOM & Compliance Export** - Merkle DAG audit upgrade, cost/budget governance, Agent Bill of Materials, and one-click EU AI Act + SOC 2 evidence export
-- [ ] **Phase 12: Continuous Adversarial Validation & Rich Dashboard** - Attack-success-rate tracking, scheduled continuous validation, multi-step campaigns, health monitoring, and the rich SLO/graph/attack dashboard
-- [ ] **Phase 13: Constitution Amendments & Conflict Reasoning** - Proposable/ratifiable Constitution amendments, cross-agent transitive-permission conflict resolution, and BFT-backed consensus
+- [x] **Phase 10: Gateway PEP, Second Adapter & Live Graph** - Framework-agnostic gateway PEP, a second framework adapter, framework/shadow/rogue discovery, and the live agent graph (completed 2026-08-18)
+- [x] **Phase 11: Merkle Audit, Economics & Compliance Export** - Merkle DAG audit upgrade with inclusion proofs, cost/budget governance through the graduated engine, and one-click EU AI Act + SOC 2 evidence export (completed 2026-08-19)
+- [x] **Phase 12: Continuous Adversarial Validation & Rich Dashboard** - Attack-success-rate tracking, scheduled continuous validation, multi-step campaigns, health monitoring, the query-time evidence graph, and the rich SLO/graph/attack dashboard (completed 2026-08-19)
+- [x] **Phase 13: Constitution Amendments & Conflict Reasoning** - Proposable/ratifiable Constitution amendments, cross-agent transitive-permission conflict resolution, and Byzantine-tolerant quorum (signed votes + 3f+1 + certificates; NOT a replicated protocol — see POL-12's note) (completed 2026-08-20)
 - [ ] **Phase 14: Self-Play, ZK Proofs, Decentralized Identity & Rust Hot Path** - Continuous self-play + runtime patching + threat intel, zero-knowledge compliance proofs, SPIFFE/mTLS + portable reputation (optional pluggable backend, ADR-0007), K8s sidecar/operator, ROI/ABOM impact analysis, and the profile-driven Rust rewrite
 
 ## Phase Details
@@ -204,9 +204,15 @@ still dated 2026-06-10); do it before Phase 7 planning.
   1. A framework-agnostic network gateway/proxy PEP intercepts actions with no SDK changes, behind the same `evaluate(AgentAction) -> Decision` contract, and at least one additional framework adapter (e.g. CrewAI or OpenAI Agents SDK) intercepts actions.
   2. Framework discovery detects LangChain/LangGraph, CrewAI, AutoGen, OpenAI Agents SDK, MCP, etc.; shadow-agent detection flags agents acting without registration; rogue-agent detection flags agents diverging from declared scope.
   3. A live agent graph materializes agents/tools/MCP/models/memories and delegation edges, with lineage derived from `parent_action_id`.
-**Plans**: TBD
+**Plans**: 6 slices (superpowers workflow; spec `docs/superpowers/specs/2026-08-11-phase-10-gateway-adapter-graph-design.md`)
+- [x] 10a — gateway PEP (INT-07): a `agentos-gateway` reverse proxy that governs traffic with no SDK in the agent process, normalizing HTTP into the same `AgentAction` and enforcing through the one `governed_call` outcome map; the governed target is the forwarded target (no TOCTOU between what was decided and what was sent)
+- [x] 10b — OpenAI Agents SDK adapter (INT-08): a second real framework intercepted at the tool boundary, governing the arguments the tool body actually receives rather than a pre-normalization copy; INT-06 coverage becomes a set per action type so two adapters can both claim a type
+- [x] 10c — framework discovery (DISC-03): evidence-based detection from INSTALLED distributions (`importlib.metadata`), persisted + audited idempotently so a scheduled scan cannot bloat the chain — no guessing, so the inventory is true
+- [x] 10d — shadow agents (DISC-04): agents acting without registration, detected from audit evidence with a bounded, overflow-visible identity space so an unregistered caller cannot mint unbounded rows
+- [x] 10e — rogue agents (DISC-05): divergence from DECLARED scope, with observed-class provenance separating "never declared" from "declared and exceeded" so the finding stream stays true rather than flooding on first contact
+- [x] 10f — live agent graph (DISC-06): agents/tools/MCP/models/memories plus delegation edges from `parent_action_id`, built incrementally from a watermark over IDENTITY-VERIFIED actions only, and read back as a bounded AND closed subgraph (lineage is honestly labelled CLAIMED — the TRST-04 authority cross-check is Phase-13 work)
 
-### Phase 11: Merkle Audit, Economics, ABOM & Compliance Export
+### Phase 11: Merkle Audit, Economics & Compliance Export
 **Goal**: Upgrade audit to a Merkle DAG, govern cost/budget as policy through the existing graduated-response engine, and produce exportable EU AI Act + SOC 2 evidence bundles.
 **Mode:** mvp
 **Depends on**: Phase 10
@@ -215,7 +221,18 @@ still dated 2026-06-10); do it before Phase 7 planning.
   1. The hash chain is upgraded to a Merkle DAG enabling inclusion proofs and partial disclosure.
   2. Token/API/GPU cost is attributed to each agent/action, and token/budget limits are expressed as policy so over-budget actions are denied or escalated by the graduated-response engine (no parallel budget enforcer).
   3. A full EU AI Act mapping and SOC 2 control evidence are derived from the audit log, and a one-click export produces evidence bundles per framework and time range.
-**Plans**: TBD
+
+> The phase title previously read "ABOM". That was stale: ABOM-01/02 shipped in Phase 8 and ABOM-03
+> is Phase 14, so this phase's requirement set contains no ABOM item. Corrected at close-out rather
+> than honored by inventing scope to match it.
+
+**Plans**: 6 slices (superpowers workflow; spec `docs/superpowers/specs/2026-08-18-phase-11-merkle-economics-compliance-design.md`)
+- [x] 11a — Merkle DAG, inclusion proofs, partial disclosure (AUD-06): an RFC-6962 tree over the existing `record_hash` leaves, so the chain is untouched and the tree is additive; epochs are contiguous and anchored, and `verify_bundle` — not `verify_inclusion` — is what an auditor runs. A root proves INCLUSION, never completeness
+- [x] 11b — cost attribution (ECON-01): usage is REPORTED, never inferred; unrecognized usage records nothing rather than zero, an unpriced model keeps its tokens with a null cost, and usage is refused from any result a provider did not vouch for
+- [x] 11c — budget as policy (ECON-02): spend enters as policy input and the CONSTITUTION denies or escalates — proven by deleting the principle and requiring the block to disappear. Overshoot is bounded by what is in flight, and that bound is asserted rather than claimed
+- [x] 11d — GPU & downstream attribution (ECON-03): capability-gated NVML behind the RUN-05 precedent, every GPU figure carrying the label saying what it measured, and `provider` taken from the action's own target — never a vendor inferred from it
+- [x] 11e — EU AI Act mapping + SOC 2 evidence (CMP-04/05): eleven articles and three criteria, every citation verified against primary sources and anything unverifiable dropped. Risk classification is operator-declared; the bundle emits evidence and never conformity
+- [x] 11f — one-click evidence export (CMP-06): per framework and per time range, verifiable STANDALONE against an anchored root — the payoff for 11a, and what makes the artifact evidence rather than an extract
 
 ### Phase 12: Continuous Adversarial Validation & Rich Dashboard
 **Goal**: Move red-team from one-shot CI to continuous validation with trend tracking and campaign-style attacks, backed by health monitoring, conversation tracing, and a rich operator dashboard.
@@ -226,7 +243,13 @@ still dated 2026-06-10); do it before Phase 7 planning.
   1. Attack-success-rate is tracked over time per agent/attack class, continuous validation re-runs suites against the live agent on a schedule, and multi-step adversarial simulations run campaign-style attacks.
   2. Agent health monitoring tracks liveness/error-rate/circuit-breaker state per agent, and conversation tracing reconstructs a full conversation across tools and delegations over a forensic evidence graph that joins the audit log with the materialized agent graph at query time — no separate graph DB (AUD-09).
   3. The dashboard adds the live agent graph, per-agent SLOs/violations, and attack visualization.
-**Plans**: TBD
+**Plans**: 6 slices (superpowers workflow; spec `docs/superpowers/specs/2026-08-19-phase-12-validation-forensics-dashboard-design.md`)
+- [x] 12a — attack-success-rate over time (TEST-07): counts stored and the rate derived, so `n` travels with every rate a caller can obtain — 1-of-2 and 250-of-500 are both "50%" and are not the same claim. Attack classes never average together, and an empty history is an empty trend rather than 0.0
+- [x] 12b — continuous validation on a schedule (TEST-08): re-runs the corpus against the LIVE decision path under the existing reconciler loop. The review caught that a pass would trip the validated agent's own breaker and floor its reputation — the health check taking the patient offline, on a timer, more reliably the better the guard is
+- [x] 12c — campaign-style multi-step attacks (TEST-09): steps share one `conversation_id` so the SEC-13 correlator actually sees a sequence, and the score is the STEP a campaign was blocked at — stopped at the opening move and stopped after four hostile actions are both "blocked", and only one is good news
+- [x] 12d — agent health (OBS-04): a READ over facts already recorded. Liveness is a timestamp with no verdict key at all, and a governance block is counted apart from an execution failure — folding them makes the best-governed agent look like the sickest, and the fix an operator reaches for is to loosen the guard
+- [x] 12e — evidence graph & conversation tracing (AUD-09, OBS-05): a bounded, cycle-safe walk at query time with no separate graph database, ordered by hash-covered `seq`. Every chain carries the qualifier that lineage is CLAIMED, not proven
+- [x] 12f — rich dashboard (OBS-06, DASH-04): live graph, per-agent SLOs and attack trends, server-rendered with no CDN. The tests assert the RENDERED page, because a template is where a carefully-qualified number gets reduced to a percentage
 **UI hint**: yes
 
 ### Phase 13: Constitution Amendments & Conflict Reasoning
@@ -238,7 +261,20 @@ still dated 2026-06-10); do it before Phase 7 planning.
   1. Agents (or the self-play trainer) can propose Constitution amendments; humans review and ratify; the Constitution is versioned like a legal document.
   2. A conflict-resolution engine computes transitive permissions across delegation chains and flags emergent capability conflicts.
   3. BFT consensus backs multi-agent agreement for `require_consensus` at scale.
-**Plans**: TBD
+
+> **Success criterion 3 shipped SCOPED, and the scope is on the requirement.** POL-12 delivers the
+> Byzantine-tolerant properties that are real at this scale — signed votes, 3f+1 arithmetic,
+> equivocation detection, offline-verifiable certificates — and explicitly NOT a replicated state
+> machine (no leader, no view change, no partition liveness). A genuine PBFT needs a network
+> consensus layer and multi-node partition testing, neither of which exists in this project (D-14);
+> one built without them would have passed single-process tests and never survived a partition, and
+> the NAME would have promised a guarantee nothing verified. Recorded rather than quietly rounded up,
+> and a test keeps the module from over-claiming. A real replicated protocol remains open work.
+
+**Plans**: 3 slices (spec `docs/superpowers/specs/2026-08-19-phase-13-amendments-conflicts-bft-design.md`)
+- [x] 13a — constitution amendments (POL-10): agents propose, humans ratify, and a pending proposal changes nothing — asserted, because otherwise the ratification step is decorative and an agent could rewrite the rules governing it. Deliberately did NOT rebuild versioning: the constitution table was already append-only, so this added the missing provenance and history instead of a second source of truth
+- [x] 13b — transitive permission closure & conflict findings (POL-11): folds TRST-04's own intersect_scope along the chain, never a union — tested over 30 random chains, and turning the fold into a union fails 43 of 51 tests. Reports, never denies. `unauthorized_lineage` closes Phase 12's claimed-lineage gap as far as it honestly can: NOT CORROBORATED, which is weaker than false
+- [x] 13c — Byzantine-tolerant quorum (POL-12, scoped): signed votes binding action AND outcome, 3f+1 arithmetic refused at construction when below threshold, equivocation that voids a voter, and a pure-function certificate. Substitutes into the Phase-9 consensus seam, so the enforcement path is untouched
 
 ### Phase 14: Self-Play, ZK Proofs, Decentralized Identity & Rust Hot Path
 **Goal**: Deliver the hard-gated moonshot layer — continuous adversarial self-play with ratifiable patches, zero-knowledge compliance proofs, SPIFFE/mTLS + portable reputation (optional pluggable backend, no required crypto-economics — ADR-0007), a K8s data plane, deeper analytics, and a profile-driven Rust hot path.

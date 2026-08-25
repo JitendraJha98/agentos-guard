@@ -22,6 +22,7 @@ from agentos_contract.policy_io import (
     select_floor,
 )
 from agentos_contract.risk import RiskFinding, RiskScorer
+from agentos_contract.usage import Usage
 
 __all__ = [
     "ActionContext",
@@ -42,4 +43,5 @@ __all__ = [
     "RiskFinding",
     "RiskScorer",
     "select_floor",
+    "Usage",
 ]

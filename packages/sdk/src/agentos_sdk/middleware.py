@@ -39,6 +39,7 @@ from agentos_sdk.enforce import (
     ApprovalCoordinator,
     CircuitReporter,
     ConsensusCoordinator,
+    CostMeter,
     GovernanceDenied,
     ResourceGovernor,
     SandboxRunner,
@@ -70,6 +71,8 @@ class GovernanceMiddleware(AgentMiddleware):
         consensus: ConsensusCoordinator | None = None,
         governor: ResourceGovernor | None = None,
         reporter: CircuitReporter | None = None,
+        # ECON-01: appended LAST so no existing caller shifts.
+        meter: CostMeter | None = None,
     ) -> None:
         self._pipeline = pipeline  # the in-process PDP (D-07); satisfies PipelineProtocol
         self._token = token        # the agent's signed JWT (from registration, IDN-01)
@@ -79,6 +82,7 @@ class GovernanceMiddleware(AgentMiddleware):
         self._consensus = consensus  # POL-09 quorum seam (None = require_consensus fails closed)
         self._governor = governor  # RUN-05 per-agent execution budgets (None = unbudgeted)
         self._reporter = reporter  # RUN-06 breaker signal sink for EXECUTION errors (None = off)
+        self._meter = meter  # ECON-01 cost attribution (None = not metered)
 
     async def awrap_tool_call(self, request: ToolCallRequest, handler):
         """Async PEP hook (langchain 1.3.2). The map decides; a block returns a
@@ -95,6 +99,7 @@ class GovernanceMiddleware(AgentMiddleware):
                 consensus=self._consensus,
                 governor=self._governor,
                 reporter=self._reporter,
+                meter=self._meter,
             )
         except GovernanceDenied as denied:
             # The core refused: on a deny/quarantine/network budget the handler was
@@ -129,6 +134,7 @@ class GovernanceMiddleware(AgentMiddleware):
                 consensus=self._consensus,
                 governor=self._governor,
                 reporter=self._reporter,
+                meter=self._meter,
             )
         except GovernanceDenied as denied:
             return AIMessage(content=str(denied))

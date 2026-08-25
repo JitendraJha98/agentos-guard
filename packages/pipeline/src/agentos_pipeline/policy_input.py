@@ -14,6 +14,7 @@ correlator populates it.
 
 from __future__ import annotations
 
+from typing import Protocol
 from urllib.parse import urlsplit
 
 from agentos_contract import ActionType, AgentAction
@@ -34,10 +35,20 @@ def _host(action: AgentAction) -> str:
     return urlsplit(url).hostname or ""
 
 
+class CostPostureLike(Protocol):
+    """ECON-02: the accumulated-spend reading, typed structurally so this package keeps its single
+    internal dependency on `agentos-contract` and never imports the control plane. The concrete
+    object is `agentos_controlplane.budget.CostPosture`."""
+
+    spend_usd: float
+    budget_used_ratio: float
+
+
 def build_policy_input(
     action: AgentAction,
     enrichment: Enrichment,
     sequence_matched_refs: tuple[str, ...] = (),
+    cost: CostPostureLike | None = None,
 ) -> dict:
     """Emit the complete D4 policy-input document for one action."""
     payload = action.payload or {}
@@ -52,6 +63,14 @@ def build_policy_input(
         # SEC-13: the SequenceCorrelator's matches — compiled membership rules
         # turn these refs into REAL fired principles (deterministic floor).
         "sequence": {"matched_refs": list(sequence_matched_refs)},
+        # ECON-02: accumulated spend, so a principle can gate on budget through the SAME floor
+        # machinery as everything else. An absent ledger emits zeros, which is "no budget
+        # configured", never "over budget": a deployment that has not opted into budgets must not
+        # be denied by the mere presence of the fields.
+        "cost": {
+            "spend_usd": float(cost.spend_usd) if cost is not None else 0.0,
+            "budget_used_ratio": float(cost.budget_used_ratio) if cost is not None else 0.0,
+        },
     }
     if action.type is ActionType.tool_call:
         doc["egress"] = {"host": _host(action)}

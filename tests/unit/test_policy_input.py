@@ -16,6 +16,9 @@ _BASE_GUARDRAILS = {
     "pii": False, "unsafe": False, "format": False, "secret": False,
     "exfiltration": False, "code_exec": False, "memory_poison": False,
 }
+# ECON-02: with no ledger wired the cost section is zeros — "no budget configured",
+# which is not "over budget". Every action type carries it (scope "all").
+_NO_BUDGET = {"spend_usd": 0.0, "budget_used_ratio": 0.0}
 
 
 def _act(type_: ActionType, target: str, payload: dict | None = None) -> AgentAction:
@@ -29,7 +32,7 @@ def test_tool_call_input_complete_and_fail_closed() -> None:
     assert doc == {
         "type": "tool_call", "target": "http_get",
         "intent": {"class": ""}, "guardrails": _BASE_GUARDRAILS,
-        "sequence": {"matched_refs": []},
+        "sequence": {"matched_refs": []}, "cost": _NO_BUDGET,
         "egress": {"host": "api.example.com"},
     }
 
@@ -50,7 +53,7 @@ def test_memory_access_input_with_defaults() -> None:
     assert doc == {
         "type": "memory_access", "target": "memory:read",
         "intent": {"class": ""}, "guardrails": _BASE_GUARDRAILS,
-        "sequence": {"matched_refs": []},
+        "sequence": {"matched_refs": []}, "cost": _NO_BUDGET,
         "memory": {"operation": "read", "key": ""},   # absent key -> "" default
     }
 
@@ -62,7 +65,7 @@ def test_mcp_call_input_emits_mcp_and_egress_sections() -> None:
     assert doc == {
         "type": "mcp_call", "target": "github:list_issues",
         "intent": {"class": ""}, "guardrails": _BASE_GUARDRAILS,
-        "sequence": {"matched_refs": []},
+        "sequence": {"matched_refs": []}, "cost": _NO_BUDGET,
         "mcp": {"server": "github", "tool": "list_issues"},
         "egress": {"host": ""},   # no url in payload -> fail-closed empty host
     }
@@ -80,7 +83,7 @@ def test_delegation_input() -> None:
     assert doc == {
         "type": "delegation", "target": "worker",
         "intent": {"class": ""}, "guardrails": _BASE_GUARDRAILS,
-        "sequence": {"matched_refs": []},
+        "sequence": {"matched_refs": []}, "cost": _NO_BUDGET,
         "delegation": {"to_agent": "worker"},
     }
 
@@ -92,7 +95,7 @@ def test_model_invocation_input() -> None:
     assert doc == {
         "type": "model_invocation", "target": "claude-opus-4-8",
         "intent": {"class": ""}, "guardrails": _BASE_GUARDRAILS,
-        "sequence": {"matched_refs": []},
+        "sequence": {"matched_refs": []}, "cost": _NO_BUDGET,
         "model": {"name": "claude-opus-4-8"},
     }
 
@@ -127,3 +130,32 @@ def test_builder_emits_exactly_the_registry_fields_for_every_type() -> None:
             if scope == "all" or type_.value in scope
         }
         assert emitted == applicable, f"registry/builder drift for {type_.value}"
+
+
+def test_an_absent_ledger_reads_as_no_budget_not_as_over_budget() -> None:
+    """ECON-02: a deployment that never wired a ledger must not have every action denied by the mere
+    presence of the fields. Absence of a budget is not evidence of a breach."""
+    a = _act(ActionType.tool_call, "http_get", {})
+    assert build_policy_input(a, enrich(a), cost=None)["cost"] == _NO_BUDGET
+
+
+def test_cost_is_emitted_for_every_action_type() -> None:
+    """`cost.*` is registered for "all", so it is not a model-invocation-only field: a runaway agent
+    burns its budget through tool and MCP calls just as readily."""
+    for type_ in ActionType:
+        a = _act(type_, "t", {})
+        assert build_policy_input(a, enrich(a))["cost"] == _NO_BUDGET
+
+
+def test_a_supplied_posture_reaches_the_document_verbatim() -> None:
+    """The value a principle compares against is the ledger's, not a re-derivation: a builder that
+    rounded or rescaled here would move the budget boundary invisibly."""
+
+    class _Posture:
+        spend_usd = 2.5
+        budget_used_ratio = 0.25
+
+    a = _act(ActionType.model_invocation, "chat", {})
+    doc = build_policy_input(a, enrich(a), cost=_Posture())
+
+    assert doc["cost"] == {"spend_usd": 2.5, "budget_used_ratio": 0.25}

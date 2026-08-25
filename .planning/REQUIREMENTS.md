@@ -17,8 +17,8 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **INT-04** [P0]: MCP-server calls are intercepted and normalized into an `AgentAction`
 - [x] **INT-05** [P0]: Agent-to-agent delegation is intercepted and normalized into an `AgentAction` with `parent_action_id` lineage
 - [x] **INT-06** [P0]: An interception-coverage check verifies all five action types are hooked and detects un-instrumented paths (no silent gaps)
-- [ ] **INT-07** [P1]: A framework-agnostic network gateway/proxy PEP intercepts actions without SDK changes, behind the same pipeline contract
-- [ ] **INT-08** [P1]: At least one additional framework adapter (e.g. CrewAI or OpenAI Agents SDK) intercepts actions
+- [x] **INT-07** [P1]: A framework-agnostic network gateway/proxy PEP intercepts actions without SDK changes, behind the same pipeline contract
+- [x] **INT-08** [P1]: At least one additional framework adapter (e.g. CrewAI or OpenAI Agents SDK) intercepts actions
 - [ ] **INT-09** [P2]: A Kubernetes sidecar/operator PEP intercepts at the network layer behind the same contract
 
 ### Decision Pipeline
@@ -44,9 +44,10 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **POL-07** [P0]: A `require_approval` outcome parks an `ApprovalRequest` with full action context, fired principles, and risk/trust scores; the action blocks until resolved or times out to a safe default
 - [x] **POL-08** [P0]: Every `Decision` records the exact Constitution/Policy version that evaluated the action
 - [x] **POL-09** [P1]: A `require_consensus` outcome requires 2-of-3 agent agreement before the action proceeds
-- [ ] **POL-10** [P2]: Agents or the self-play trainer can propose Constitution amendments; humans review and ratify; the Constitution is versioned like a legal document
-- [ ] **POL-11** [P2]: A conflict-resolution engine computes transitive permissions across delegation chains and flags emergent capability conflicts
-- [ ] **POL-12** [P2]: BFT consensus backs multi-agent agreement for `require_consensus` at scale
+- [x] **POL-10** [P2]: Agents or the self-play trainer can propose Constitution amendments; humans review and ratify; the Constitution is versioned like a legal document
+- [x] **POL-11** [P2]: A conflict-resolution engine computes transitive permissions across delegation chains and flags emergent capability conflicts
+- [x] **POL-12** [P2]: BFT consensus backs multi-agent agreement for `require_consensus` at scale
+  - **Scoped, and narrower than the words suggest.** Shipped: signed votes (a ballot cannot be forged or replayed onto another action *or outcome*), 3f+1 Byzantine quorum arithmetic, equivocation detection that voids a voter, and a quorum certificate verifiable offline. **NOT shipped: a replicated state machine** — no leader, no view change, no liveness guarantee under partition, no PBFT/Tendermint/HotStuff. A real protocol needs a network consensus layer and multi-node partition testing, neither of which exists here (D-14); one built without them would pass single-process tests and have never survived a partition, which is worse than this because the NAME would promise a guarantee nothing verified. Enforced by a test that scans the module docstring for the disclaimers and for over-claims. A genuine replicated protocol remains open work.
 - [x] **POL-13** [P0]: A `temporary_exception` outcome grants a **human-ratified, time-boxed** `allow` (carries `expires_at`) that auto-revokes on expiry; the semantic interpreter may recommend but can never grant one (upholds POL-05's policy-floor invariant)
 - [x] **POL-14** [P0]: A `governance_review` outcome lets the action proceed while opening an **asynchronous, non-blocking** governance review (distinct from `require_approval`, which blocks)
 
@@ -96,10 +97,10 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 
 - [x] **DISC-01** [P0]: Agents self-register via the SDK and appear in an authoritative agent inventory
 - [x] **DISC-02** [P0]: The inventory tracks known agents, tools, prompts, and memories
-- [ ] **DISC-03** [P1]: Framework discovery detects LangChain/LangGraph, CrewAI, AutoGen, OpenAI Agents SDK, MCP, etc.
-- [ ] **DISC-04** [P1]: Shadow-agent detection flags agents acting without registration
-- [ ] **DISC-05** [P1]: Rogue-agent detection flags agents diverging from declared scope
-- [ ] **DISC-06** [P1]: A live agent graph materializes agents/tools/MCP/models/memories and delegation edges; lineage derives from `parent_action_id`
+- [x] **DISC-03** [P1]: Framework discovery detects LangChain/LangGraph, CrewAI, AutoGen, OpenAI Agents SDK, MCP, etc.
+- [x] **DISC-04** [P1]: Shadow-agent detection flags agents acting without registration
+- [x] **DISC-05** [P1]: Rogue-agent detection flags agents diverging from declared scope
+- [x] **DISC-06** [P1]: A live agent graph materializes agents/tools/MCP/models/memories and delegation edges; lineage derives from `parent_action_id`
 
 ### Audit
 
@@ -108,19 +109,19 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **AUD-03** [P0]: Each `AuditRecord` carries the exact policy/constitution version (policy evidence)
 - [x] **AUD-04** [P0]: Sensitive payloads are redacted at write time per policy; redaction fails closed (no write if redaction fails)
 - [x] **AUD-05** [P0]: A verifier (runnable in CI) detects any retroactive edit by re-validating the hash chain; chain checkpoints are externally anchored/signed
-- [ ] **AUD-06** [P1]: The hash chain is upgraded to a Merkle DAG enabling inclusion proofs and partial disclosure
+- [x] **AUD-06** [P1]: The hash chain is upgraded to a Merkle DAG enabling inclusion proofs and partial disclosure
 - [ ] **AUD-07** [P2]: Zero-knowledge compliance proofs prove properties (e.g. "no PII exfiltrated") without revealing underlying data
 - [x] **AUD-08** [P0]: Each `AuditRecord` carries a detached per-record EdDSA signature (reusing identity keys) so a single record verifies independently of the chain — proving the control plane authored that decision
-- [ ] **AUD-09** [P1]: A forensic "evidence graph" reconstructs causal chains by joining the audit log with the materialized agent graph at query time (`parent_action_id`/`conversation_id`/`trace_id`, Postgres recursive CTEs) — no separate graph database
+- [x] **AUD-09** [P1]: A forensic "evidence graph" reconstructs causal chains by joining the audit log with the materialized agent graph at query time (`parent_action_id`/`conversation_id`/`trace_id`, Postgres recursive CTEs) — no separate graph database
 
 ### Compliance
 
 - [x] **CMP-01** [P0]: Each detector/policy maps to OWASP Agentic Top 10 categories
 - [x] **CMP-02** [P0]: Policy + audit evidence maps to NIST AI RMF (Govern/Map/Measure/Manage)
 - [x] **CMP-03** [P0]: Minimal logging + human-oversight evidence supports EU AI Act Art. 12 / Art. 26 claims at launch (obligations bind 2026-08-02)
-- [ ] **CMP-04** [P1]: Full EU AI Act mapping (risk classification, logging, human oversight) is produced
-- [ ] **CMP-05** [P1]: SOC 2 control evidence (access, change, monitoring) is derived from the audit log
-- [ ] **CMP-06** [P1]: One-click export produces evidence bundles per framework and time range
+- [x] **CMP-04** [P1]: Full EU AI Act mapping (risk classification, logging, human oversight) is produced
+- [x] **CMP-05** [P1]: SOC 2 control evidence (access, change, monitoring) is derived from the audit log
+- [x] **CMP-06** [P1]: One-click export produces evidence bundles per framework and time range
 
 ### Testing & Red-Team
 
@@ -130,9 +131,9 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **TEST-04** [P0]: Safety assertions use statistical thresholds (e.g. attack-success-rate < X%), not single runs
 - [x] **TEST-05** [P0]: Fixed vulnerabilities are locked by regression tests so they cannot silently return
 - [x] **TEST-06** [P0]: A failing safety test breaks the CI build
-- [ ] **TEST-07** [P1]: Attack-success-rate is tracked over time per agent/attack class
-- [ ] **TEST-08** [P1]: Continuous validation re-runs suites against the live agent on a schedule
-- [ ] **TEST-09** [P1]: Multi-step adversarial simulations run campaign-style attacks
+- [x] **TEST-07** [P1]: Attack-success-rate is tracked over time per agent/attack class
+- [x] **TEST-08** [P1]: Continuous validation re-runs suites against the live agent on a schedule
+- [x] **TEST-09** [P1]: Multi-step adversarial simulations run campaign-style attacks
 - [ ] **TEST-10** [P2]: Continuous adversarial self-play generates novel attacks, scores defenses, and proposes Constitution/policy patches (human-ratified, held-out eval)
 - [ ] **TEST-11** [P2]: A runtime-patching path rolls out ratified defenses; a threat-intel feed imports emerging attack patterns
 
@@ -141,15 +142,15 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **OBS-01** [P0]: Every `AgentAction`/`Decision` is emitted as an OpenTelemetry span to the user's backend
 - [x] **OBS-02** [P0]: `trace_id` correlates an action across pipeline stages and across agents (distributed tracing)
 - [x] **OBS-03** [P0]: Per-agent metrics (action volume, outcome mix, violation counts, p95 pipeline latency) are emitted
-- [ ] **OBS-04** [P1]: Agent health monitoring tracks liveness/error-rate/circuit-breaker state per agent
-- [ ] **OBS-05** [P1]: Conversation tracing reconstructs a full conversation across tools and delegations
-- [ ] **OBS-06** [P1]: Per-agent SLO and violation dashboards with attack visualization
+- [x] **OBS-04** [P1]: Agent health monitoring tracks liveness/error-rate/circuit-breaker state per agent
+- [x] **OBS-05** [P1]: Conversation tracing reconstructs a full conversation across tools and delegations
+- [x] **OBS-06** [P1]: Per-agent SLO and violation dashboards with attack visualization
 
 ### Economics
 
-- [ ] **ECON-01** [P1]: Token/API cost is attributed to each agent/action
-- [ ] **ECON-02** [P1]: Token/budget limits are expressed as policy; over-budget actions are denied/escalated by the graduated-response engine
-- [ ] **ECON-03** [P1]: GPU usage and downstream API consumption are attributed per agent
+- [x] **ECON-01** [P1]: Token/API cost is attributed to each agent/action
+- [x] **ECON-02** [P1]: Token/budget limits are expressed as policy; over-budget actions are denied/escalated by the graduated-response engine
+- [x] **ECON-03** [P1]: GPU usage and downstream API consumption are attributed per agent
 - [ ] **ECON-04** [P2]: ROI analytics present value-vs-cost per agent/workflow
 
 ### ABOM (Supply Chain)
@@ -178,7 +179,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **DASH-01** [P0]: A minimal dashboard shows read-only agent inventory and recent decisions/audit
 - [x] **DASH-02** [P0]: Operators resolve pending `ApprovalRequest`s from the dashboard
 - [x] **DASH-03** [P0]: Operators trigger agent/fleet kill switches from the dashboard
-- [ ] **DASH-04** [P1]: The dashboard adds the live agent graph, per-agent SLOs/violations, and attack visualization
+- [x] **DASH-04** [P1]: The dashboard adds the live agent graph, per-agent SLOs/violations, and attack visualization
 
 ### OSS Distribution & Community
 
@@ -226,8 +227,8 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | INT-04 | Phase 2 | Complete |
 | INT-05 | Phase 2 | Complete |
 | INT-06 | Phase 2 | Complete |
-| INT-07 | Phase 10 | Pending |
-| INT-08 | Phase 10 | Pending |
+| INT-07 | Phase 10 | Complete |
+| INT-08 | Phase 10 | Complete |
 | INT-09 | Phase 14 | Pending |
 | PIPE-01 | Phase 1 | Complete |
 | PIPE-02 | Phase 1 | Complete |
@@ -247,9 +248,9 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | POL-07 | Phase 3 | Complete |
 | POL-08 | Phase 3 | Complete |
 | POL-09 | Phase 9 | Complete |
-| POL-10 | Phase 13 | Pending |
-| POL-11 | Phase 13 | Pending |
-| POL-12 | Phase 13 | Pending |
+| POL-10 | Phase 13 | Complete |
+| POL-11 | Phase 13 | Complete |
+| POL-12 | Phase 13 | Complete (scoped — Byzantine quorum, NOT a replicated protocol; see the requirement note) |
 | POL-13 | Phase 3 | Complete |
 | POL-14 | Phase 3 | Complete |
 | SEC-01 | Phase 1 | Complete |
@@ -284,45 +285,45 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | TRST-05 | Phase 14 | Pending |
 | DISC-01 | Phase 5 | Complete |
 | DISC-02 | Phase 5 | Complete |
-| DISC-03 | Phase 10 | Pending |
-| DISC-04 | Phase 10 | Pending |
-| DISC-05 | Phase 10 | Pending |
-| DISC-06 | Phase 10 | Pending |
+| DISC-03 | Phase 10 | Complete |
+| DISC-04 | Phase 10 | Complete |
+| DISC-05 | Phase 10 | Complete |
+| DISC-06 | Phase 10 | Complete |
 | AUD-01 | Phase 1 | Complete |
 | AUD-02 | Phase 4 | Complete |
 | AUD-03 | Phase 4 | Complete |
 | AUD-04 | Phase 4 | Complete |
 | AUD-05 | Phase 4 | Complete |
-| AUD-06 | Phase 11 | Pending |
+| AUD-06 | Phase 11 | Complete |
 | AUD-07 | Phase 14 | Pending |
 | AUD-08 | Phase 4 | Complete |
-| AUD-09 | Phase 12 | Pending |
+| AUD-09 | Phase 12 | Complete |
 | CMP-01 | Phase 6 | Complete |
 | CMP-02 | Phase 6 | Complete |
 | CMP-03 | Phase 6 | Complete |
-| CMP-04 | Phase 11 | Pending |
-| CMP-05 | Phase 11 | Pending |
-| CMP-06 | Phase 11 | Pending |
+| CMP-04 | Phase 11 | Complete |
+| CMP-05 | Phase 11 | Complete |
+| CMP-06 | Phase 11 | Complete |
 | TEST-01 | Phase 6 | Complete |
 | TEST-02 | Phase 6 | Complete |
 | TEST-03 | Phase 6 | Complete |
 | TEST-04 | Phase 6 | Complete |
 | TEST-05 | Phase 6 | Complete |
 | TEST-06 | Phase 6 | Complete |
-| TEST-07 | Phase 12 | Pending |
-| TEST-08 | Phase 12 | Pending |
-| TEST-09 | Phase 12 | Pending |
+| TEST-07 | Phase 12 | Complete |
+| TEST-08 | Phase 12 | Complete |
+| TEST-09 | Phase 12 | Complete |
 | TEST-10 | Phase 14 | Pending |
 | TEST-11 | Phase 14 | Pending |
 | OBS-01 | Phase 6 | Complete |
 | OBS-02 | Phase 6 | Complete |
 | OBS-03 | Phase 6 | Complete |
-| OBS-04 | Phase 12 | Pending |
-| OBS-05 | Phase 12 | Pending |
-| OBS-06 | Phase 12 | Pending |
-| ECON-01 | Phase 11 | Pending |
-| ECON-02 | Phase 11 | Pending |
-| ECON-03 | Phase 11 | Pending |
+| OBS-04 | Phase 12 | Complete |
+| OBS-05 | Phase 12 | Complete |
+| OBS-06 | Phase 12 | Complete |
+| ECON-01 | Phase 11 | Complete |
+| ECON-02 | Phase 11 | Complete |
+| ECON-03 | Phase 11 | Complete |
 | ECON-04 | Phase 14 | Pending |
 | ABOM-01 | Phase 8 | Complete |
 | ABOM-02 | Phase 8 | Complete |
@@ -339,7 +340,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | DASH-01 | Phase 5 | Complete |
 | DASH-02 | Phase 5 | Complete |
 | DASH-03 | Phase 5 | Complete |
-| DASH-04 | Phase 12 | Pending |
+| DASH-04 | Phase 12 | Complete |
 | OSS-01 | Phase 6 | Pending |
 | OSS-02 | Phase 6 | Complete |
 | PERF-01 | Phase 14 | Pending |

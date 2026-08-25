@@ -55,3 +55,27 @@ principles:
     effect: governance_review
     when: {field: egress.host, op: in, list_ref: egress_allowlist}
     side_effects: [notify]
+  # ECON-02: spend is governed by the SAME engine as everything else. There is no budget enforcer
+  # running beside the pipeline — these two principles are the whole of it, and deleting them
+  # deletes the fleet's spend gate. The ratio is 0.0 for an agent with no configured budget, so
+  # these never fire in a deployment that has not opted in.
+  - id: "5.1"
+    title: Spending beyond budget requires approval
+    statement: An agent that has consumed its budget may not continue spending without human approval.
+    effect: require_approval
+    # require_approval rather than deny: a hard stop on a budget boundary strands work that may be
+    # one call from completing, with no way forward but an operator editing policy. Approval keeps a
+    # human in the loop and records WHO authorized the overspend. An operator who wants a hard stop
+    # changes one word here — which is the point of expressing this as policy. Note what that word
+    # also changes: POL-13 temporary exceptions apply only to a DENY floor, so `require_approval`
+    # here is unwaivable, while `deny` brings the budget floor within reach of a human-ratified
+    # exception. Both are consistent; the second is a different, deliberate trade.
+    when: {field: cost.budget_used_ratio, op: gte, value: 1.0}
+    remediation:
+      - Raise the agent's budget, or approve this action explicitly.
+      - Investigate why the agent consumed its budget — a runaway loop spends faster than a task.
+  - id: "5.2"
+    title: Approaching budget proceeds under governance review
+    statement: An agent that has consumed most of its budget proceeds, but is opened for asynchronous governance review.
+    effect: governance_review
+    when: {field: cost.budget_used_ratio, op: gte, value: 0.8}

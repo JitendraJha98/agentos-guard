@@ -36,6 +36,7 @@ class names) instead of importing the control plane's RedactionError type.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone
@@ -71,7 +72,7 @@ from agentos_pipeline.graduated import GraduatedThresholds, graduated_response
 from agentos_pipeline.identity import IdentityStage, IdentityVerdict
 from agentos_pipeline.intent_similarity import IntentSimilarityClassifier
 from agentos_pipeline.interpreter import InterpretationRequest, SemanticInterpreter
-from agentos_pipeline.policy_input import build_policy_input
+from agentos_pipeline.policy_input import CostPostureLike, build_policy_input
 from agentos_pipeline.posture import FailPosture, PostureMap
 from agentos_pipeline.risk import assess_risk
 from agentos_pipeline.risk._text import payload_text
@@ -196,6 +197,33 @@ class CircuitBreakerLookup(Protocol):
     async def record_success(self, agent_id: str, target: str) -> None: ...
 
 
+# DISC-04: how long a sighting may take before the deny returns without it. Observation is
+# best-effort; the deny is not, and the caller that triggers it is unauthenticated by definition.
+SHADOW_REPORT_TIMEOUT_S = 0.25
+
+
+class ShadowReporter(Protocol):
+    """DISC-04 seam: report an actor that acted WITHOUT being registered (ShadowAgentStore
+    satisfies it). Observation only — the identity stage has already denied the action; this
+    exists so the attempt is visible instead of being one deny among thousands.
+
+    It is handed the RAW claimed id: bounding, sanitizing and digesting belong to the store (one
+    place), and truncating here would destroy the full string its digest needs."""
+
+    async def record(self, claimed_agent_id: str, action_type: str) -> bool: ...
+
+
+class BudgetLookup(Protocol):
+    """ECON-02 seam: what has this agent already spent (`BudgetLedger` satisfies it)?
+
+    Read on EVERY action inside stage 3, so the contract is that it is an in-memory lookup — a
+    database round-trip here would sit on the hot path of every governed call in the fleet, which
+    is the PIPE-04 budget the whole pipeline is measured against.
+    """
+
+    def posture_for(self, agent_id: str) -> "CostPostureLike": ...
+
+
 class CardVerifierProtocol(Protocol):
     """The injected SEC-10/ASI07 seam (control-plane AgentCardVerifier satisfies it).
 
@@ -247,6 +275,8 @@ class Pipeline:
         intent_classifier: "IntentSimilarityClassifier | None" = None,
         privilege: "PrivilegeLookup | None" = None,
         breaker: "CircuitBreakerLookup | None" = None,
+        shadow: "ShadowReporter | None" = None,
+        budget: "BudgetLookup | None" = None,
     ) -> None:
         self._identity = identity
         self._policy = policy
@@ -292,6 +322,14 @@ class Pipeline:
         # RUN-06: the circuit-breaker lookup (in-memory, hot-path) AND the signal sink. None
         # default: stage 1f never runs, nothing is recorded, and behavior is unchanged.
         self._breaker = breaker
+        # DISC-04: the shadow-agent reporter, fed ONLY from the stage-1 identity short-circuit.
+        # None default: nothing is reported and behavior is unchanged (backward compat). It never
+        # runs on the allowed path — an unregistered actor is the only thing it ever sees.
+        self._shadow = shadow
+        # ECON-02: the accumulated-spend lookup, read at stage 3 and passed into the policy input.
+        # None default: the `cost` fields stay zeroed, which is "no budget configured", so a
+        # deployment that never opted into budgets behaves exactly as before.
+        self._budget = budget
         # RUN-04 x TRST-04: when BOTH are wired the ring must be chain-capped like trust, or a
         # ring-0 principal reaches a gated target through a ring-3 delegate. Auto-wired here so
         # that cannot depend on the operator remembering a second seam.
@@ -388,7 +426,34 @@ class Pipeline:
             # Audited even on deny — evidence exists before enforcement (PIPE-03/AUD-01).
             # A RedactionError retries payload-free HERE (the deny stands); any other
             # append failure falls to the outer fail-safe, which inherits the deny floor.
-            await self._append_with_redaction_fallback(action, decision)
+            try:
+                await self._append_with_redaction_fallback(action, decision)
+            finally:
+                # DISC-04: the deny already happened; record the sighting so an unregistered actor
+                # is VISIBLE rather than being one deny among thousands. Observation only — never a
+                # second deny path, and never allowed to break governance.
+                #
+                # In a `finally` because the append above can REFUSE this very action:
+                # `action.agent_id` is attacker-chosen and goes raw into the hash-covered decision
+                # body, so an id shaped like a credential trips the AUD-04 fail-closed gate. Left
+                # after a successful append, an attacker could name itself after a secret and
+                # thereby block its own sighting — and the shadow row is the one evidence channel
+                # that can survive a refused decision record. The decision record still goes FIRST.
+                #
+                # Bounded and swallowed: a failure here must not turn a clean deny into a fail-safe,
+                # and neither must a wedged store — the caller of an identity deny is by definition
+                # unauthenticated, so it must not be able to stall the deny path. `TimeoutError`
+                # is an `Exception`, so the same handler covers both.
+                if self._shadow is not None:
+                    try:
+                        await asyncio.wait_for(
+                            self._shadow.record(action.agent_id, action.type.value),
+                            timeout=SHADOW_REPORT_TIMEOUT_S,
+                        )
+                    except Exception:
+                        logging.getLogger(__name__).warning(
+                            "shadow-agent sighting not recorded for action %s", action.id
+                        )
             return decision  # TERMINAL — no later stages
         trust = ident.trust_score
         # OBS-03 cardinality guard: identity is now verified, so action.agent_id is a
@@ -607,9 +672,20 @@ class Pipeline:
                 key, enrichment.intent_class, self._sequences
             )
 
+        # ECON-02: accumulated spend enters as POLICY INPUT, so a budget breach is a policy floor
+        # like any other — explainable, auditable, and bound by the same floor invariant. NOT a
+        # parallel enforcer. The lookup is an in-memory dict read (`BudgetLedger.posture_for`);
+        # `enrich()` is pure-CPU and stateless by contract, which is why budget state enters here
+        # and not through it, exactly as the stateful SequenceCorrelator does above.
+        cost_posture = (
+            self._budget.posture_for(action.agent_id) if self._budget is not None else None
+        )
+
         # Stage 3 — Policy (POL-03): the compiled-constitution floor.
         res = self._policy.evaluate(
-            build_policy_input(action, enrichment, sequence_matched_refs=sequence_refs)
+            build_policy_input(
+                action, enrichment, sequence_matched_refs=sequence_refs, cost=cost_posture
+            )
         )
         floor = select_floor(res.matched)
         if floor is None:

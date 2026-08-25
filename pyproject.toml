@@ -20,6 +20,7 @@ dependencies = [
     "agentos-constitution",
     "agentos-contract",
     "agentos-controlplane",
+    "agentos-gateway",
     "agentos-pipeline",
     "agentos-sdk",
 ]
@@ -46,6 +47,24 @@ redteam = [
     "garak==0.15.1",
     "pyrit==0.13.0",
 ]
+# Slice 10b (INT-08): the OpenAI Agents SDK, used ONLY by the second framework adapter
+# (packages/sdk/src/agentos_sdk/adapters/openai_agents.py) and its tests. OPTIONAL so the
+# base install stays lean and adopters of one framework never pay for the other; the
+# adapter imports it lazily and both test modules `importorskip("agents")`.
+# Install alongside the other groups — a bare `uv sync --all-packages` PRUNES them:
+#   uv sync --all-packages --group dev --group redteam --group adapters
+# Upper bound 0.21: openai-agents 0.21.0 moved to `openai>=3,<4`, which is IRRECONCILABLE
+# with garak==0.15.1's `openai>=2,<3` (the same class of conflict that pinned pyrit to
+# 0.13.0). 0.20.0 is the newest release that co-installs with the redteam group.
+adapters = [
+    "openai-agents>=0.20,<0.21",
+    # A TRANSITIVE constraint, not a dependency we use: openai-agents pulls `mcp`, and mcp 2.x
+    # requires `httpx2`. starlette's TestClient PREFERS httpx2 whenever it is installed, so its
+    # responses stop being instances of the httpx 0.28 types every client in this repo is built
+    # on — 8 control-plane-client tests fail on `isinstance(response.stream, SyncByteStream)`.
+    # openai-agents accepts mcp>=1.19,<3, so holding it at 1.x keeps one HTTP stack in the venv.
+    "mcp>=1.19,<2",
+]
 
 # uv workspace: each package under packages/ has its own pyproject.toml and
 # shares this single lockfile. The `contract` package (PIPE-07 / D-08) is the
@@ -57,6 +76,7 @@ members = ["packages/*"]
 agentos-constitution = { workspace = true }
 agentos-contract = { workspace = true }
 agentos-controlplane = { workspace = true }
+agentos-gateway = { workspace = true }
 agentos-pipeline = { workspace = true }
 agentos-sdk = { workspace = true }
 

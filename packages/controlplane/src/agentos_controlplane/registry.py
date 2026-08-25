@@ -14,7 +14,9 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from agentos_controlplane.audit import AuditWriter
 from agentos_controlplane.certificates import CertificateAuthority, generate_agent_keypair
+from agentos_controlplane.compliance import RISK_CLASSIFICATIONS, UNDECLARED
 from agentos_controlplane.identity_engine import IdentityEngine
 from agentos_controlplane.inventory import InventoryStore
 from agentos_controlplane.store.models import Agent, RevokedCertificate, TrustProfile
@@ -46,6 +48,7 @@ class Registry:
         identity: IdentityEngine | None = None,
         inventory: InventoryStore | None = None,
         certificate_authority: CertificateAuthority | None = None,
+        audit: AuditWriter | None = None,
     ) -> None:
         self._session_factory = session_factory
         # Wire the engine's registry-lookup seam to this registry's own methods.
@@ -56,6 +59,8 @@ class Registry:
         # IDN-03: optional CA. None default -> no certificates are issued and
         # registration behaves exactly as it did through Phase 6.
         self._ca = certificate_authority
+        # CMP-04: required only by `declare_risk_classification`, which refuses to run without it.
+        self._audit = audit
 
     def register(
         self,
@@ -143,6 +148,66 @@ class Registry:
             certificate_pem=cert_pem,
             private_key_pem=private_pem,
             ca_certificate_pem=self._ca.ca_certificate_pem if self._ca else None,
+        )
+
+    async def declare_risk_classification(
+        self, agent_id: str, classification: str | None, *, declared_by: str
+    ) -> None:
+        """CMP-04 — record the EU AI Act risk class an OPERATOR declares for this agent (D-8).
+
+        AUDITED, like every other operator change to enforcement configuration (kill_switch_set,
+        privilege_ring_set, resource_limit_set) — and more than they need it, because this one is a
+        legal claim. Without a record, an operator who declares `high_risk` in March and
+        `minimal_risk` in September before exporting leaves a bundle saying `minimal_risk` and no
+        way to answer a regulator asking when it was classified and by whom. The column holds only
+        the current value; the chain holds the history.
+
+        No audit writer -> REFUSED before anything is written. A declaration that cannot be
+        recorded must not be made silently; this is the AUD-04 "no write if it cannot be evidenced"
+        discipline applied to the one configuration change that is a statement about legal exposure.
+
+        Value gating: the column is a plain string on every backend (D-14), so a typo'd 'high-risk'
+        accepted here would be echoed into a regulator-facing bundle as if it were a recognised
+        tier. `export_compliance_evidence` re-checks at the last gate, because this setter gates
+        only the path that goes through it.
+
+        `None` WITHDRAWS the declaration back to undeclared, rather than to some 'safe' default —
+        an operator correcting a wrong classification must be able to return to "we have not
+        determined this", which is the only honest state between the two harmful guesses.
+
+        Declaring for an unregistered agent raises rather than no-oping: silently accepting it
+        would leave an operator believing a classification is on file where there is no row at all.
+        """
+        if self._audit is None:
+            raise ValueError(
+                "declaring an EU AI Act risk classification requires an audit writer; "
+                "an unrecorded legal classification is worse than none"
+            )
+        if classification is not None and classification not in RISK_CLASSIFICATIONS:
+            raise ValueError(
+                f"unknown EU AI Act risk classification {classification!r}; "
+                f"expected one of {sorted(RISK_CLASSIFICATIONS)} or None (undeclared)"
+            )
+        if not declared_by:
+            raise ValueError("declared_by is required: a classification with no author is anonymous")
+        with self._session_factory() as session:
+            agent = session.get(Agent, agent_id)
+            if agent is None:
+                raise ValueError(f"agent {agent_id!r} is not registered")
+            previous = agent.risk_classification
+            agent.risk_classification = classification
+            session.commit()
+        # Short identifiers only — same discipline as privilege_ring_set. `previous` is carried so
+        # the chain shows the transition, not just the landing state. A raising append leaves the
+        # declaration durable but UNRECORDED; the exception propagates to the operator.
+        await self._audit.append_event(
+            "risk_classification_declared",
+            {
+                "agent_id": agent_id,
+                "classification": classification or UNDECLARED,
+                "previous": previous or UNDECLARED,
+                "declared_by": declared_by,
+            },
         )
 
     # ---- IDN-03 certificate lifecycle ----

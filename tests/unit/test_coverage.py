@@ -20,7 +20,13 @@ from agentos_sdk import (
     covered_types,
     verify_coverage,
 )
-from agentos_sdk.coverage import _REGISTRY, covers
+from agentos_sdk.coverage import _REGISTRY, coverage_matrix, covers
+
+
+def _snapshot() -> dict:
+    """A DEEP copy of the registry: the values are sets, so `dict(_REGISTRY)` would alias
+    them and a test that adds an entry could not undo it."""
+    return {t: set(entries) for t, entries in _REGISTRY.items()}
 
 
 def test_all_five_action_types_are_covered() -> None:
@@ -41,7 +47,7 @@ def test_coverage_includes_each_expected_type() -> None:
 
 def test_a_gap_is_detected_not_silent() -> None:
     """Removing one type's registration makes verify_coverage raise (no silent gap)."""
-    saved = dict(_REGISTRY)
+    saved = _snapshot()
     try:
         _REGISTRY.pop(ActionType.delegation)
         with pytest.raises(InterceptionGapError, match="delegation"):
@@ -52,12 +58,45 @@ def test_a_gap_is_detected_not_silent() -> None:
 
 
 def test_covers_registers_entrypoint() -> None:
-    saved = dict(_REGISTRY)
+    saved = _snapshot()
     try:
         @covers(ActionType.tool_call)
         def _probe() -> None: ...
 
-        assert _REGISTRY[ActionType.tool_call].endswith("_probe")
+        assert any(e.endswith("_probe") for e in _REGISTRY[ActionType.tool_call])
+    finally:
+        _REGISTRY.clear()
+        _REGISTRY.update(saved)
+
+
+def test_two_peps_for_one_action_type_are_both_recorded() -> None:
+    """A second PEP form must not evict the first: with the gateway and the SDK both covering
+    tool_call, the matrix has to show BOTH or INT-06 stops reflecting reality."""
+    before = _snapshot()
+    try:
+        @covers(ActionType.tool_call)
+        def _pep_one() -> None: ...
+
+        @covers(ActionType.tool_call)
+        def _pep_two() -> None: ...
+
+        entries = coverage_matrix()[ActionType.tool_call]
+        assert any(e.endswith("_pep_one") for e in entries)
+        assert any(e.endswith("_pep_two") for e in entries)
+    finally:
+        _REGISTRY.clear()
+        _REGISTRY.update(before)
+
+
+def test_an_emptied_type_is_a_gap_not_a_covered_type() -> None:
+    """A set-valued registry can hold an EMPTY set (every entry removed). That is a gap,
+    so `covered_types()` must not count the bare key."""
+    saved = _snapshot()
+    try:
+        _REGISTRY[ActionType.delegation] = set()
+        assert ActionType.delegation not in covered_types()
+        with pytest.raises(InterceptionGapError, match="delegation"):
+            verify_coverage()
     finally:
         _REGISTRY.clear()
         _REGISTRY.update(saved)

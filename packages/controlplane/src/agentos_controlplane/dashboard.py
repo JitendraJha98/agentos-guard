@@ -23,6 +23,8 @@ from agentos_controlplane.approvals import ApprovalStore
 from agentos_controlplane.inventory import InventoryStore
 from agentos_controlplane.killswitch import EmergencyActiveError, KillSwitchStore
 
+import math
+
 _TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 _COOKIE = "agentos_session"
 
@@ -63,6 +65,54 @@ def _approval_row(row) -> dict:
     }
 
 
+
+# OBS-06/DASH-04: the graph is laid out on a circle, ordered by (kind, name). DETERMINISTIC on
+# purpose — an operator comparing two refreshes must be able to tell a topology change from a
+# reshuffle, and a layout that moves on its own makes the page unreadable exactly when something
+# is changing. No physics, no client-side library: the positions are computed here and the page is
+# static SVG.
+_GRAPH_W, _GRAPH_H, _GRAPH_R = 900, 520, 200
+# One screen of graph. The store's own view is already bounded and closed (every edge's endpoints
+# are present); this is the page's own budget on top of it, and truncation is stated rather than
+# silently rendered as the whole picture.
+_GRAPH_NODES = 60
+
+
+def _graph_view(graph) -> dict:
+    """The DISC-06 view as coordinates a template can render.
+
+    Labels are the raw node names, which agents control — Jinja autoescapes them, and the test
+    suite pins that in SVG context, because this is the page with the kill switch on it.
+    """
+    view = graph.view()
+    nodes = sorted(view.nodes, key=lambda n: (n["kind"], n["name"]))
+    total = len(nodes)
+    shown = nodes[:_GRAPH_NODES]
+    placed, at = [], {}
+    for i, n in enumerate(shown):
+        angle = (2 * math.pi * i / len(shown)) if shown else 0.0
+        x = _GRAPH_W / 2 + _GRAPH_R * math.cos(angle)
+        y = _GRAPH_H / 2 + _GRAPH_R * math.sin(angle)
+        at[(n["kind"], n["name"])] = (x, y)
+        placed.append({"kind": n["kind"], "label": n["name"], "x": round(x, 1), "y": round(y, 1)})
+    edges = []
+    for e in view.edges:
+        src, dst = (e["src"]["kind"], e["src"]["name"]), (e["dst"]["kind"], e["dst"]["name"])
+        if src not in at or dst not in at:
+            continue  # an endpoint fell outside this page's budget; drawing it would dangle
+        (x1, y1), (x2, y2) = at[src], at[dst]
+        edges.append({
+            "src": e["src"]["name"], "dst": e["dst"]["name"], "relation": e["relation"],
+            "observations": e.get("observations"), "source": e.get("source"),
+            "x1": round(x1, 1), "y1": round(y1, 1), "x2": round(x2, 1), "y2": round(y2, 1),
+        })
+    return {
+        "nodes": placed, "edges": edges, "total_nodes": total,
+        "truncated": total > len(shown),
+        "width": _GRAPH_W, "height": _GRAPH_H,
+    }
+
+
 def build_dashboard_router(
     api_token: str,
     *,
@@ -70,6 +120,12 @@ def build_dashboard_router(
     kill_store: KillSwitchStore | None = None,
     inventory: InventoryStore | None = None,
     session_factory=None,
+    # OBS-06 / DASH-04: appended last, so no existing keyword caller changes. Each page is wired
+    # only when its collaborator is supplied — an operator running without one gets no link to a
+    # page that would render an empty table and read as "nothing is happening".
+    graph=None,
+    health=None,
+    validation=None,
 ) -> APIRouter:
     router = APIRouter()
     require_session = make_require_session(api_token)
@@ -125,6 +181,44 @@ def build_dashboard_router(
         )
 
     # --- DASH-02: list + resolve approvals ----------------------------------
+    @router.get("/dashboard/graph", response_class=HTMLResponse)
+    def graph_page(request: Request, _: bool = Depends(require_session)):
+        """DASH-04 — the live agent graph, server-rendered as static SVG."""
+        if graph is None:
+            raise HTTPException(status_code=404, detail="the agent graph is not wired")
+        return _TEMPLATES.TemplateResponse(
+            request, "graph.html", {"view": _graph_view(graph)}
+        )
+
+    @router.get("/dashboard/health", response_class=HTMLResponse)
+    def health_page(request: Request, _: bool = Depends(require_session)):
+        """OBS-06 — per-agent SLOs and violations.
+
+        The two properties the data layer worked to establish have to survive the template, which
+        is where a carefully-qualified number gets reduced to a percentage: no verdict is rendered
+        for liveness, and the failure rate is printed WITH its denominator.
+        """
+        if health is None:
+            raise HTTPException(status_code=404, detail="agent health is not wired")
+        rows = health.fleet()
+        hours = rows[0]["window_hours"] if rows else 24
+        return _TEMPLATES.TemplateResponse(
+            request, "health.html", {"rows": rows, "window_hours": hours}
+        )
+
+    @router.get("/dashboard/attacks", response_class=HTMLResponse)
+    def attacks_page(request: Request, _: bool = Depends(require_session)):
+        """OBS-06 — attack-success-rate per agent and attack class.
+
+        The sample size renders beside every rate. Slice 12a's whole design is that a rate never
+        travels without its `n`, and a chart is where that discipline dies.
+        """
+        if validation is None:
+            raise HTTPException(status_code=404, detail="validation tracking is not wired")
+        return _TEMPLATES.TemplateResponse(
+            request, "attacks.html", {"rows": validation.trend()}
+        )
+
     @router.get("/dashboard/approvals", response_class=HTMLResponse)
     def approvals_page(request: Request, _: bool = Depends(require_session)):
         pending = approvals.list_requests("pending") if approvals is not None else []
@@ -236,6 +330,12 @@ def mount_dashboard(
     kill_store: KillSwitchStore | None = None,
     inventory: InventoryStore | None = None,
     session_factory=None,
+    # OBS-06 / DASH-04: appended last, so no existing keyword caller changes. Each page is wired
+    # only when its collaborator is supplied — an operator running without one gets no link to a
+    # page that would render an empty table and read as "nothing is happening".
+    graph=None,
+    health=None,
+    validation=None,
 ) -> None:
     """Mount the dashboard router and register the _NotLoggedIn -> 303 redirect handler.
 
@@ -247,6 +347,9 @@ def mount_dashboard(
             kill_store=kill_store,
             inventory=inventory,
             session_factory=session_factory,
+            graph=graph,
+            health=health,
+            validation=validation,
         )
     )
 

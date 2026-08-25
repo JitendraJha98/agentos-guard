@@ -133,6 +133,37 @@ EVENT_KINDS = frozenset(
         # 4d secret-gate here can never block a consensus round from being recorded.
         "consensus_vote",
         "consensus_resolved",
+        # DISC-03 (Slice 10c): a framework observed in this deployment. Short identifiers only.
+        "framework_discovered",
+        # DISC-04 (Slice 10d): an unregistered actor was seen acting. The claimed id is
+        # attacker-controlled, so the body carries a BOUNDED, sanitized identifier + a digest —
+        # never the raw string, which could otherwise trip the AUD-04 gate and block the record.
+        "shadow_agent_detected",
+        # DISC-05 (Slice 10e): a REGISTERED agent used a component it never declared. Short
+        # identifiers only. ADVISORY — an observation, not a decision: the control plane surfaces
+        # the divergence and an operator decides, because a manifest can simply be stale.
+        "rogue_agent_detected",
+        # AUD-06 (Slice 11a): an epoch was sealed under a Merkle root. Short identifiers + the
+        # root digest only — never record bodies.
+        "merkle_epoch_sealed",
+        # ECON-01 (Slice 11b): what an action cost. Short identifiers + numbers only — never the
+        # prompt that produced the tokens.
+        "cost_recorded",
+        # CMP-04 (Slice 11e): an operator declared (or withdrew) an EU AI Act risk classification.
+        # Short identifiers only. The column holds the CURRENT value; this is the only record that
+        # it ever said something else, who said so, and when — which is what a regulator asks.
+        "risk_classification_declared",
+        # TEST-07 (Slice 12a): a red-team suite was run against an agent's decision path. Short
+        # identifiers and counts only — never an attack payload.
+        "validation_run",
+        # POL-12 (Slice 13c): the Byzantine quorum certificate, and a voter caught equivocating.
+        # Counts and identifiers only — the signed votes live in the certificate.
+        "quorum_certified",
+        "voter_equivocated",
+        # POL-10 (Slice 13a): the Constitution's own change log. Short identifiers only — the
+        # proposed text lives in the amendment row, not in the chain.
+        "amendment_proposed",
+        "amendment_resolved",
     }
 )
 

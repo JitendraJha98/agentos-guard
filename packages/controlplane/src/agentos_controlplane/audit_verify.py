@@ -27,7 +27,8 @@ from agentos_controlplane.checkpoint import (
     checkpoint_message,
     verify_checkpoint_proof,
 )
-from agentos_controlplane.store.models import AuditRecord, ChainCheckpoint
+from agentos_controlplane.merkle import epoch_message, merkle_root
+from agentos_controlplane.store.models import AuditRecord, ChainCheckpoint, MerkleRoot
 
 # AUD-02 (action->decision->fired-principles->outcome linkage) + AUD-03 (policy/constitution
 # version provenance): every DECISION record body must carry these keys. Event records carry a
@@ -54,6 +55,13 @@ class VerifyResult:
     signatures_checked: int = 0  # rows whose Ed25519 signature was actually verified (step 6)
     checkpoints_checked: int = 0  # checkpoints whose anchor proof was actually verified (AUD-05)
     skipped_checkpoints: int = 0  # checkpoints skipped for want of verification material (AUD-05)
+    # AUD-06. The two count DIFFERENT things, deliberately: `epochs_checked` is epochs whose root
+    # was re-derived from the verified chain (the substantive check — it always runs), while
+    # `skipped_epochs` is epochs whose ANCHOR was not verified, because it is absent or its
+    # verification material was not supplied. An epoch can be both: re-derived locally, but with
+    # nobody external vouching for when its root existed.
+    epochs_checked: int = 0
+    skipped_epochs: int = 0
 
 
 def verify_chain(
@@ -66,13 +74,21 @@ def verify_chain(
     ChainCheckpoint is validated (AUD-05): the head hash recomputed at the checkpointed seq must
     match the bound record_hash (checkpoint_mismatch), the chain must be no shorter than a
     checkpointed seq (checkpoint_truncation), and the anchor proof must verify (checkpoint_proof);
-    a checkpoint whose verification material was not supplied is SKIPPED (counted, not failed)."""
+    a checkpoint whose verification material was not supplied is SKIPPED (counted, not failed).
+    Finally every AUD-06 Merkle epoch must still re-derive its sealed root from those same
+    recomputed hashes, must agree with its own signed in-chain announcement, and the epochs must
+    tile the chain without a gap — a disclosed inclusion proof is only worth what this pass says
+    the root is still worth."""
     with session_factory() as session:
         rows = session.scalars(select(AuditRecord).order_by(AuditRecord.seq.asc())).all()
 
     prev_recomputed = None  # the RECOMPUTED record_hash of the previous row
     n = 0
     sigs = 0  # rows whose signature was actually verified (the full-rewrite defense)
+    # Which seqs actually PASSED step 6. Step 8 measures an epoch row against the chain's own
+    # sealed announcement, so that announcement has to be a record the forger could not have
+    # written — and "hash-chained" alone does not say that: appending is free, only signing is not.
+    signed_seqs: set[int] = set()
     recomputed_by_seq: dict[int, str] = {}  # {seq: recomputed record_hash} for checkpoint checks
     max_seq = -1
     for expected_seq, row in enumerate(rows):
@@ -165,6 +181,7 @@ def verify_chain(
                     sigs,
                 )
             sigs += 1
+            signed_seqs.add(row.seq)
         prev_recomputed = recomputed
         recomputed_by_seq[row.seq] = recomputed
         max_seq = row.seq
@@ -228,7 +245,245 @@ def verify_chain(
                 cps_skipped,
             )
         cps_checked += 1
-    return VerifyResult(True, n, None, sigs, cps_checked, cps_skipped)
+
+    # (8) AUD-06 Merkle epochs — every sealed root must still re-derive from the records in the
+    # table. This is what makes a disclosed proof worth anything: a bundle verifies against a root
+    # nobody has re-checked only proves the bundle is self-consistent.
+    #
+    # Leaves come from `recomputed_by_seq`, NEVER the stored record_hash column — the same
+    # never-trust-a-stored-derived-field discipline as every step above. A tree built over the
+    # stored column would faithfully summarize whatever a forger wrote there, so the Merkle pass
+    # would agree with the forgery instead of contradicting it.
+    #
+    # The merkle_root TABLE is not in the chain: `seq_start`, `seq_end`, `leaf_count` and `root`
+    # are writable together, so re-deriving a row against the range that same row declares proves
+    # only that the row is self-consistent — a forger who truncates the log and rewrites the row to
+    # match gets an OK. What they cannot rewrite is `seal()`'s own `merkle_epoch_sealed` record:
+    # it is hash-chained and SIGNED, and it states what was REALLY sealed. Reading it here is the
+    # one detection this pass adds that the chain pass cannot already make on its own, and it is
+    # the protection seal()'s docstring claims for announcing at all.
+    #
+    # Both halves of "hash-chained and signed" have to be enforced, and only the first is free.
+    # Appending costs a forger nothing: truncate the log past the genuine announcement, append an
+    # UNSIGNED one describing the forged range, and it becomes the only announcement for that
+    # epoch — so the authority this pass measures against would be the forger's own record. Hence
+    # `signed_seqs`: when a key was supplied, an announcement whose row did not pass step 6 is not
+    # authority, it is just bytes someone appended.
+    with session_factory() as session:
+        epochs = session.scalars(select(MerkleRoot).order_by(MerkleRoot.epoch.asc())).all()
+    announced: dict[int, tuple[int, dict]] = {}
+    for row in rows:
+        # FIRST announcement per epoch wins: an unsigned duplicate appended later (unsigned rows
+        # skip step 6) must not be able to displace the genuine one.
+        body = row.body
+        if body.get("kind") == "merkle_epoch_sealed" and isinstance(body.get("epoch"), int):
+            announced.setdefault(body["epoch"], (row.seq, body))
+    eps_checked = 0
+    eps_skipped = 0
+    expected_start = 0
+    for ep in epochs:
+        # Epochs are contiguous by construction. A gap strands every seq between two epochs in NO
+        # epoch, where it can never be disclosed; an overlap gives one seq two roots that can
+        # disagree about it. The two are named apart because the remediations are opposite — a gap
+        # means re-sealing a stranded range, an overlap means deleting a bogus row — and the check
+        # name is what a CI consumer keys on.
+        if ep.seq_start != expected_start:
+            return VerifyResult(
+                False,
+                n,
+                Violation(
+                    ep.seq_start,
+                    "merkle_range_gap" if ep.seq_start > expected_start else "merkle_epoch_overlap",
+                    f"epoch {ep.epoch} starts at {ep.seq_start}, expected {expected_start}",
+                ),
+                sigs,
+                cps_checked,
+                cps_skipped,
+                eps_checked,
+                eps_skipped,
+            )
+        # Bound the range with ARITHMETIC before materializing it. `seq_end` is attacker-writable
+        # and nothing constrains it, so a forged 10**18 never returns: the operator would see a hung
+        # CI job, not "forgery caught" — the same never-crash-the-verifier discipline as the
+        # malformed-hex and malformed-DER fixes above, applied to never-hang.
+        if (
+            ep.seq_end < ep.seq_start
+            or ep.seq_end - ep.seq_start + 1 != ep.leaf_count
+            or ep.seq_end > max_seq
+        ):
+            return VerifyResult(
+                False,
+                n,
+                Violation(
+                    ep.seq_start,
+                    "merkle_range_incomplete",
+                    f"epoch {ep.epoch}'s range {ep.seq_start}..{ep.seq_end} cannot hold its "
+                    f"stated {ep.leaf_count} records",
+                ),
+                sigs,
+                cps_checked,
+                cps_skipped,
+                eps_checked,
+                eps_skipped,
+            )
+        # The signed announcement, not the table, is the authority on what was sealed.
+        entry = announced.get(ep.epoch)
+        if entry is None:
+            return VerifyResult(
+                False,
+                n,
+                Violation(
+                    ep.seq_start,
+                    "merkle_announcement_missing",
+                    f"epoch {ep.epoch} has no merkle_epoch_sealed record in the chain",
+                ),
+                sigs,
+                cps_checked,
+                cps_skipped,
+                eps_checked,
+                eps_skipped,
+            )
+        ann_seq, ann = entry
+        # An announcement is authority only if it is one the forger could not have written, and
+        # appending is free — only signing is not. So the gate is whether THIS CHAIN has a signature
+        # posture to bypass (`signed_seqs`), not whether a key was supplied: a caller may pass
+        # `public_key_pem` purely to check a local_ed25519 anchor on a chain whose rows are
+        # legitimately unsigned (AUD-08 makes signing optional), and that caller has nothing to
+        # bypass. On a chain where some rows ARE signed, an unsigned announcement is the attack —
+        # truncate past the genuine one, append your own, and become the authority. A wholly
+        # unsigned chain is already covered by the CLI's louder warning that a full rewrite would
+        # not be detected at all.
+        if signed_seqs and ann_seq not in signed_seqs:
+            return VerifyResult(
+                False,
+                n,
+                Violation(
+                    ann_seq,
+                    "merkle_announcement_unsigned",
+                    f"epoch {ep.epoch}'s only sealed announcement is unsigned — appending one is "
+                    f"free, so it cannot be the authority the epoch row is measured against",
+                ),
+                sigs,
+                cps_checked,
+                cps_skipped,
+                eps_checked,
+                eps_skipped,
+            )
+        if (ann.get("seq_start"), ann.get("seq_end"), ann.get("leaf_count"), ann.get("root")) != (
+            ep.seq_start,
+            ep.seq_end,
+            ep.leaf_count,
+            ep.root,
+        ):
+            return VerifyResult(
+                False,
+                n,
+                Violation(
+                    ep.seq_start,
+                    "merkle_announcement_mismatch",
+                    f"epoch {ep.epoch}'s row disagrees with the sealed announcement in the chain",
+                ),
+                sigs,
+                cps_checked,
+                cps_skipped,
+                eps_checked,
+                eps_skipped,
+            )
+        expected_start = ep.seq_end + 1
+        span = range(ep.seq_start, ep.seq_end + 1)
+        leaves = [recomputed_by_seq[s] for s in span if s in recomputed_by_seq]
+        # A record missing from a sealed range means rows were deleted under a root that still
+        # claims to cover them — truncation, at epoch granularity.
+        if not leaves or len(leaves) != len(span) or len(leaves) != ep.leaf_count:
+            return VerifyResult(
+                False,
+                n,
+                Violation(
+                    ep.seq_start,
+                    "merkle_range_incomplete",
+                    f"epoch {ep.epoch} covers {len(leaves)} of its stated {ep.leaf_count} records",
+                ),
+                sigs,
+                cps_checked,
+                cps_skipped,
+                eps_checked,
+                eps_skipped,
+            )
+        if merkle_root(leaves) != ep.root:
+            return VerifyResult(
+                False,
+                n,
+                Violation(
+                    ep.seq_start,
+                    "merkle_root_mismatch",
+                    f"epoch {ep.epoch} no longer re-derives its sealed root (records changed)",
+                ),
+                sigs,
+                cps_checked,
+                cps_skipped,
+                eps_checked,
+                eps_skipped,
+            )
+        eps_checked += 1
+        # Anchoring is a SEPARATE operator step, so an unanchored epoch is normal — surfaced as a
+        # skip (its root has local integrity but no external authority), never a violation.
+        if ep.anchor_kind is None:
+            eps_skipped += 1
+            continue
+        try:
+            # `proof` is nullable here (unlike ChainCheckpoint's), so a row claiming a kind with no
+            # proof bytes is reachable by DB write. It cannot verify — and handing None to the
+            # dispatch would crash the verifier rather than fail the check, the same trap the
+            # malformed-hex signature and malformed-DER token fixes closed above.
+            proof_ok = ep.proof is not None and verify_checkpoint_proof(
+                ep.anchor_kind,
+                ep.proof,
+                epoch_message(ep.epoch, ep.seq_start, ep.seq_end, ep.root, ep.leaf_count),
+                public_key_pem=public_key_pem,
+                tsa_root_pem=tsa_root_pem,
+            )
+        except CheckpointVerifyUnavailable:
+            eps_skipped += 1
+            continue
+        if not proof_ok:
+            return VerifyResult(
+                False,
+                n,
+                Violation(ep.seq_start, "merkle_anchor_proof", "epoch anchor proof did not verify"),
+                sigs,
+                cps_checked,
+                cps_skipped,
+                eps_checked,
+                eps_skipped,
+            )
+    # The reverse direction, and the one that closes the loop. Everything above iterates the
+    # merkle_root TABLE, so DELETE-ing a row does not fail a check — it removes the check. A forger
+    # who rewrites history and then drops the epoch row would otherwise turn the pass that catches
+    # them into a pass that never runs, and `epochs_checked == 0` reads exactly like a deployment
+    # that never sealed anything.
+    #
+    # The evidence needed to notice is already in hand: the chain still carries the announcement
+    # saying that epoch was sealed. The table is attacker-writable; the chain is not.
+    orphaned = sorted(announced.keys() - {ep.epoch for ep in epochs})
+    if orphaned:
+        epoch = orphaned[0]
+        ann_seq, _ = announced[epoch]
+        return VerifyResult(
+            False,
+            n,
+            Violation(
+                ann_seq,
+                "merkle_epoch_row_missing",
+                f"the chain announces epoch {epoch} as sealed but no merkle_root row exists — "
+                f"deleting the row deletes the check, not the evidence",
+            ),
+            sigs,
+            cps_checked,
+            cps_skipped,
+            eps_checked,
+            eps_skipped,
+        )
+    return VerifyResult(True, n, None, sigs, cps_checked, cps_skipped, eps_checked, eps_skipped)
 
 
 def _main(argv: list[str] | None = None) -> int:
@@ -259,7 +514,8 @@ def _main(argv: list[str] | None = None) -> int:
     if result.ok:
         print(
             f"OK: {result.records_checked} records, {result.checkpoints_checked} checkpoints "
-            f"verified, {result.skipped_checkpoints} skipped"
+            f"verified, {result.skipped_checkpoints} skipped; "
+            f"{result.epochs_checked} merkle epoch(s) re-derived"
         )
         # The signature step is the ONLY defense against a full consistent rewrite. If it ran
         # zero times on a non-empty chain (no --pubkey, or every row unsigned) the strongest
@@ -275,6 +531,23 @@ def _main(argv: list[str] | None = None) -> int:
             print(
                 f"WARNING: {result.skipped_checkpoints} checkpoint(s) skipped "
                 "(missing pubkey / --tsa-root) — their anchor proof was NOT verified"
+            )
+        # "0 epochs re-derived" reads identically to "nothing was ever sealed", and one of those is
+        # a deployment that never opted in while the other is a deployment whose Merkle evidence is
+        # gone. An operator who reads OK and moves on cannot tell them apart, so name it.
+        if result.records_checked > 0 and result.epochs_checked == 0:
+            print(
+                "NOTE: no merkle epochs were re-derived — either nothing has been sealed yet "
+                "(AUD-06 gives you no partial-disclosure evidence until it is) or the epoch "
+                "rows are gone"
+            )
+        # An epoch's root re-deriving proves the records did not change under it — it does NOT date
+        # the root. Without a verified anchor, a disclosure against it rests on our word alone.
+        if result.skipped_epochs > 0:
+            print(
+                f"WARNING: {result.skipped_epochs} merkle epoch(s) unanchored or skipped "
+                "(not anchored yet / missing pubkey / --tsa-root) — their root carries no "
+                "external authority"
             )
         return 0
     v = result.violation

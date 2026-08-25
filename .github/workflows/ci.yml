@@ -97,3 +97,39 @@ jobs:
       - name: garak + PyRIT ASR gate
         # Hard-fail gate: an ASR breach past the calibrated ceiling breaks the build (TEST-06).
         run: uv run pytest tests/redteam/test_garak_pyrit_gate.py -q
+
+  adapters:
+    # Dedicated OpenAI-Agents adapter gate (INT-08). `openai-agents` lives in the OPTIONAL
+    # `adapters` dependency group, and the `test` job's bare `uv sync --all-packages` PRUNES it —
+    # so both adapter modules `importorskip` away there and the slice's load-bearing proof (a real
+    # `Runner.run` in which a denied tool body provably never executes) would run nowhere in CI.
+    # Structured as a separate job for the same reason as the `redteam` gate above: the extra
+    # resolution stays off the lean `test` job.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.17"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install pinned OPA CLI
+        # The e2e adapter test drives the REAL compiled constitution, which tests/_opa.py builds at
+        # session start from OPA on PATH — the same requirement as the `test` job.
+        run: |
+          curl -fsSL -o /usr/local/bin/opa \
+            "https://openpolicyagent.org/downloads/v${OPA_VERSION}/opa_linux_amd64_static"
+          chmod +x /usr/local/bin/opa
+          opa version
+
+      - name: Sync workspace + adapters extra
+        run: uv sync --all-packages --group adapters
+
+      - name: OpenAI Agents adapter gate
+        run: |
+          uv run pytest tests/unit/test_openai_agents_adapter.py \
+            tests/integration/test_openai_agents_e2e.py -q

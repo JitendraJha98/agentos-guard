@@ -99,7 +99,11 @@ def test_list_and_get_shapes_and_ordering(store) -> None:
 def test_enrich_from_audit_observes_class_level_and_skips_events(store) -> None:
     """enrich_from_audit maps each decision record's action_type -> capability class and records an
     observed (agent, class) row. Event records (body carries 'kind') are skipped — class-level by
-    design (the audit body omits per-action target)."""
+    design (the audit body omits per-action target).
+
+    The source is `observed_class`, NOT `observed`: the row's name is a placeholder for the CLASS
+    (`name == kind`), so it can never reconcile with a manifest's per-tool name. Marking it as a
+    full-fidelity observation made DISC-05 flag every declaring agent in the fleet."""
     from agentos_controlplane.inventory import InventoryStore
     from agentos_controlplane.store.models import AuditRecord
 
@@ -124,7 +128,60 @@ def test_enrich_from_audit_observes_class_level_and_skips_events(store) -> None:
     assert applied == 2  # the event record was skipped
 
     rows = {(r.kind, r.name, r.source) for r in inv.get_inventory("a")}
-    assert rows == {("tool", "tool", "observed"), ("delegation", "delegation", "observed")}
+    assert rows == {
+        ("tool", "tool", "observed_class"),
+        ("delegation", "delegation", "observed_class"),
+    }
+
+    # Idempotent: a second reconcile pass re-upserts the same rows, it does not relabel them.
+    inv.enrich_from_audit()
+    assert {r.source for r in inv.get_inventory("a")} == {"observed_class"}
+
+
+def test_repeated_activity_of_one_class_is_still_one_row(store) -> None:
+    """The reconciler sees one audit record per ACTION but the (agent, class) ROW is the same one:
+    an agent that made two tool calls must not try to insert its class-level row twice."""
+    from agentos_controlplane.inventory import InventoryStore
+    from agentos_controlplane.store.models import AuditRecord
+
+    with store() as s:
+        for i in range(3):
+            s.add(AuditRecord(
+                seq=i, prev_hash=None, record_hash=f"h{i}",
+                body={"seq": i, "agent_id": "a", "action_type": "tool_call"},
+            ))
+        s.commit()
+
+    inv = InventoryStore(store)
+    assert inv.enrich_from_audit() == 3  # observations applied, one per record
+    assert [(r.kind, r.name) for r in inv.get_inventory("a")] == [("tool", "tool")]
+
+
+def test_source_precedence_never_downgrades_a_row(store) -> None:
+    """declared (the manifest) > observed (this exact component was used) > observed_class (the
+    class-level placeholder). Without the promotion half, a class-level row would permanently mask
+    a genuine, undeclared component that happens to be named after its own class."""
+    from agentos_controlplane.inventory import InventoryStore
+    from agentos_controlplane.store.models import AuditRecord
+
+    with store() as s:
+        s.add(AuditRecord(
+            seq=0, prev_hash=None, record_hash="h0",
+            body={"seq": 0, "agent_id": "a", "action_type": "tool_call"},
+        ))
+        s.commit()
+
+    inv = InventoryStore(store)
+    inv.enrich_from_audit()
+    assert [r.source for r in inv.get_inventory("a")] == ["observed_class"]
+
+    inv.observe("a", "tool", "tool")  # a real, full-fidelity sighting of a tool named "tool"
+    assert [r.source for r in inv.get_inventory("a")] == ["observed"]
+
+    inv.declare("a", tools=["tool"])
+    assert [r.source for r in inv.get_inventory("a")] == ["declared"]
+    inv.observe("a", "tool", "tool")
+    assert [r.source for r in inv.get_inventory("a")] == ["declared"]  # declared still wins
 
 
 def test_register_with_manifest_writes_declared_inventory(store) -> None:
