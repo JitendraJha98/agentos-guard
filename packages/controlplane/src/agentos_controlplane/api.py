@@ -31,6 +31,7 @@ from agentos_controlplane.forensics import EvidenceGraph
 from agentos_controlplane.framework_discovery import FrameworkDetector
 from agentos_controlplane.graph import AgentGraphStore
 from agentos_controlplane.health import HealthStore
+from agentos_controlplane.impact import ImpactAnalyzer
 from agentos_controlplane.inventory import InventoryStore
 from agentos_controlplane.killswitch import EmergencyActiveError, KillSwitchStore
 from agentos_controlplane.merkle import MerkleError, MerkleIntegrityError, MerkleSealer
@@ -440,6 +441,8 @@ def build_inventory_router(
     conflicts: ConflictEngine | None = None,
     # POL-10: likewise appended last.
     amendments: AmendmentStore | None = None,
+    # ABOM-03: likewise appended last.
+    impact: ImpactAnalyzer | None = None,
 ) -> APIRouter:
     """DISC-01/02 — read API over the authoritative agent inventory, plus the DISC-03 framework
     inventory, the DISC-04 shadow-agent sightings, the DISC-05 rogue-agent findings, the DISC-06
@@ -882,6 +885,25 @@ def build_inventory_router(
             raise HTTPException(status_code=404, detail="amendments are not wired")
         return amendments.constitution_history()
 
+    @router.get("/impact")
+    def vulnerability_impact(digest: str | None = None, name: str | None = None) -> dict:
+        """ABOM-03 — which agents use a compromised component.
+
+        Gated: the answer is a list of exactly where a fleet is exploitable, which is the most
+        useful document an attacker could be handed.
+
+        Read the three counts beside the matches before sizing a response. `agents_searched` versus
+        `agents_total` says how much of the fleet this covered, and `agents_without_components`
+        counts agents holding no ABOM to match against — they are NOT known-safe, and a small
+        affected list beside a large one of those is a gap, not an all-clear.
+        """
+        if impact is None:
+            raise HTTPException(status_code=404, detail="impact analysis is not wired")
+        try:
+            return impact.who_uses(digest=digest, name=name)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     return router
 
 
@@ -944,6 +966,8 @@ def create_app(
     conflicts: ConflictEngine | None = None,
     # POL-10: likewise appended last.
     amendments: AmendmentStore | None = None,
+    # ABOM-03: likewise appended last.
+    impact: ImpactAnalyzer | None = None,
 ) -> FastAPI:
     # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
     # explicit arg -> AGENTOS_API_TOKEN env -> ephemeral random (logged) — never silently open.
@@ -1015,6 +1039,7 @@ def create_app(
                 forensics,
                 conflicts,
                 amendments,
+                impact,
             ),
             dependencies=guard,
         )
