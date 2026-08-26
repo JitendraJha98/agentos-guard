@@ -15,13 +15,13 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "agentos-constitution",
-    "agentos-contract",
-    "agentos-controlplane",
-    "agentos-gateway",
     "agentos-guard",
-    "agentos-pipeline",
-    "agentos-sdk",
+    "agentos-guard-constitution",
+    "agentos-guard-contract",
+    "agentos-guard-controlplane",
+    "agentos-guard-gateway",
+    "agentos-guard-pipeline",
+    "agentos-guard-sdk",
 ]
 
 [[package]]
@@ -43,92 +43,16 @@ wheels = [
 ]
 
 [[package]]
-name = "agentos-constitution"
-version = "0.1.0"
-source = { editable = "packages/constitution" }
-dependencies = [
-    { name = "agentos-contract" },
-    { name = "pydantic" },
-    { name = "pyyaml" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "agentos-contract", editable = "packages/contract" },
-    { name = "pydantic", specifier = ">=2.13,<3" },
-    { name = "pyyaml", specifier = ">=6,<7" },
-]
-
-[[package]]
-name = "agentos-contract"
-version = "0.1.0"
-source = { editable = "packages/contract" }
-dependencies = [
-    { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "pydantic", specifier = ">=2.13,<3" }]
-
-[[package]]
-name = "agentos-controlplane"
-version = "0.1.0"
-source = { editable = "packages/controlplane" }
-dependencies = [
-    { name = "agentos-contract" },
-    { name = "alembic" },
-    { name = "cryptography" },
-    { name = "fastapi" },
-    { name = "jinja2" },
-    { name = "pyjwt" },
-    { name = "python-multipart" },
-    { name = "sqlalchemy", extra = ["asyncio"] },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "agentos-contract", editable = "packages/contract" },
-    { name = "alembic", specifier = ">=1.18" },
-    { name = "cryptography", specifier = ">=48" },
-    { name = "fastapi", specifier = ">=0.115" },
-    { name = "jinja2", specifier = ">=3.1" },
-    { name = "pyjwt", specifier = ">=2.13" },
-    { name = "python-multipart", specifier = ">=0.0.9" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0,<3" },
-    { name = "uvicorn", specifier = ">=0.30" },
-]
-
-[[package]]
-name = "agentos-gateway"
-version = "0.1.0"
-source = { editable = "packages/gateway" }
-dependencies = [
-    { name = "agentos-contract" },
-    { name = "agentos-sdk" },
-    { name = "fastapi" },
-    { name = "httpx" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "agentos-contract", editable = "packages/contract" },
-    { name = "agentos-sdk", editable = "packages/sdk" },
-    { name = "fastapi", specifier = ">=0.115" },
-    { name = "httpx", specifier = ">=0.27" },
-]
-
-[[package]]
 name = "agentos-guard"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
-    { name = "agentos-constitution" },
-    { name = "agentos-contract" },
-    { name = "agentos-controlplane" },
-    { name = "agentos-gateway" },
-    { name = "agentos-pipeline" },
-    { name = "agentos-sdk" },
+    { name = "agentos-guard-constitution" },
+    { name = "agentos-guard-contract" },
+    { name = "agentos-guard-controlplane" },
+    { name = "agentos-guard-gateway" },
+    { name = "agentos-guard-pipeline" },
+    { name = "agentos-guard-sdk" },
     { name = "alembic" },
     { name = "anthropic" },
     { name = "asyncpg" },
@@ -161,12 +85,12 @@ redteam = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agentos-constitution", editable = "packages/constitution" },
-    { name = "agentos-contract", editable = "packages/contract" },
-    { name = "agentos-controlplane", editable = "packages/controlplane" },
-    { name = "agentos-gateway", editable = "packages/gateway" },
-    { name = "agentos-pipeline", editable = "packages/pipeline" },
-    { name = "agentos-sdk", editable = "packages/sdk" },
+    { name = "agentos-guard-constitution", editable = "packages/constitution" },
+    { name = "agentos-guard-contract", editable = "packages/contract" },
+    { name = "agentos-guard-controlplane", editable = "packages/controlplane" },
+    { name = "agentos-guard-gateway", editable = "packages/gateway" },
+    { name = "agentos-guard-pipeline", editable = "packages/pipeline" },
+    { name = "agentos-guard-sdk", editable = "packages/sdk" },
     { name = "alembic", specifier = ">=1.18" },
     { name = "anthropic", specifier = ">=0.92" },
     { name = "asyncpg", specifier = ">=0.31" },
@@ -198,11 +122,87 @@ redteam = [
 ]
 
 [[package]]
-name = "agentos-pipeline"
+name = "agentos-guard-constitution"
+version = "0.1.0"
+source = { editable = "packages/constitution" }
+dependencies = [
+    { name = "agentos-guard-contract" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agentos-guard-contract", editable = "packages/contract" },
+    { name = "pydantic", specifier = ">=2.13,<3" },
+    { name = "pyyaml", specifier = ">=6,<7" },
+]
+
+[[package]]
+name = "agentos-guard-contract"
+version = "0.1.0"
+source = { editable = "packages/contract" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.13,<3" }]
+
+[[package]]
+name = "agentos-guard-controlplane"
+version = "0.1.0"
+source = { editable = "packages/controlplane" }
+dependencies = [
+    { name = "agentos-guard-contract" },
+    { name = "alembic" },
+    { name = "cryptography" },
+    { name = "fastapi" },
+    { name = "jinja2" },
+    { name = "pyjwt" },
+    { name = "python-multipart" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agentos-guard-contract", editable = "packages/contract" },
+    { name = "alembic", specifier = ">=1.18" },
+    { name = "cryptography", specifier = ">=48" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "jinja2", specifier = ">=3.1" },
+    { name = "pyjwt", specifier = ">=2.13" },
+    { name = "python-multipart", specifier = ">=0.0.9" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0,<3" },
+    { name = "uvicorn", specifier = ">=0.30" },
+]
+
+[[package]]
+name = "agentos-guard-gateway"
+version = "0.1.0"
+source = { editable = "packages/gateway" }
+dependencies = [
+    { name = "agentos-guard-contract" },
+    { name = "agentos-guard-sdk" },
+    { name = "fastapi" },
+    { name = "httpx" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agentos-guard-contract", editable = "packages/contract" },
+    { name = "agentos-guard-sdk", editable = "packages/sdk" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.27" },
+]
+
+[[package]]
+name = "agentos-guard-pipeline"
 version = "0.1.0"
 source = { editable = "packages/pipeline" }
 dependencies = [
-    { name = "agentos-contract" },
+    { name = "agentos-guard-contract" },
     { name = "opa-wasmtime" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
@@ -211,7 +211,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agentos-contract", editable = "packages/contract" },
+    { name = "agentos-guard-contract", editable = "packages/contract" },
     { name = "opa-wasmtime", specifier = ">=0.1.1,<0.2" },
     { name = "opentelemetry-api", specifier = ">=1.42" },
     { name = "opentelemetry-sdk", specifier = ">=1.42" },
@@ -219,28 +219,30 @@ requires-dist = [
 ]
 
 [[package]]
-name = "agentos-sdk"
+name = "agentos-guard-sdk"
 version = "0.1.0"
 source = { editable = "packages/sdk" }
 dependencies = [
-    { name = "agentos-constitution" },
-    { name = "agentos-contract" },
-    { name = "agentos-controlplane" },
-    { name = "agentos-pipeline" },
+    { name = "agentos-guard-constitution" },
+    { name = "agentos-guard-contract" },
+    { name = "agentos-guard-controlplane" },
+    { name = "agentos-guard-pipeline" },
     { name = "httpx" },
     { name = "langchain" },
     { name = "langgraph" },
+    { name = "langsmith" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "agentos-constitution", editable = "packages/constitution" },
-    { name = "agentos-contract", editable = "packages/contract" },
-    { name = "agentos-controlplane", editable = "packages/controlplane" },
-    { name = "agentos-pipeline", editable = "packages/pipeline" },
+    { name = "agentos-guard-constitution", editable = "packages/constitution" },
+    { name = "agentos-guard-contract", editable = "packages/contract" },
+    { name = "agentos-guard-controlplane", editable = "packages/controlplane" },
+    { name = "agentos-guard-pipeline", editable = "packages/pipeline" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "langchain", specifier = ">=1.3,<2" },
     { name = "langgraph", specifier = ">=1.2,<2" },
+    { name = "langsmith", specifier = "!=0.11.0,!=0.11.1" },
 ]
 
 [[package]]
