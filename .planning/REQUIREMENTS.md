@@ -189,6 +189,17 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 ### OSS Distribution & Community
 
 - [ ] **OSS-01** [P0]: Versioned releases of the workspace packages (and the quickstart extra) are published to PyPI via a tagged release workflow, so the zero-infra quickstart's single `pip install` (SDK-05) is true for someone outside this repository — added 2026-07-05 audit: the "best in open source" goal had zero distribution requirements
+  - **Packaging COMPLETE and verified 2026-08-26; publication still pending a human.** Everything
+    that can be done without a PyPI account is done and tested: `agentos-sdk` turned out to be TAKEN
+    on PyPI by an unrelated project, so the family is namespaced `agentos-guard-*` (import names
+    unchanged); the root umbrella now builds at all (it had no `[build-system]`, so
+    `pip install agentos-guard` would have 404'd); license/classifiers/URLs/authors added and
+    internal deps pinned `==0.1.0`; and a fresh venv installing only the built wheels runs
+    `agentos-quickstart` to completion with no repo and no `opa` binary. All 14 artifacts pass
+    `twine check`. Two steps REMAIN and both need the account owner: (1) create PENDING Trusted
+    Publishers on PyPI for all seven names — owner `JitendraJha98`, repo `agentos-guard`, workflow
+    `release.yml`, environment `pypi`; (2) push tag `v0.1.0`. STAYS OPEN until a release actually
+    publishes — a green build is not a release.
 - [x] **OSS-02** [P0]: Adoption and security table stakes ship with the P0 launch: `CONTRIBUTING.md`, `SECURITY.md` (vulnerability-disclosure policy — non-negotiable for a security product), and issue/PR templates
 
 ### Performance
@@ -347,7 +358,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | DASH-02 | Phase 5 | Complete |
 | DASH-03 | Phase 5 | Complete |
 | DASH-04 | Phase 12 | Complete |
-| OSS-01 | Phase 6 | Pending |
+| OSS-01 | Phase 6 | Packaging done + install verified; publish pending (see note) |
 | OSS-02 | Phase 6 | Complete |
 | PERF-01 | Phase 14 | Complete |
 
