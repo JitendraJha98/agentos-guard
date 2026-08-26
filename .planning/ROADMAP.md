@@ -35,7 +35,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 11: Merkle Audit, Economics & Compliance Export** - Merkle DAG audit upgrade with inclusion proofs, cost/budget governance through the graduated engine, and one-click EU AI Act + SOC 2 evidence export (completed 2026-08-19)
 - [x] **Phase 12: Continuous Adversarial Validation & Rich Dashboard** - Attack-success-rate tracking, scheduled continuous validation, multi-step campaigns, health monitoring, the query-time evidence graph, and the rich SLO/graph/attack dashboard (completed 2026-08-19)
 - [x] **Phase 13: Constitution Amendments & Conflict Reasoning** - Proposable/ratifiable Constitution amendments, cross-agent transitive-permission conflict resolution, and Byzantine-tolerant quorum (signed votes + 3f+1 + certificates; NOT a replicated protocol — see POL-12's note) (completed 2026-08-20)
-- [ ] **Phase 14: Self-Play, ZK Proofs, Decentralized Identity & Rust Hot Path** - Continuous self-play + runtime patching + threat intel, zero-knowledge compliance proofs, SPIFFE/mTLS + portable reputation (optional pluggable backend, ADR-0007), K8s sidecar/operator, ROI/ABOM impact analysis, and the profile-driven Rust rewrite
+- [~] **Phase 14: Self-Play, Portable Reputation, ROI & Impact Analysis** - Adversarial self-play with held-out scoring and POL-10 patch proposal, threat intel, portable reputation, ROI analytics, ABOM vulnerability impact analysis, and PERF-01 answered by profile. **AUD-07 (ZK proofs), IDN-04 (SPIFFE/mTLS) and INT-09 (K8s operator) are DEFERRED** — tooling absent on the build host; see each requirement's note (2026-08-20)
 
 ## Phase Details
 
@@ -286,7 +286,22 @@ still dated 2026-06-10); do it before Phase 7 planning.
   2. Zero-knowledge compliance proofs prove properties (e.g. "no PII exfiltrated") without revealing underlying data over the Merkle-anchored chain.
   3. SPIFFE/SVID workload identity enables zero-trust mTLS, portable reputation is exportable across deployments via an optional pluggable backend (any stake/slashing economics confined to that backend, never required — ADR-0007), and a Kubernetes sidecar/operator PEP intercepts at the network layer behind the same contract.
   4. ROI analytics present value-vs-cost per agent/workflow, ABOM vulnerability impact analysis answers "which agents use compromised component vX?" instantly, and hot-path enforcement components are rewritten in Rust (PyO3) where profiling justifies it.
-**Plans**: TBD
+
+> **Delivered 6 of 9; 3 deferred with the reason recorded on each requirement.** The P0/P1 gate this
+> phase depends on was VERIFIED before starting (latency 6 passed, 108 audit-verifiability tests,
+> coverage matrix green, red-team gating 444 passed), not assumed. Criteria 2 and 3 are the deferred
+> half: no ZK proving system, no SPIFFE library or SPIRE, and no cluster on the build host. Shipping
+> a hand-rolled "zero-knowledge proof" or an unverified K8s operator would have been worse than
+> shipping neither, because the NAME would promise a guarantee nothing verified — the POL-12 lesson
+> from Phase 13, applied three more times.
+
+**Plans**: 5 slices (spec `docs/superpowers/specs/2026-08-20-phase-14-selfplay-portability-perf-design.md`)
+- [x] 14a — ABOM-03 vulnerability impact analysis: the inverse index over Phase-8 ABOM digests, taking SEC-08's own known-bad set so the two cannot disagree. Reports how much of the fleet it searched and how many agents hold no ABOM, because "2 affected" out of 2 searched and out of 200 are different statements
+- [x] 14b — TEST-10/11 self-play: MUTATES the corpus deterministically rather than claiming LLM novelty it could not test in CI, scores on a held-out split, proposes patches through POL-10 human ratification, imports threat intel as probes never rules — and executes nothing
+- [x] 14c — TRST-05 portable reputation: exported signed with evidence counts, imported as a CLAIM and never as local trust. `import_bundle` is static so it cannot reach local state even by accident; ADR-0007's fence is asserted on the module AST
+- [x] 14d — ECON-04 ROI: operator-declared value against measured cost, with no inferred-value path — the obvious proxy would reward loosening the guard
+- [x] 14e — PERF-01 profile: measured mean 4.15 ms / p95 5.26 ms against a 5/10 ms budget with 73% of self time in SQLite. Both justification conditions fail, so no rewrite — an answer from evidence rather than from the absent toolchain
+- [ ] AUD-07 / IDN-04 / INT-09 — DEFERRED, each recorded on its requirement
 
 ## Progress
 
@@ -304,8 +319,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 7. Trust, Reputation & Identity Hardening | 4/4 | Complete    | 2026-07-17 |
 | 8. Full Security Engine & MCP Gateway | 8/8 | Complete    | 2026-07-17 |
 | 9. Runtime Containment & Consensus | 6/6 | Complete    | 2026-08-11 |
-| 10. Gateway PEP, Second Adapter & Live Graph | 0/TBD | Not started | - |
-| 11. Merkle Audit, Economics, ABOM & Compliance Export | 0/TBD | Not started | - |
-| 12. Continuous Adversarial Validation & Rich Dashboard | 0/TBD | Not started | - |
-| 13. Constitution Amendments & Conflict Reasoning | 0/TBD | Not started | - |
-| 14. Self-Play, ZK Proofs, Decentralized Identity & Rust Hot Path | 0/TBD | Not started | - |
+| 10. Gateway PEP, Second Adapter & Live Graph | 6/6 | Complete    | 2026-08-18 |
+| 11. Merkle Audit, Economics, ABOM & Compliance Export | 6/6 | Complete    | 2026-08-19 |
+| 12. Continuous Adversarial Validation & Rich Dashboard | 6/6 | Complete    | 2026-08-19 |
+| 13. Constitution Amendments & Conflict Reasoning | 3/3 | Complete    | 2026-08-20 |
+| 14. Self-Play, ZK Proofs, Decentralized Identity & Rust Hot Path | 5/5 | 6 of 9 reqs; 3 deferred    | 2026-08-20 |

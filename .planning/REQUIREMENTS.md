@@ -20,6 +20,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **INT-07** [P1]: A framework-agnostic network gateway/proxy PEP intercepts actions without SDK changes, behind the same pipeline contract
 - [x] **INT-08** [P1]: At least one additional framework adapter (e.g. CrewAI or OpenAI Agents SDK) intercepts actions
 - [ ] **INT-09** [P2]: A Kubernetes sidecar/operator PEP intercepts at the network layer behind the same contract
+  - **DEFERRED (Phase 14, 2026-08-20) — no Docker and no cluster to verify against.** An unverified operator is a YAML file with a claim attached. Phase 10's gateway PEP (INT-07) already provides network-layer interception behind the same contract, which is the property INT-09 exists to deliver, so the gap is packaging rather than capability. Open work; needs a cluster.
 
 ### Decision Pipeline
 
@@ -84,6 +85,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **IDN-02** [P0]: The identity stage verifies the token; forged/unknown identity short-circuits to deny
 - [x] **IDN-03** [P1]: Agents are issued X.509-style certificates binding identity to keys
 - [ ] **IDN-04** [P2]: SPIFFE/SVID workload identity enables zero-trust mTLS
+  - **DEFERRED (Phase 14, 2026-08-20) — no SPIFFE library and no SPIRE to issue SVIDs.** Phase 7 shipped IDN-03 with deliberately SPIFFE-shaped URI SANs (`agentos://agent/<id>`), so this remains a change of SCHEME rather than of model once the infrastructure exists. Open work; needs a SPIRE deployment to verify against.
 
 ### Trust & Reputation
 
@@ -91,7 +93,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **TRST-02** [P0]: Trust modulates outcome within a policy-defined band but never overrides a deterministic policy decision
 - [x] **TRST-03** [P1]: A longitudinal reputation score is derived from violation/approval history
 - [x] **TRST-04** [P1]: Trust propagates (and decays) across delegation edges as a bounded budget; delegated scope is enforced as an intersection, not a union
-- [ ] **TRST-05** [P2]: Portable, longitudinal reputation is exportable across deployments via an **optional, deployment-pluggable** reputation backend; any stake/slashing economics live *only* in that optional backend and are **never required** to run the control plane (ADR-0007 — crypto-economics fenced out of core)
+- [x] **TRST-05** [P2]: Portable, longitudinal reputation is exportable across deployments via an **optional, deployment-pluggable** reputation backend; any stake/slashing economics live *only* in that optional backend and are **never required** to run the control plane (ADR-0007 — crypto-economics fenced out of core)
 
 ### Discovery & Agent Graph
 
@@ -111,6 +113,7 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **AUD-05** [P0]: A verifier (runnable in CI) detects any retroactive edit by re-validating the hash chain; chain checkpoints are externally anchored/signed
 - [x] **AUD-06** [P1]: The hash chain is upgraded to a Merkle DAG enabling inclusion proofs and partial disclosure
 - [ ] **AUD-07** [P2]: Zero-knowledge compliance proofs prove properties (e.g. "no PII exfiltrated") without revealing underlying data
+  - **DEFERRED (Phase 14, 2026-08-20) — no proving system available.** py_ecc, galois, zksk, petlib and pysnark are all absent here, and "zero-knowledge proof" has a precise cryptographic meaning a hand-rolled construction does not earn. Shipping something that compiled and passed single-process tests would be worse than not shipping it, because the NAME would promise a guarantee nothing verified. Open work; needs a real proving system (Groth16/PLONK/STARK) and the review that goes with it.
 - [x] **AUD-08** [P0]: Each `AuditRecord` carries a detached per-record EdDSA signature (reusing identity keys) so a single record verifies independently of the chain — proving the control plane authored that decision
 - [x] **AUD-09** [P1]: A forensic "evidence graph" reconstructs causal chains by joining the audit log with the materialized agent graph at query time (`parent_action_id`/`conversation_id`/`trace_id`, Postgres recursive CTEs) — no separate graph database
 
@@ -134,8 +137,9 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **TEST-07** [P1]: Attack-success-rate is tracked over time per agent/attack class
 - [x] **TEST-08** [P1]: Continuous validation re-runs suites against the live agent on a schedule
 - [x] **TEST-09** [P1]: Multi-step adversarial simulations run campaign-style attacks
-- [ ] **TEST-10** [P2]: Continuous adversarial self-play generates novel attacks, scores defenses, and proposes Constitution/policy patches (human-ratified, held-out eval)
-- [ ] **TEST-11** [P2]: A runtime-patching path rolls out ratified defenses; a threat-intel feed imports emerging attack patterns
+- [x] **TEST-10** [P2]: Continuous adversarial self-play generates novel attacks, scores defenses, and proposes Constitution/policy patches (human-ratified, held-out eval)
+  - **Scoped: the generator MUTATES, it does not invent.** Attacks are produced by recombining, re-encoding and amplifying the shipped corpus, deterministically from a seed — so they are attacks the corpus does not contain, NOT attacks nobody has thought of. An LLM-driven generator was rejected because the interpreter seam needs an API key and its tests skip without one, which would make this the one red-team component that never runs in CI. Scoring is on a held-out split (or it is self-congratulation), patches propose through POL-10 human ratification rather than a second path, and nothing generated is ever executed. The result payload states the generator type.
+- [x] **TEST-11** [P2]: A runtime-patching path rolls out ratified defenses; a threat-intel feed imports emerging attack patterns
 
 ### Observability
 
@@ -151,13 +155,14 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **ECON-01** [P1]: Token/API cost is attributed to each agent/action
 - [x] **ECON-02** [P1]: Token/budget limits are expressed as policy; over-budget actions are denied/escalated by the graduated-response engine
 - [x] **ECON-03** [P1]: GPU usage and downstream API consumption are attributed per agent
-- [ ] **ECON-04** [P2]: ROI analytics present value-vs-cost per agent/workflow
+- [x] **ECON-04** [P2]: ROI analytics present value-vs-cost per agent/workflow
+  - **Scoped: value is OPERATOR-DECLARED, never inferred.** Cost is measured (ECON-01/03); value is not observable by a control plane, since an action that completed may have produced nothing and one that was denied may have prevented a catastrophe. The obvious proxy — counting permitted actions — rises when the guard permits more, making the cheapest route to a better ROI dashboard *loosen your constitution*; there is no inferred-value path and a test asserts its absence.
 
 ### ABOM (Supply Chain)
 
 - [x] **ABOM-01** [P1]: Each `Agent` declares an Agent Bill of Materials (models, prompts, tools, MCP servers) as a resource
 - [x] **ABOM-02** [P1]: ABOM components are versioned with provenance
-- [ ] **ABOM-03** [P2]: Vulnerability impact analysis answers "which agents use compromised component vX?" instantly
+- [x] **ABOM-03** [P2]: Vulnerability impact analysis answers "which agents use compromised component vX?" instantly
 
 ### Control-Plane API & Persistence
 
@@ -184,11 +189,23 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 ### OSS Distribution & Community
 
 - [ ] **OSS-01** [P0]: Versioned releases of the workspace packages (and the quickstart extra) are published to PyPI via a tagged release workflow, so the zero-infra quickstart's single `pip install` (SDK-05) is true for someone outside this repository — added 2026-07-05 audit: the "best in open source" goal had zero distribution requirements
+  - **Packaging COMPLETE and verified 2026-08-26; publication still pending a human.** Everything
+    that can be done without a PyPI account is done and tested: `agentos-sdk` turned out to be TAKEN
+    on PyPI by an unrelated project, so the family is namespaced `agentos-guard-*` (import names
+    unchanged); the root umbrella now builds at all (it had no `[build-system]`, so
+    `pip install agentos-guard` would have 404'd); license/classifiers/URLs/authors added and
+    internal deps pinned `==0.1.0`; and a fresh venv installing only the built wheels runs
+    `agentos-quickstart` to completion with no repo and no `opa` binary. All 14 artifacts pass
+    `twine check`. Two steps REMAIN and both need the account owner: (1) create PENDING Trusted
+    Publishers on PyPI for all seven names — owner `JitendraJha98`, repo `agentos-guard`, workflow
+    `release.yml`, environment `pypi`; (2) push tag `v0.1.0`. STAYS OPEN until a release actually
+    publishes — a green build is not a release.
 - [x] **OSS-02** [P0]: Adoption and security table stakes ship with the P0 launch: `CONTRIBUTING.md`, `SECURITY.md` (vulnerability-disclosure policy — non-negotiable for a security product), and issue/PR templates
 
 ### Performance
 
-- [ ] **PERF-01** [P2]: Hot-path enforcement components are rewritten in Rust (PyO3 interop) where profiling justifies it
+- [x] **PERF-01** [P2]: Hot-path enforcement components are rewritten in Rust (PyO3 interop) where profiling justifies it
+  - **Answered by measurement; no rewrite, on the profile's evidence.** The requirement says a rewrite happens *where profiling justifies it*, so its precondition is a profile — delivered as `tests/benchmarks/test_perf_profile.py`, re-derived every run. Measured 2026-08-20 over 200 rounds: mean 4.15 ms and p95 5.26 ms against a 5 ms / 10 ms PIPE-04 budget, with 73.2% of self time in SQLAlchemy/SQLite and 20.1% in the WASM policy boundary. BOTH justification conditions fail: the path is inside budget, and the time is not in code a PyO3 port of our Python would move. A rewrite would add a toolchain, a build matrix and an FFI seam to a system whose cost is elsewhere. (This machine also has no cargo/rustc, but that is not the reason — if the profile later shows the path over budget with time in code we own, the same test says so.)
 
 ## v2 Requirements
 
@@ -229,7 +246,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | INT-06 | Phase 2 | Complete |
 | INT-07 | Phase 10 | Complete |
 | INT-08 | Phase 10 | Complete |
-| INT-09 | Phase 14 | Pending |
+| INT-09 | Phase 14 | Deferred (Phase 14 — tooling absent; see the requirement note) |
 | PIPE-01 | Phase 1 | Complete |
 | PIPE-02 | Phase 1 | Complete |
 | PIPE-03 | Phase 1 | Complete |
@@ -277,12 +294,12 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | IDN-01 | Phase 1 | Complete |
 | IDN-02 | Phase 1 | Complete |
 | IDN-03 | Phase 7 | Complete |
-| IDN-04 | Phase 14 | Pending |
+| IDN-04 | Phase 14 | Deferred (Phase 14 — tooling absent; see the requirement note) |
 | TRST-01 | Phase 1 | Complete |
 | TRST-02 | Phase 3 | Complete |
 | TRST-03 | Phase 7 | Complete |
 | TRST-04 | Phase 7 | Complete |
-| TRST-05 | Phase 14 | Pending |
+| TRST-05 | Phase 14 | Complete |
 | DISC-01 | Phase 5 | Complete |
 | DISC-02 | Phase 5 | Complete |
 | DISC-03 | Phase 10 | Complete |
@@ -295,7 +312,7 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | AUD-04 | Phase 4 | Complete |
 | AUD-05 | Phase 4 | Complete |
 | AUD-06 | Phase 11 | Complete |
-| AUD-07 | Phase 14 | Pending |
+| AUD-07 | Phase 14 | Deferred (Phase 14 — tooling absent; see the requirement note) |
 | AUD-08 | Phase 4 | Complete |
 | AUD-09 | Phase 12 | Complete |
 | CMP-01 | Phase 6 | Complete |
@@ -313,8 +330,8 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | TEST-07 | Phase 12 | Complete |
 | TEST-08 | Phase 12 | Complete |
 | TEST-09 | Phase 12 | Complete |
-| TEST-10 | Phase 14 | Pending |
-| TEST-11 | Phase 14 | Pending |
+| TEST-10 | Phase 14 | Complete |
+| TEST-11 | Phase 14 | Complete |
 | OBS-01 | Phase 6 | Complete |
 | OBS-02 | Phase 6 | Complete |
 | OBS-03 | Phase 6 | Complete |
@@ -324,10 +341,10 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | ECON-01 | Phase 11 | Complete |
 | ECON-02 | Phase 11 | Complete |
 | ECON-03 | Phase 11 | Complete |
-| ECON-04 | Phase 14 | Pending |
+| ECON-04 | Phase 14 | Complete |
 | ABOM-01 | Phase 8 | Complete |
 | ABOM-02 | Phase 8 | Complete |
-| ABOM-03 | Phase 14 | Pending |
+| ABOM-03 | Phase 14 | Complete |
 | API-01 | Phase 5 | Complete |
 | API-02 | Phase 5 | Complete |
 | API-03 | Phase 3 | Complete |
@@ -341,9 +358,9 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | DASH-02 | Phase 5 | Complete |
 | DASH-03 | Phase 5 | Complete |
 | DASH-04 | Phase 12 | Complete |
-| OSS-01 | Phase 6 | Pending |
+| OSS-01 | Phase 6 | Packaging done + install verified; publish pending (see note) |
 | OSS-02 | Phase 6 | Complete |
-| PERF-01 | Phase 14 | Pending |
+| PERF-01 | Phase 14 | Complete |
 
 **Coverage:**
 - v1 requirements: 123 total

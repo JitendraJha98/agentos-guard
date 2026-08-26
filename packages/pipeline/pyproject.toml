@@ -1,16 +1,50 @@
 [project]
-name = "agentos-pipeline"
+name = "agentos-guard-pipeline"
 version = "0.1.0"
 description = "The 4-stage decision pipeline. Phase-1 ships the SEC-01 risk stage: the deterministic, inline, ReDoS-safe PromptInjectionScorer + normalize() de-obfuscator + assess_risk aggregator. stdlib re/unicodedata/base64 + Pydantic only — NO LLM/model/network on the hot path (P0-killer)."
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Jitendra Jha" },
+    { name = "Siddhant Nikumbh" },
+]
+keywords = [
+    "ai", "agents", "agent-governance", "ai-safety", "security",
+    "policy", "opa", "audit", "llm", "guardrails",
+]
+# Development Status 3 (Alpha), not 4 (Beta): this is the first published release and the API
+# has never been depended on from outside this repo. A large test suite is not the same as a
+# proven interface, and this classifier is what an adopter reads to decide how much to trust
+# the version number.
+# No "License :: OSI Approved" classifier: PEP 639 forbids pairing one with a `license`
+# expression. No "Typing :: Typed" either -- there is no py.typed marker, so it would claim
+# something not actually shipped.
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Monitoring",
+]
 dependencies = [
-    "agentos-contract",
+    "agentos-guard-contract==0.1.0",
     "opa-wasmtime>=0.1.1,<0.2",
     "wasmtime>=27",
     "opentelemetry-api>=1.42",
     "opentelemetry-sdk>=1.42",
 ]
+
+[project.urls]
+Homepage = "https://github.com/JitendraJha98/agentos-guard"
+Repository = "https://github.com/JitendraJha98/agentos-guard"
+Issues = "https://github.com/JitendraJha98/agentos-guard/issues"
+Documentation = "https://github.com/JitendraJha98/agentos-guard/tree/main/docs/architecture"
 
 [build-system]
 requires = ["hatchling"]

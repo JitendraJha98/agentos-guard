@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: phase_in_progress
-stopped_at: 2026-08-25 — Phase 13 COMPLETE (3/3 slices); Phases 9-13 are now MERGED into development (CI green on the merge commit) and their feature branches are deleted. The Constitution is now amendable with human ratification and readable provenance, transitive permissions are computed across delegation chains with conflicts flagged as findings rather than denials, and require_consensus is backed by signed votes with 3f+1 arithmetic. POL-12 shipped SCOPED — Byzantine quorum, not a replicated protocol; the caveat is on the requirement itself. Phase 6's OSS-01 (first tagged PyPI release) remains the sole open item across Phases 6-13; Phase 14 not started.
-last_updated: 2026-08-25
-last_activity: 2026-08-25
+stopped_at: 2026-08-20 — Phase 14 delivered 6 of 9 requirements on branch phase-14-selfplay-portability-perf (cut from development AFTER Phases 9-13 were merged). AUD-07, IDN-04 and INT-09 are DEFERRED with the reason on each requirement: no ZK proving system, no SPIFFE/SPIRE, no cluster. PERF-01 was answered by profile — no rewrite, on evidence. Phase 6's OSS-01 (first tagged PyPI release) remains the sole open item from earlier phases.
+last_updated: 2026-08-20
+last_activity: 2026-08-20
 progress:
   total_phases: 14
-  completed_phases: 12
-  total_plans: 70
-  completed_plans: 70
-  percent: 89
+  completed_phases: 13
+  total_plans: 75
+  completed_plans: 75
+  percent: 95
 ---
 
 # Project State
@@ -25,7 +25,7 @@ See: .planning/PROJECT.md (updated 2026-06-01)
 
 ## Current Position
 
-Phase: 13 COMPLETE (2026-08-20) — merged into `development` on 2026-08-25 (Phases 10-13 landed together from `phase-10-gateway-adapter-graph`, where Phases 11-13 continued at the operator's request); CI green, branch deleted
+Phase: 14 PARTIAL (2026-08-20) — 6 of 9 requirements on branch `phase-14-selfplay-portability-perf`; AUD-07 / IDN-04 / INT-09 deferred with reasons recorded
 Plan: Phase 11 delivered as 6 slices covering all 7 requirements — 11a AUD-06 Merkle audit, 11b ECON-01 cost attribution, 11c ECON-02 budget as policy, 11d ECON-03 GPU/downstream attribution, 11e CMP-04/05 EU AI Act + SOC 2, 11f CMP-06 evidence export. Built via the superpowers workflow (spec -> per-slice plan -> subagent implement + two-stage adversarial review + fix + re-review). EVERY slice came back NOT APPROVED on its first review pass; the findings were real and the reasoning is recorded in the commit messages.
 Status: Phases 1–5, 7–13 complete; Phase 6 ~5/6 (OSS-01 first PyPI release the sole open item). Phase 14 not started.
 Last activity: 2026-08-19
@@ -140,6 +140,14 @@ Recent decisions affecting current work:
 - [Phase 13]: [13c] POL-12 shipped SCOPED and the caveat lives on the requirement, not in a commit message. Signed votes bind the action AND the outcome (without the latter, approval of a `sandbox` replays as approval of an `allow` — the voter agreed to containment, not execution); 3f+1 arithmetic is refused at CONSTRUCTION when below threshold; equivocation VOIDS a voter rather than last-write-wins handing one liar the outcome; the certificate verifies as a pure function. Votes are NOT verified through audit.verify_record_signature — that prepends the AUDIT domain, and borrowing it would put votes and audit records in one signing domain with the same key often signing both.
 - [Phase 13]: [13c] It also made an existing default honest: POL-09's shipped 2-of-3 survives one voter being DOWN, not one voter LYING, and `byzantine_tolerance(3) == 0` says so rather than rounding up.
 
+- [Phase 14]: The P0/P1 gate Phase 14 depends on was VERIFIED before the phase started, not assumed — latency 6 passed, 108 audit-verifiability tests, coverage matrix green, red-team gating 444 passed. Worth repeating on any gated phase: the gate is four runnable checks, so run them.
+- [Phase 14]: Three requirements DEFERRED rather than faked, each recorded on the requirement itself: AUD-07 (no ZK proving system — "zero-knowledge proof" has a precise cryptographic meaning a hand-rolled construction does not earn), IDN-04 (no SPIFFE library or SPIRE), INT-09 (no Docker or cluster; an unverified operator is a YAML file with a claim attached, and INT-07's gateway already delivers the interception property). This is POL-12's lesson applied three more times: shipping something that compiles and has never met the conditions it exists for is WORSE than shipping nothing, because the name promises a guarantee nothing verified.
+- [Phase 14]: [14e] PERF-01 was answered by MEASUREMENT rather than by the absent toolchain. The requirement says a rewrite happens "where profiling justifies it", so its precondition is a profile. Measured mean 4.15 ms / p95 5.26 ms against a 5/10 ms budget, with 73.2% of self time in SQLAlchemy/SQLite and 20.1% in the WASM boundary. Both justification conditions fail — inside budget, and the time is not in code a PyO3 port would move. The profile ships as a test so the answer is re-derived rather than ageing into a claim.
+- [Phase 14]: [14b] "Self-play" here MUTATES the corpus deterministically; it does not invent. An LLM generator was rejected because the interpreter seam needs an API key and skips without one, which would make it the one red-team component that never runs in CI. Scoring is on a held-out split or it is self-congratulation, and `generalises` is None rather than True when a split is empty. Patches propose THROUGH POL-10 rather than beside it — a second way to change the rules would be a second thing to attack.
+- [Phase 14]: [14c] Imported reputation is a CLAIM, never local trust — otherwise it is a laundering path between deployments (farm a 0.99 somewhere permissive, export, import where it matters). Enforced by construction: `import_bundle` is a staticmethod and cannot reach local state. ADR-0007's crypto-economics fence is asserted on the module AST rather than its text, so the fence can stay documented without the test tripping on its own explanation.
+- [Phase 14]: [14d] ECON-04 has NO inferred-value path. The obvious proxy — counting permitted actions — rises when the guard permits more, so it would make loosening a constitution the cheapest route to a better ROI dashboard. A metric that rewards weakening the control plane has no business inside it.
+- [Phase 14]: [14a] ABOM-03 reports how much of the fleet it searched and how many agents hold no ABOM at all, because a small affected-list beside a large unsearched one is a gap rather than an all-clear — and an operator sizes an incident response off that number.
+
 ### Pending Todos
 
 [From .planning/todos/pending/ — ideas captured during sessions]
@@ -149,6 +157,10 @@ None yet.
 ### Blockers/Concerns
 
 [Issues that affect future work]
+
+- **Three Phase-14 requirements are OPEN, not done.** AUD-07 (zero-knowledge compliance proofs), IDN-04 (SPIFFE/SVID + mTLS) and INT-09 (K8s sidecar/operator) were deferred because the build host has no proving library, no SPIFFE/SPIRE, and no Docker or cluster. Each carries its reason on the requirement. Anyone reading the Phase-14 title should read those three notes before assuming the moonshot layer is complete.
+- **A stale checkout looks exactly like a green build.** Twice this session the working tree was on `development` rather than the phase branch, and the suite read 1313 tests instead of 2414 while every gate passed. Check the COUNT, not just the colour. (`git branch --show-current` before trusting a gate.)
+- **The latency gate fails on a LOADED host, and it is not a Phase-14 regression — established by controlled experiment, not by assertion.** Phase 14 changed ZERO files in `packages/pipeline` and `packages/contract`, and `tests/conftest.py` plus `tests/benchmarks/test_latency_trend.py` are byte-identical to the merge base, so the measured code path is provably the same on both sides. Run in isolation on an idle box BOTH trees pass (~4.0-4.4 ms mean against a 5 ms budget); running the `latency` marker set together it lands at 4.9 ms, i.e. ON the line and flipping run to run; inside the full suite the mean climbs to 5.3-6.2 ms while p95 still passes (8.8 vs a 10 ms budget). So this host is MARGINAL against the mean budget rather than comfortably inside it — treat a future failure here as a load question first and a code question second, but do not treat it as always-benign either. Worth recording HOW this was nearly got wrong: a first A/B ran the base first in every pair and showed the branch ~4% slower, which looked like a small regression. Reversing the order flipped the result — whichever tree ran SECOND was slower — so the delta tracked position, not code. An A/B with a fixed order measures the order. Do not loosen the 5 ms budget to make this green; the budget is not the thing that changed.
 
 - **POL-12 is scoped, and the remainder is real open work.** A genuine replicated consensus protocol (PBFT/Tendermint/HotStuff — leader election, view change, partition liveness) was NOT built, because it needs a network consensus layer and multi-node partition testing that do not exist here (D-14). What ships is Byzantine-tolerant quorum arithmetic over authenticated votes. The caveat is recorded on the POL-12 requirement and in the roadmap, and a test keeps the module from over-claiming — but anyone reading "BFT consensus backs require_consensus" in the requirement title should read the note under it.
 

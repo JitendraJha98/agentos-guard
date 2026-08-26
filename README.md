@@ -143,9 +143,39 @@ agent inventory & discovery), gated agent **self-registration**, a Python
 in-process opa-wasm, no Docker), and a cookie-gated **operator dashboard** (inventory · approvals
 · kill switch).
 
-**🛠️ Next (Phase 6):** OTel spans/metrics, OWASP/NIST/EU-minimal compliance mapping, and the
-pytest-native red-team layer that statistically gates CI — closing out Phase 0.
-See the 14-phase [roadmap](.planning/ROADMAP.md).
+**🛠️ Status:** Phases 1–13 are complete and Phase 14 delivered 6 of its 9 requirements.
+Three remain open and are marked as such — zero-knowledge compliance proofs (AUD-07),
+SPIFFE/mTLS workload identity (IDN-04), and the Kubernetes operator (INT-09); each carries its
+reason in [REQUIREMENTS.md](.planning/REQUIREMENTS.md). See the 14-phase
+[roadmap](.planning/ROADMAP.md).
+
+## 📦 Install
+
+```bash
+pip install agentos-guard      # the umbrella: SDK, pipeline, control plane, gateway
+```
+
+The six packages also publish separately, so an integrator can depend on just the stable
+seam instead of the whole control plane:
+
+| Distribution | What it gives you |
+|---|---|
+| **`agentos-guard`** | Umbrella — depends on all six below. Start here. |
+| `agentos-guard-sdk` | The data-plane PEP: LangChain middleware, `governed_call`, the quickstart. |
+| `agentos-guard-contract` | `AgentAction` / `Decision` / `RiskFinding` — the integration seam, **zero internal dependencies**. Pin this if you are only speaking the protocol. |
+| `agentos-guard-pipeline` | The decision pipeline: risk scoring + the WASM policy floor. |
+| `agentos-guard-constitution` | Constitution schema and the deterministic Constitution → Rego compiler. |
+| `agentos-guard-controlplane` | Registry, identity, hash-chained audit, API and dashboard. |
+| `agentos-guard-gateway` | The framework-agnostic network PEP (reverse proxy). |
+
+> **Distribution names are prefixed; import names are not.** You install
+> `agentos-guard-sdk` but you still write `import agentos_sdk`. The `agentos-sdk` name on
+> PyPI belongs to an unrelated project, so the published family is namespaced under
+> `agentos-guard-*` while the modules keep their original names.
+
+All seven share one version and are released from a single tag, so internal dependencies are
+pinned exactly (`agentos-guard-contract==0.1.0`) — combinations that were never built together
+are never advertised as supported.
 
 ## ⚡ Explore from source
 

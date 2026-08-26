@@ -4,6 +4,34 @@ version = "0.1.0"
 description = "Governance and security control plane for AI agents"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Jitendra Jha" },
+    { name = "Siddhant Nikumbh" },
+]
+keywords = [
+    "ai", "agents", "agent-governance", "ai-safety", "security",
+    "policy", "opa", "audit", "llm", "guardrails",
+]
+# Development Status 3 (Alpha), not 4 (Beta): this is the first published release and the API
+# has never been depended on from outside this repo. A large test suite is not the same as a
+# proven interface, and this classifier is what an adopter reads to decide how much to trust
+# the version number.
+# No "License :: OSI Approved" classifier: PEP 639 forbids pairing one with a `license`
+# expression. No "Typing :: Typed" either -- there is no py.typed marker, so it would claim
+# something not actually shipped.
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Monitoring",
+]
 dependencies = [
     "langchain>=1.3,<2",
     "langgraph>=1.2,<2",
@@ -17,13 +45,19 @@ dependencies = [
     "anthropic>=0.92",
     "openai>=1.40,<3",
     "fastapi>=0.115",
-    "agentos-constitution",
-    "agentos-contract",
-    "agentos-controlplane",
-    "agentos-gateway",
-    "agentos-pipeline",
-    "agentos-sdk",
+    "agentos-guard-constitution==0.1.0",
+    "agentos-guard-contract==0.1.0",
+    "agentos-guard-controlplane==0.1.0",
+    "agentos-guard-gateway==0.1.0",
+    "agentos-guard-pipeline==0.1.0",
+    "agentos-guard-sdk==0.1.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/JitendraJha98/agentos-guard"
+Repository = "https://github.com/JitendraJha98/agentos-guard"
+Issues = "https://github.com/JitendraJha98/agentos-guard/issues"
+Documentation = "https://github.com/JitendraJha98/agentos-guard/tree/main/docs/architecture"
 
 [dependency-groups]
 dev = [
@@ -66,6 +100,14 @@ adapters = [
     "mcp>=1.19,<2",
 ]
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Metadata-only: the umbrella ships no modules, it just pulls in the six real packages.
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
 # uv workspace: each package under packages/ has its own pyproject.toml and
 # shares this single lockfile. The `contract` package (PIPE-07 / D-08) is the
 # stable boundary with zero internal dependencies and is built first.
@@ -73,12 +115,12 @@ adapters = [
 members = ["packages/*"]
 
 [tool.uv.sources]
-agentos-constitution = { workspace = true }
-agentos-contract = { workspace = true }
-agentos-controlplane = { workspace = true }
-agentos-gateway = { workspace = true }
-agentos-pipeline = { workspace = true }
-agentos-sdk = { workspace = true }
+agentos-guard-constitution = { workspace = true }
+agentos-guard-contract = { workspace = true }
+agentos-guard-controlplane = { workspace = true }
+agentos-guard-gateway = { workspace = true }
+agentos-guard-pipeline = { workspace = true }
+agentos-guard-sdk = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

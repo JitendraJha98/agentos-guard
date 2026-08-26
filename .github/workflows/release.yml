@@ -4,13 +4,20 @@ name: Release
 # quickstart's single `pip install` (SDK-05) is true for someone outside this repo.
 #
 # ONE-TIME SETUP (required before the first successful run):
-#   For EACH published distribution — agentos-contract, agentos-constitution,
-#   agentos-pipeline, agentos-controlplane, agentos-sdk (and agentos-guard if the root
-#   is published) — add a PyPI "Trusted Publisher" (Publishing → GitHub) pointing at:
+#   All SEVEN distributions are published: the umbrella `agentos-guard` plus
+#   agentos-guard-contract, agentos-guard-constitution, agentos-guard-pipeline,
+#   agentos-guard-controlplane, agentos-guard-sdk and agentos-guard-gateway.
+#   For EACH, add a PyPI "Trusted Publisher" (Publishing → GitHub) pointing at:
 #     owner: JitendraJha98   repo: agentos-guard
 #     workflow: release.yml   environment: pypi
+#   Because none of these names exist on PyPI yet, each is created as a PENDING publisher
+#   (PyPI → Your projects → Publishing → "Add a new pending publisher"). A pending publisher
+#   is what lets the very first upload claim the name over OIDC with no API token.
 #   Trusted Publishing uses short-lived OIDC — no API token is stored in the repo.
 #   Until the publishers exist, the `publish` job will fail fast (expected).
+#
+#   NOTE ON THE NAMES: `agentos-sdk` on PyPI belongs to an unrelated project, so the whole
+#   family is namespaced `agentos-guard-*`. Import names are unaffected (`import agentos_sdk`).
 #
 # CUT A RELEASE: bump every package `version`, commit to `main`, then tag `vX.Y.Z`
 # (e.g. `git tag v0.2.0 && git push origin v0.2.0`). All packages share one version.
@@ -46,8 +53,24 @@ jobs:
           echo "tag=$TAG  package=$PKG"
           test "$TAG" = "$PKG" || { echo "::error::tag $TAG != package version $PKG"; exit 1; }
 
-      - name: Build all workspace packages
+      - name: Build all workspace packages (root umbrella + the six members)
         run: uv build --all-packages --out-dir dist
+
+      - name: Verify every expected distribution was built
+        # `--all-packages` silently builds whatever the workspace happens to contain. If a
+        # member stops producing a distribution, the release should fail here rather than
+        # publish a partial set that leaves adopters with unresolvable pins.
+        run: |
+          for pkg in agentos_guard agentos_guard_contract agentos_guard_constitution                      agentos_guard_pipeline agentos_guard_controlplane agentos_guard_sdk                      agentos_guard_gateway; do
+            ls "dist/${pkg}-${GITHUB_REF_NAME#v}-py3-none-any.whl" >/dev/null               || { echo "::error::missing wheel for $pkg"; exit 1; }
+            ls "dist/${pkg}-${GITHUB_REF_NAME#v}.tar.gz" >/dev/null               || { echo "::error::missing sdist for $pkg"; exit 1; }
+          done
+          echo "all 7 distributions present"
+
+      - name: Check metadata renders on PyPI
+        # A README that fails to render leaves the project page blank, and PyPI rejects
+        # invalid metadata only AFTER the name is claimed.
+        run: uvx twine check dist/*
 
       - name: Upload distributions
         uses: actions/upload-artifact@v4
