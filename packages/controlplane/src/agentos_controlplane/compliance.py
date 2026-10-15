@@ -540,6 +540,16 @@ CONTROL_MAPPINGS: tuple[ControlMapping, ...] = (
         "risk findings on the Decision",
     ),
     ControlMapping(
+        "CredentialSolicitationScorer",
+        "MCP-02 elicitation credential-solicitation detector",
+        # A server phishing the human through the agent's trusted UI (ASI09), and a hostile or
+        # compromised MCP server being a supply-chain component (ASI04).
+        ("ASI09", "ASI04"),
+        ("MEASURE",),
+        ("Art.12", "Art.15"),
+        "risk findings on the Decision",
+    ),
+    ControlMapping(
         "merkle_evidence",
         "AUD-06 Merkle inclusion proofs + anchored epoch roots",
         ("ASI08", "ASI10"),
@@ -637,6 +647,7 @@ LIVE_DETECTOR_CONTROLS = frozenset(
         "ExfiltrationScorer",
         "CodeExecutionScorer",
         "MemoryPoisoningScorer",
+        "CredentialSolicitationScorer",
     }
 )
 

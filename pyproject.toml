@@ -65,6 +65,8 @@ dev = [
     "pytest-repeat",
     "pytest-benchmark",
     "httpx>=0.27",
+    "pgserver>=0.1.4",
+    "psycopg[binary]>=3.2",
 ]
 # Slice 6e (TEST-02/06): heavy ML red-team libraries — garak + PyRIT — bound to the
 # governed agent via packages/sdk/src/agentos_sdk/redteam_external.py. Pinned for

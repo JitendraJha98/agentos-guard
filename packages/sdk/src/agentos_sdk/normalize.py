@@ -161,3 +161,105 @@ def normalize_delegation(
         context=_context(parent_action_id, conversation_id),
         identity_token=token,
     )
+
+
+@covers(ActionType.computer_use)
+def normalize_computer_use(
+    operation: str,
+    url: str,
+    token: str,
+    *,
+    element: str = "",
+    text: str = "",
+    parent_action_id: UUID | None = None,
+    conversation_id: str | None = None,
+) -> AgentAction:
+    """Normalize a browser/desktop UI action (click, type, navigate, ...) — ACT-01, Phase 17.
+
+    `url` is REQUIRED: it is the page the action happens on (for `navigate`, the destination), and
+    it feeds `egress.host`, so the constitution's egress allowlist governs where a browser agent
+    goes and what it types where. An unknown page must be passed as "" — which a deny-by-default
+    egress principle denies, rather than a guessed host.
+    """
+    return AgentAction(
+        agent_id=_agent_id_from_token(token),
+        type=ActionType.computer_use,
+        target=f"computer:{operation}",
+        payload={"operation": operation, "url": url, "element": element, "text": text},
+        context=_context(parent_action_id, conversation_id),
+        identity_token=token,
+    )
+
+
+@covers(ActionType.code_execution)
+def normalize_code_execution(
+    language: str,
+    code: str,
+    token: str,
+    *,
+    parent_action_id: UUID | None = None,
+    conversation_id: str | None = None,
+) -> AgentAction:
+    """Normalize running agent-authored code into a code_execution AgentAction — ACT-02, Phase 17.
+
+    Previously code execution was only VISIBLE as a pattern inside some other action's text
+    (SEC-11); as its own type a constitution can scope principles to it directly.
+    """
+    return AgentAction(
+        agent_id=_agent_id_from_token(token),
+        type=ActionType.code_execution,
+        target=f"code:{language}",
+        payload={"language": language, "code": code},
+        context=_context(parent_action_id, conversation_id),
+        identity_token=token,
+    )
+
+
+def _mcp_request_args(**fields) -> str:
+    import json
+
+    # Canonical, so the digest in the audit is stable for the same request.
+    return json.dumps(fields, sort_keys=True, default=str)
+
+
+@covers(ActionType.mcp_call)
+def normalize_mcp_sampling(
+    server: str,
+    messages,
+    token: str,
+    *,
+    system_prompt: str = "",
+    parent_action_id: UUID | None = None,
+    conversation_id: str | None = None,
+) -> AgentAction:
+    """An MCP server asking THIS client to run a model completion (`sampling/createMessage`) —
+    MCP-01, Phase 17.
+
+    The prompt is authored by the SERVER, so it is governed as that server's MCP call: server
+    quarantine, the injection scorers over `args`, and any `mcp.server`/`mcp.tool` principle all
+    apply before the client's model — and budget — is spent on it.
+    """
+    return normalize_mcp_call(
+        server, "sampling/createMessage",
+        _mcp_request_args(messages=messages, system_prompt=system_prompt), token,
+        parent_action_id=parent_action_id, conversation_id=conversation_id,
+    )
+
+
+@covers(ActionType.mcp_call)
+def normalize_mcp_elicitation(
+    server: str,
+    message: str,
+    requested_schema: dict,
+    token: str,
+    *,
+    parent_action_id: UUID | None = None,
+    conversation_id: str | None = None,
+) -> AgentAction:
+    """An MCP server asking the USER for input (`elicitation/create`) — MCP-02, Phase 17. The
+    message and the requested field names are what the credential-solicitation scorer reads."""
+    return normalize_mcp_call(
+        server, "elicitation/create",
+        _mcp_request_args(message=message, requested_schema=requested_schema), token,
+        parent_action_id=parent_action_id, conversation_id=conversation_id,
+    )

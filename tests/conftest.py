@@ -15,9 +15,43 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine
+import sqlalchemy
 
 from _opa import BuiltPolicy, build_constitution_wasm, find_opa
+from _pg import fresh_pg_url, pg_available, use_postgres_for_suite
+
+_IN_MEMORY_SQLITE = {"sqlite+pysqlite:///:memory:", "sqlite://", "sqlite:///:memory:"}
+
+if use_postgres_for_suite():
+    # AGENTOS_TEST_DB=postgres: every in-memory SQLite store in the suite becomes a fresh Postgres
+    # database. Patched on the `sqlalchemy` module BEFORE test modules are collected, so their
+    # `from sqlalchemy import create_engine` binds the rerouting wrapper. SQLite-only engine
+    # options (connect_args like check_same_thread, StaticPool) are dropped — they mean nothing to
+    # a server backend. File-backed SQLite URLs are left alone: those tests are about the file.
+    _real_create_engine = sqlalchemy.create_engine
+
+    def _routing_create_engine(url, *args, **kwargs):
+        if str(url) in _IN_MEMORY_SQLITE:
+            kwargs.pop("connect_args", None)
+            # NullPool: thousands of test engines are never disposed; pooled connections would
+            # pile up past Postgres's max_connections (and the host's memory).
+            kwargs["poolclass"] = sqlalchemy.pool.NullPool
+            return _real_create_engine(fresh_pg_url(), *args, **kwargs)
+        return _real_create_engine(url, *args, **kwargs)
+
+    sqlalchemy.create_engine = _routing_create_engine
+
+create_engine = sqlalchemy.create_engine
+
+
+@pytest.fixture
+def pg_engine():
+    """A fresh, empty real-Postgres database (Phase 15). Skips if pgserver/psycopg are absent."""
+    if not pg_available():
+        pytest.skip("pgserver/psycopg not installed — no local Postgres")
+    engine = sqlalchemy.create_engine(fresh_pg_url())
+    yield engine
+    engine.dispose()
 from agentos_contract import ActionType, AgentAction
 from agentos_controlplane.audit import AuditWriter
 from agentos_controlplane.registry import Registry

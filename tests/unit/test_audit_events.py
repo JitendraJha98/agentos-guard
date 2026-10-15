@@ -120,6 +120,9 @@ def test_second_writer_on_same_store_fails_closed(audit_writer: AuditWriter) -> 
     chain fork (two records at one seq)."""
     from sqlalchemy.exc import IntegrityError
 
+    if audit_writer._shared:
+        pytest.skip("SQLite-mode discipline; on Postgres a second writer is SUPPORTED (Phase 15, "
+                    "tests/integration/test_multi_instance_audit.py)")
     second = AuditWriter(audit_writer.session_factory)
     asyncio.run(audit_writer.append_event("side_effect", {"ref": "a"}))  # seq 0; caches head
     asyncio.run(second.append_event("side_effect", {"ref": "b"}))        # fresh SELECT -> seq 1

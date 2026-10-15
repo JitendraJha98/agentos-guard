@@ -36,6 +36,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 12: Continuous Adversarial Validation & Rich Dashboard** - Attack-success-rate tracking, scheduled continuous validation, multi-step campaigns, health monitoring, the query-time evidence graph, and the rich SLO/graph/attack dashboard (completed 2026-08-19)
 - [x] **Phase 13: Constitution Amendments & Conflict Reasoning** - Proposable/ratifiable Constitution amendments, cross-agent transitive-permission conflict resolution, and Byzantine-tolerant quorum (signed votes + 3f+1 + certificates; NOT a replicated protocol — see POL-12's note) (completed 2026-08-20)
 - [~] **Phase 14: Self-Play, Portable Reputation, ROI & Impact Analysis** - Adversarial self-play with held-out scoring and POL-10 patch proposal, threat intel, portable reputation, ROI analytics, ABOM vulnerability impact analysis, and PERF-01 answered by profile. **AUD-07 (ZK proofs), IDN-04 (SPIFFE/mTLS) and INT-09 (K8s operator) are DEFERRED** — tooling absent on the build host; see each requirement's note (2026-08-20)
+- [x] **Phase 15: Multi-Instance Safety & Real Postgres** - One audit chain across instances (advisory lock), shared hot-path control state with enforced <=1 s staleness, shared SEC-13/TRST-04 lineage, and the whole suite verified on real Postgres (completed 2026-09-25)
+- [x] **Phase 16: Principals, Roles & Keyed Redaction** - Named role-bearing API credentials, one central route-role table for API and dashboard, actors bound to the authenticated principal with separation of duties on ratification, HMAC-keyed audit digests, and PII recall fixes (completed 2026-09-25)
+- [x] **Phase 17: Computer Use, Code Execution & Server-Initiated MCP** - Two new first-class action types behind the same contract, MCP sampling and elicitation governed before they reach the model or the user, credential-solicitation detection, server-level quarantine for server-initiated requests, and a durable shared MCP quarantine (completed 2026-09-25)
 
 ## Phase Details
 
@@ -303,10 +306,58 @@ still dated 2026-06-10); do it before Phase 7 planning.
 - [x] 14e — PERF-01 profile: measured mean 4.15 ms / p95 5.26 ms against a 5/10 ms budget with 73% of self time in SQLite. Both justification conditions fail, so no rewrite — an answer from evidence rather than from the absent toolchain
 - [ ] AUD-07 / IDN-04 / INT-09 — DEFERRED, each recorded on its requirement
 
+### Phase 15: Multi-Instance Safety & Real Postgres
+**Goal**: Make the control plane correct when more than one instance serves one fleet, on the Postgres backend it was always documented to target but had never run on.
+**Mode:** hardening (from the 2026-09-25 gap audit)
+**Depends on**: Phase 14
+**Requirements**: HA-01, HA-02, HA-03, DB-01
+**Success Criteria** (what must be TRUE):
+  1. Four OS processes appending concurrently produce one gap-free, signature-verified chain; forcing the old single-process mode reproduces the fork (UniqueViolation) — the negative control.
+  2. A kill, clear, emergency, breaker trip/reset, privilege/limit/budget change or trust downgrade made through one instance is enforced by every other within the staleness bound; an instance that cannot confirm freshness denies through PIPE-05.
+  3. `rename_table` on instance A then `drop_table` on instance B is denied citing 3.5; the shared correlator and ledger match the in-memory ones on randomized property tests.
+  4. Migrations apply/reverse/match the models on Postgres, and the unit, integration and red-team suites pass on Postgres.
+
+**Plans**: delivered in one pass (design discussed in-session 2026-09-25)
+- [x] 15a — HA-01 advisory-lock audit chain (`audit.py`), negative-controlled
+- [x] 15b — HA-02 `ControlStateBus` (`state_bus.py`) + build-then-swap store reloads + in-flight kill protection
+- [x] 15c — HA-03 `SharedSequenceCorrelator` / `SharedDelegationLedger` (`shared_lineage.py`)
+- [x] 15d — DB-01 pgserver test backend, drift check, whole-suite Postgres sweep and the five bugs it found
+
+### Phase 16: Principals, Roles & Keyed Redaction
+**Goal**: Replace "whoever holds the one token is anyone" with named principals whose role gates what they may do and whose name is the actor on record; make audit redaction resistant to brute force.
+**Mode:** hardening (from the 2026-09-25 gap audit)
+**Depends on**: Phase 15
+**Requirements**: AUTH-01, AUTH-02, AUTH-03, RED-01, RED-02
+**Success Criteria** (what must be TRUE):
+  1. A viewer can read but not act; an operator can act but not change what is enforced; only an admin manages principals, constitutions, trust, budgets, ABOMs, ratification and evidence disclosure — on the API and the dashboard.
+  2. A named principal cannot record an action under another name (mutation-tested: disabling the binding fails the suite); revocation takes effect on every instance at once.
+  3. With a digest key configured, no audit or approval record carries an unkeyed digest of payload text, and chains still sign and verify.
+  4. The new PII patterns catch the formats the old ones missed without new false positives, and stay linear on 32 KB of hostile input.
+
+**Plans**: delivered in one pass (design stated in-session 2026-09-25)
+- [x] 16a — AUTH-01/02/03 `PrincipalStore`, `make_authenticator`, route-role table, dashboard parity, ratification separation of duties
+- [x] 16b — RED-01 keyed digests; RED-02 phone/IBAN recall
+
+### Phase 17: Computer Use, Code Execution & Server-Initiated MCP
+**Goal**: Govern the agent surfaces that appeared after the roadmap was written — browser/desktop agents, agent-authored code, and MCP servers that call INTO the client.
+**Mode:** hardening (from the 2026-09-25 gap audit)
+**Depends on**: Phase 16
+**Requirements**: ACT-01, ACT-02, MCP-01, MCP-02, MCP-03
+**Success Criteria** (what must be TRUE):
+  1. `verify_coverage()` is green with seven action types; the policy-input drift lock holds for every type; an unknown type fails closed instead of being evaluated as a model call.
+  2. A browser agent navigating to a non-allowlisted host is denied by an `egress.host` principle scoped to `computer_use`; a credential typed into a page is caught and never stored raw.
+  3. An elicitation asking for a credential, or a sampling request carrying an injection, is denied before the user or the model sees it; a server with a quarantined tool cannot initiate either (mutation-tested).
+  4. The MCP quarantine survives a restart and reaches every instance.
+
+**Plans**: delivered in one pass (design stated in-session 2026-09-25)
+- [x] 17a — ACT-01/02 contract, registry, builder, redaction, egress, inventory, compliance and SDK PEPs
+- [x] 17b — MCP-01/02 sampling + elicitation PEPs and the credential-solicitation detector
+- [x] 17c — MCP-03 server-level quarantine for server-initiated requests; durable, bus-shared quarantine
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -324,3 +375,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 12. Continuous Adversarial Validation & Rich Dashboard | 6/6 | Complete    | 2026-08-19 |
 | 13. Constitution Amendments & Conflict Reasoning | 3/3 | Complete    | 2026-08-20 |
 | 14. Self-Play, ZK Proofs, Decentralized Identity & Rust Hot Path | 5/5 | 6 of 9 reqs; 3 deferred    | 2026-08-20 |
+| 15. Multi-Instance Safety & Real Postgres | 4/4 | Complete    | 2026-09-25 |
+| 16. Principals, Roles & Keyed Redaction | 2/2 | Complete    | 2026-09-25 |
+| 17. Computer Use, Code Execution & Server-Initiated MCP | 3/3 | Complete    | 2026-09-25 |

@@ -26,6 +26,8 @@ class RiskFinding(BaseModel):
         "pii", "unsafe_content", "format_violation",
         # Phase-8 detector categories (SEC-11 / SEC-09).
         "code_execution", "memory_poisoning",
+        # Phase 17 (MCP-02): an MCP server eliciting credentials from the user.
+        "credential_solicitation",
     ]
     risk_score: float = Field(ge=0.0, le=1.0)             # normalized 0–1; enforced by validator
     matched: list[str] = Field(default_factory=list)      # pattern IDs only — NEVER raw payload

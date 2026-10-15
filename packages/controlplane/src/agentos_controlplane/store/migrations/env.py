@@ -29,7 +29,9 @@ if config.config_file_name is not None:
 # Allow an env-var override (e.g. a sync sqlite URL for a manual migration run).
 _env_url = os.environ.get("AGENTOS_DB_URL")
 if _env_url:
-    config.set_main_option("sqlalchemy.url", _env_url)
+    # `%` must be doubled: set_main_option goes through ConfigParser interpolation, so a URL with
+    # a percent-encoded password (or a `?options=-c...%3D...` query) otherwise raises at startup.
+    config.set_main_option("sqlalchemy.url", _env_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
 

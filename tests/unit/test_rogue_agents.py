@@ -549,3 +549,14 @@ def test_scan_is_not_one_select_per_divergence(store, inventory) -> None:
 
     selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
     assert len(selects) <= 3, selects
+
+
+def test_bounding_is_idempotent() -> None:
+    """The inventory bounds on write and rogue detection bounds what it reads back; a second pass
+    must not digest the digest (Phase 15)."""
+    from agentos_controlplane.shadow import bounded
+
+    for raw in ["http_get", "x" * 10_000, "\x1b]0;pwned\x07\x00", "a#b", "y" * 300 + "one", ""]:
+        once = bounded(raw)
+        assert bounded(once) == once
+        assert len(once) <= 255 and "\x00" not in once

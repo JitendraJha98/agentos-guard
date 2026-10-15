@@ -207,6 +207,41 @@ The milestone scope is the **full documented vision (Phases 0–2)**. Every requ
 - [x] **PERF-01** [P2]: Hot-path enforcement components are rewritten in Rust (PyO3 interop) where profiling justifies it
   - **Answered by measurement; no rewrite, on the profile's evidence.** The requirement says a rewrite happens *where profiling justifies it*, so its precondition is a profile — delivered as `tests/benchmarks/test_perf_profile.py`, re-derived every run. Measured 2026-08-20 over 200 rounds: mean 4.15 ms and p95 5.26 ms against a 5 ms / 10 ms PIPE-04 budget, with 73.2% of self time in SQLAlchemy/SQLite and 20.1% in the WASM policy boundary. BOTH justification conditions fail: the path is inside budget, and the time is not in code a PyO3 port of our Python would move. A rewrite would add a toolchain, a build matrix and an FFI seam to a system whose cost is elsewhere. (This machine also has no cargo/rustc, but that is not the reason — if the profile later shows the path over budget with time in code we own, the same test says so.)
 
+### Production Hardening (added 2026-09-25 gap audit)
+
+A post-Phase-14 audit found the control plane was correct only as ONE process on SQLite: Postgres,
+the documented production target, had never been exercised (D-14), and every hot-path cache was
+per-process. These requirements make "control plane" true for a multi-instance deployment.
+
+- [x] **HA-01** [P1]: Any number of control-plane instances append to ONE audit hash chain on Postgres without forking it or failing — `pg_advisory_xact_lock` + in-transaction head read; a writer dying mid-append cannot wedge the chain
+- [x] **HA-02** [P1]: Kill switch, circuit breakers, privilege rings, resource limits, budget and identity-cache state converge across instances within a bounded staleness (<= 1 s), and an instance that cannot confirm freshness fails CLOSED through the PIPE-05 posture
+  - Bounded by design: breaker failure COUNTS and half-open trials remain per instance (only trips/resets are shared). Polling, not LISTEN/NOTIFY — the poll meets the bound alone and would be needed as the backstop anyway.
+- [x] **HA-03** [P1]: SEC-13 sequence correlation and TRST-04 delegation lineage are shared across instances, so splitting a forbidden sequence or a delegation chain across replicas neither evades nor falsely denies
+  - The approved design reconstructed both from the audit log; building it showed the audit holds `inferred_intent` (which falls back to the probabilistic SEC-14 label) and never holds effective authority, so both use small dedicated tables instead.
+- [x] **DB-01** [P1]: The full migration chain applies, reverses, and matches the models on a real Postgres, and the whole test suite runs on Postgres (`AGENTOS_TEST_DB=postgres`, pgserver — no Docker)
+  - Running it found and fixed: naive/aware datetime crashes and session-time-zone shifts (`UTCDateTime`), an unescaped `%` in `AGENTOS_DB_URL` crashing migrations, hostile/oversized component names aborting inventory writes (DISC-05 evasion), a missing model index, and store reloads that never dropped cleared state.
+
+### Access Control & Redaction (added 2026-09-25 gap audit)
+
+- [x] **AUTH-01** [P1]: Named API principals with roles (viewer < operator < admin); only a hash of each token's secret is stored, the token is shown once, and creation/revocation is audited. The Phase-5 shared token keeps working as the bootstrap admin
+- [x] **AUTH-02** [P1]: Every route's required role comes from ONE table (`auth.required_role` / `ADMIN_ROUTES`), enforced for the JSON API and the dashboard; a route with no resolvable template demands admin (fail closed)
+- [x] **AUTH-03** [P1]: The actor recorded for an action (`set_by`, `resolver`, `ratified_by`, `resolved_by`, `proposed_by`) is the authenticated principal — a named principal cannot act under another name — and an amendment cannot be ratified by the party that proposed it
+  - The bootstrap token keeps its legacy, caller-claimed actor names (unverified, as before); the point of AUTH-01 is to stop depending on it.
+- [x] **RED-01** [P1]: Free-text payload digests in the audit and approval context are keyed (HMAC-SHA256 under `AGENTOS_AUDIT_DIGEST_KEY`, >= 32 bytes, with a non-reversible `key_id`) — an unkeyed SHA-256 of a low-entropy value such as an SSN was reversible by brute force
+  - Without a key the legacy unkeyed form is kept so existing deployments read the same; the operator docs must say to set one.
+- [x] **RED-02** [P1]: PII detection recall: separated international and NANP phone formats, and mod-97-verified IBANs, with ReDoS-bounded patterns
+  - NOT delivered: NER-grade detection of names and street addresses (the "Presidio-grade" note in audit.py). That needs a model on the hot path, which SEC-03 keeps off the inline path by design; it belongs behind the non-inline scorer seam.
+
+### New Action Surfaces (added 2026-09-25 gap audit)
+
+- [x] **ACT-01** [P1]: `computer_use` (browser/desktop UI actions) is a first-class action type with an SDK PEP; the page URL feeds `egress.host`, so the egress allowlist governs where a browser agent acts, and typed text / element descriptions are digested in the audit
+- [x] **ACT-02** [P1]: `code_execution` is a first-class action type (`code.language` in policy input, code digested, SEC-11 over the code); both new types count as egress-capable under a network=deny budget
+- [x] **MCP-01** [P1]: An MCP server's `sampling/createMessage` request is governed as that server's MCP call before the client's model runs it — quarantine, injection scoring and MCP principles apply
+- [x] **MCP-02** [P1]: An MCP server's `elicitation/create` request is governed before the user sees it; eliciting a credential (password, API key, OTP, card, seed phrase, ...) is denied, per the MCP spec's own MUST NOT
+- [x] **MCP-03** [P1]: A server with ANY quarantined tool may not initiate sampling or elicitation, and the SEC-07 quarantine is durable and shared across instances (it was process memory only)
+  - Not applicable here: MCP OAuth and streamable-HTTP transport are transport concerns; this product inspects manifests and governs calls, it is not an MCP transport proxy.
+  - The policy-input builder no longer treats an unknown action type as a model call (a bare `else`); it refuses, and the runner fails closed.
+
 ## v2 Requirements
 
 Deferred beyond the documented vision. Tracked but not in the current roadmap.
@@ -361,6 +396,20 @@ Every v1 requirement maps to exactly one phase. Phases 1–6 deliver the documen
 | OSS-01 | Phase 6 | Packaging done + install verified; publish pending (see note) |
 | OSS-02 | Phase 6 | Complete |
 | PERF-01 | Phase 14 | Complete |
+| HA-01 | Phase 15 | Complete |
+| HA-02 | Phase 15 | Complete |
+| HA-03 | Phase 15 | Complete |
+| DB-01 | Phase 15 | Complete |
+| AUTH-01 | Phase 16 | Complete |
+| AUTH-02 | Phase 16 | Complete |
+| AUTH-03 | Phase 16 | Complete |
+| RED-01 | Phase 16 | Complete |
+| RED-02 | Phase 16 | Complete |
+| ACT-01 | Phase 17 | Complete |
+| ACT-02 | Phase 17 | Complete |
+| MCP-01 | Phase 17 | Complete |
+| MCP-02 | Phase 17 | Complete |
+| MCP-03 | Phase 17 | Complete |
 
 **Coverage:**
 - v1 requirements: 123 total

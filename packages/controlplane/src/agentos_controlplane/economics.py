@@ -248,6 +248,8 @@ class CostRecorder:
                     gpu_attribution=gpu.attribution if gpu else None,
                 )
             )
+            if self._ledger is not None:
+                self._ledger.bump_in(s)  # other instances' budget views reload (Phase 15)
             s.commit()
         # ECON-02, AFTER the commit: the ledger is a cache over this table, so it must never lead
         # the durable record. A notified-then-failed insert would leave the decision path enforcing

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from agentos_controlplane.state_bus import SharedStateWriter
 from agentos_controlplane.audit import AuditWriter
 from agentos_controlplane.certificates import CertificateAuthority, generate_agent_keypair
 from agentos_controlplane.compliance import RISK_CLASSIFICATIONS, UNDECLARED
@@ -41,7 +42,9 @@ class Enrollment:
     ca_certificate_pem: str | None = None
 
 
-class Registry:
+class Registry(SharedStateWriter):
+    _topic = "identity"  # Phase 15: bumps invalidate every instance's identity cache
+
     def __init__(
         self,
         session_factory: sessionmaker[Session],
@@ -132,6 +135,7 @@ class Registry:
                     agent.public_key, agent.certificate, agent.cert_serial = (
                         public_pem, cert_pem, serial,
                     )
+            self.bump_in(session)
             session.commit()
 
         token = self.identity.issue_token(agent_id)
@@ -231,6 +235,7 @@ class Registry:
                 session.add(
                     RevokedCertificate(serial=serial, agent_id=agent_id, reason=reason)
                 )
+                self.bump_in(session)
                 session.commit()
             return serial
 

@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
 
 from agentos_constitution import Constitution, compile_constitution
+from agentos_controlplane.state_bus import SharedStateWriter
 from agentos_controlplane.abom import build_components, merge_components
 from agentos_controlplane.store.models import (
     Abom,
@@ -87,7 +88,9 @@ class PolicyData:
     created_at: str | None
 
 
-class ResourceStore:
+class ResourceStore(SharedStateWriter):
+    _topic = "identity"  # trust-profile writes invalidate identity caches (Phase 15)
+
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._sf = session_factory
 
@@ -117,6 +120,7 @@ class ResourceStore:
                     )
                 # version bumped by version_id_col
                 row.trust_score, row.band, row.scope = trust_score, band, scope
+            self.bump_in(s)
             try:
                 s.commit()
             except StaleDataError as exc:

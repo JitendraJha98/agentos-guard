@@ -55,20 +55,26 @@ _OVERHEAD_P95_BUDGET_S = 0.008
 
 
 def _measure(wired) -> tuple[float, float]:
-    """One sample: (mean, p95) over _ROUNDS fresh evaluations, wall time."""
+    """One sample: (mean, p95) over _ROUNDS fresh evaluations, wall time.
+
+    One event loop per sample, as production has (the middleware runs inside the caller's loop).
+    `asyncio.run` per round built and tore down a loop inside the timed region — ~4 ms on a loaded
+    Windows box, more than the whole mean budget — so the gate measured loop setup, not the path.
+    """
     times: list[float] = []
-    for _ in range(_ROUNDS):
-        action = AgentAction(
-            agent_id=wired.agent_id,
-            type=ActionType.tool_call,
-            target="http_get",
-            payload={"url": "https://api.example.com/data", "content": ""},
-            identity_token=wired.token,
-        )
-        start = time.perf_counter()
-        decision = asyncio.run(wired.pipeline.evaluate(action))
-        times.append(time.perf_counter() - start)
-        assert decision.outcome is Outcome.allow  # the benign baseline path
+    with asyncio.Runner() as runner:
+        for _ in range(_ROUNDS):
+            action = AgentAction(
+                agent_id=wired.agent_id,
+                type=ActionType.tool_call,
+                target="http_get",
+                payload={"url": "https://api.example.com/data", "content": ""},
+                identity_token=wired.token,
+            )
+            start = time.perf_counter()
+            decision = runner.run(wired.pipeline.evaluate(action))
+            times.append(time.perf_counter() - start)
+            assert decision.outcome is Outcome.allow  # the benign baseline path
     times.sort()
     mean = sum(times) / len(times)
     p95 = times[int(0.95 * (len(times) - 1))]

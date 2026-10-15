@@ -210,7 +210,38 @@ def test_a_cancel_swallowing_handler_cannot_escape_the_wall_budget() -> None:
         _call(governor, run)
 
     assert exc.value.limit == "wall_s" and exc.value.preventive is False
-    assert exc.value.observed > 0.05
+    # >=, not >: the loop may fire the deadline up to its clock resolution early, so the evidence
+    # floor is the budget itself (see enforce.py). This assertion used `>` and flaked on Windows,
+    # while the REAL failure behind it was the handler keeping its result.
+    assert exc.value.observed >= 0.05
+    assert len(governor.breaches) == 1
+
+
+def test_an_early_firing_deadline_still_withholds_a_swallowed_result(monkeypatch) -> None:
+    """Deterministic repro of the Windows flake: the stopwatch reads UNDER the budget even though
+    the deadline fired (early timer). The result must still be withheld."""
+    import types
+
+    import agentos_sdk.enforce as enforce
+
+    governor = _StubGovernor(ResourceLimits(wall_s=0.05))
+    ticks = iter([100.0, 100.049])  # started, then elapsed = 0.049 < 0.05
+    # Replace only enforce's `time` reference — patching time.monotonic itself would freeze the
+    # event loop's clock too, and the deadline would never fire.
+    monkeypatch.setattr(
+        enforce, "time", types.SimpleNamespace(monotonic=lambda: next(ticks, 100.049))
+    )
+
+    async def run():
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            pass
+        return "kept?"
+
+    with pytest.raises(GovernanceResourceExceeded) as exc:
+        _call(governor, run)
+    assert exc.value.observed == 0.05
     assert len(governor.breaches) == 1
 
 

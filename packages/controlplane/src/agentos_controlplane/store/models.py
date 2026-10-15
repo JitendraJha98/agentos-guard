@@ -4,7 +4,7 @@ Source: 01-RESEARCH.md § Audit (hash chain) schema; D-14/D-15.
 
 No-Docker deviation (CONTEXT.md D-14): these models are authored against
 PostgreSQL as the production target but use SQLAlchemy **dialect-agnostic
-generic types** (`JSON` not `JSONB`, `Uuid`, `DateTime(timezone=True)`,
+generic types** (`JSON` not `JSONB`, `Uuid`, `UTCDateTime`,
 `String`/`Text`) so the very same models run on the Phase-1 **SQLite** backend
 AND map to Postgres types as the production target — a backend swap, not a
 rewrite. The Alembic migration (production target) and the SQLite Store share
@@ -29,6 +29,39 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.types import TypeDecorator
+
+
+class UTCDateTime(TypeDecorator):
+    """`timestamptz` on Postgres, but the SAME Python contract on every backend: naive UTC.
+
+    The codebase compares stored times against naive-UTC "now" values (e.g. `budget._utcnow()`).
+    SQLite hands back naive datetimes, Postgres aware ones, so on Postgres those comparisons raised
+    "can't compare offset-naive and offset-aware datetimes" — and a naive value WRITTEN to a
+    timestamptz is read in the session's time zone, silently shifting it on a non-UTC server.
+    Found by running the suite on Postgres (Phase 15). Naive input is taken as UTC; aware input is
+    converted to UTC; results are always naive UTC.
+    """
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=_UTC)
+        value = value.astimezone(_UTC)
+        # SQLite keeps its existing naive storage format; Postgres gets an unambiguous instant.
+        return value.replace(tzinfo=None) if dialect.name == "sqlite" else value
+
+    def process_result_value(self, value, dialect):
+        if value is not None and value.tzinfo is not None:
+            value = value.astimezone(_UTC).replace(tzinfo=None)
+        return value
+
+
+_UTC = timezone.utc
 
 
 class Base(DeclarativeBase):
@@ -64,7 +97,7 @@ class Agent(Base):
     # `ApprovalRequest.status`, so the column stays a plain string on every backend (D-14).
     risk_classification: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
 
 
@@ -92,7 +125,7 @@ class AuditRecord(Base):
     # Postgres JSONB at the production target.
     body: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
 
 
@@ -121,12 +154,12 @@ class ApprovalRequest(Base):
     risk_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     trust_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
-    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deadline_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
     resolved_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UTCDateTime, nullable=True
     )
     resolver: Mapped[str | None] = mapped_column(String(255), nullable=True)
     resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -148,10 +181,10 @@ class TemporaryException(Base):
     principle_ref: Mapped[str] = mapped_column(String(64), nullable=False)
     granted_by: Mapped[str] = mapped_column(String(255), nullable=False)
     approval_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
 
 
@@ -171,10 +204,10 @@ class GovernanceReview(Base):
     summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
     opened_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
     closed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UTCDateTime, nullable=True
     )
 
 
@@ -194,7 +227,7 @@ class KillSwitch(Base):
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     set_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
 
 
@@ -218,7 +251,7 @@ class SandboxRun(Base):
     quarantined: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
 
 
@@ -239,7 +272,7 @@ class ChainCheckpoint(Base):
     proof: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)     # opaque per kind (sig | DER TimeStampResp)
     tsa_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
 
 
@@ -266,7 +299,7 @@ class TrustProfile(Base):
     scope: Mapped[list | None] = mapped_column(JSON, nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
 
     __mapper_args__ = {"version_id_col": version}
@@ -287,7 +320,7 @@ class RevokedCertificate(Base):
     agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     revoked_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
 
 
@@ -305,7 +338,7 @@ class ConstitutionResource(Base):
     version: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)  # constitution_version
     source: Mapped[dict] = mapped_column(JSON, nullable=False)  # the authored document, verbatim
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
 
 
@@ -334,14 +367,18 @@ class Amendment(Base):
     rationale: Mapped[str] = mapped_column(Text, nullable=False)
     proposed_by: Mapped[str] = mapped_column(String(255), nullable=False)
     source: Mapped[dict] = mapped_column(JSON, nullable=False)
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="proposed")
+    # Indexed as in migration 0029 ("what is waiting for me"); the model omitted it, so create_all
+    # stores had no index the migrated ones did — found by the Postgres drift check (Phase 15).
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="proposed", index=True
+    )
     ratified_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     constitution_version: Mapped[str | None] = mapped_column(String(128), nullable=True)
     proposed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
-    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
 
 class PolicyResource(Base):
@@ -376,7 +413,7 @@ class PolicyResource(Base):
     # a cache reconciler warming to the wrong constitution. The server_default is kept
     # for rows inserted outside the ORM.
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
+        UTCDateTime,
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
         server_default=func.now(),
@@ -397,7 +434,7 @@ class Abom(Base):
     components: Mapped[dict] = mapped_column(JSON, nullable=False)  # {models,prompts,tools,mcp:[...]}
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
 
     __mapper_args__ = {"version_id_col": version}
@@ -419,10 +456,10 @@ class InventoryComponent(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     source: Mapped[str] = mapped_column(String(16), nullable=False)  # declared|observed
     first_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
     last_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
 
 
@@ -436,7 +473,7 @@ class AgentPrivilege(Base):
     ring: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     set_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
 
 
@@ -454,7 +491,7 @@ class TargetPrivilege(Base):
     required_ring: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     set_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
 
 
@@ -477,7 +514,7 @@ class ResourceLimit(Base):
     network: Mapped[str] = mapped_column(String(16), nullable=False, default="allow")
     set_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+        UTCDateTime, nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
 
@@ -506,7 +543,7 @@ class CircuitBreakerState(Base):
     opened_at: Mapped[float | None] = mapped_column(Float, nullable=True)
     trip_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+        UTCDateTime, nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
 
@@ -525,9 +562,9 @@ class EmergencyShutdown(Base):
     justification: Mapped[str] = mapped_column(Text, nullable=False)
     declared_by: Mapped[str] = mapped_column(String(255), nullable=False)
     declared_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
-    resumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resumed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     resumed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
@@ -551,7 +588,7 @@ class ConsensusRound(Base):
     quorum: Mapped[int] = mapped_column(Integer, nullable=False)
     reached: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
 
 
@@ -573,7 +610,7 @@ class ConsensusVote(Base):
     approved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     error: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
 
 
@@ -598,10 +635,10 @@ class DiscoveredFramework(Base):
     distribution: Mapped[str] = mapped_column(String(128), nullable=False)
     version: Mapped[str] = mapped_column(String(64), nullable=False)
     first_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
     last_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+        UTCDateTime, nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
 
@@ -627,10 +664,10 @@ class ShadowAgent(Base):
     action_type: Mapped[str] = mapped_column(String(64), nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     first_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
     last_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+        UTCDateTime, nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
 
@@ -661,7 +698,7 @@ class RogueFinding(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     resolved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     first_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
 
 
@@ -694,10 +731,10 @@ class GraphNode(Base):
         String(16), nullable=False, default="observed"
     )  # declared|observed|observed_class
     first_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
     last_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+        UTCDateTime, nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
 
@@ -739,7 +776,7 @@ class GraphEdge(Base):
         String(16), nullable=False, default="observed"
     )  # declared|observed|observed_class
     last_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+        UTCDateTime, nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
 
@@ -758,7 +795,7 @@ class GraphWatermark(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True)  # constant — one row
     seq: Mapped[int] = mapped_column(BigInteger, nullable=False)  # last AuditRecord.seq consumed
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+        UTCDateTime, nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
 
@@ -791,7 +828,7 @@ class MerkleRoot(Base):
     proof: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     tsa_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UTCDateTime, nullable=False, server_default=func.now()
     )
 
 
@@ -838,7 +875,7 @@ class CostRecord(Base):
     # agents, so it is explicitly NOT a per-agent bill and no roll-up may total it as one.
     gpu_attribution: Mapped[str | None] = mapped_column(String(16), nullable=True)
     recorded_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+        UTCDateTime, nullable=False, server_default=func.now(), index=True
     )
 
 
@@ -871,7 +908,7 @@ class AgentBudget(Base):
     limit_micro_usd: Mapped[int] = mapped_column(BigInteger, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+        UTCDateTime, nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
     __mapper_args__ = {"version_id_col": version}
@@ -904,7 +941,7 @@ class RedTeamRun(Base):
     blocked: Mapped[int] = mapped_column(Integer, nullable=False)
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
     ran_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+        UTCDateTime, nullable=False, server_default=func.now(), index=True
     )
 
 
@@ -926,3 +963,98 @@ class RedTeamResult(Base):
     attack_id: Mapped[str] = mapped_column(String(64), nullable=False)
     outcome: Mapped[str] = mapped_column(String(32), nullable=False)
     blocked: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class ControlStateVersion(Base):
+    """Phase 15 — one monotonic version per kind of shared control state.
+
+    A write to kill-switch / breaker / privilege / resource-limit / identity / budget state bumps
+    its topic's version IN THE SAME TRANSACTION, and every control-plane instance polls this table
+    and reloads a topic whose version moved. Tiny by construction: one row per topic.
+    """
+
+    __tablename__ = "control_state_version"
+
+    topic: Mapped[str] = mapped_column(String(64), primary_key=True)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+
+# SQLite only auto-increments an INTEGER PRIMARY KEY; BIGINT would not alias its rowid.
+_AutoId = BigInteger().with_variant(Integer, "sqlite")
+
+
+class CorrelationEvent(Base):
+    """Phase 15 — the SEC-13 intent window, shared by every control-plane instance.
+
+    One row per TAGGED action (untagged ones never enter the window, as in memory). Splitting a
+    `rename` and a `drop` across two replicas no longer splits the window that correlates them.
+    Trimmed per key to the correlator's window on every insert, so it stays bounded per key.
+    """
+
+    __tablename__ = "correlation_event"
+
+    id: Mapped[int] = mapped_column(_AutoId, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    intent_class: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, nullable=False, server_default=func.now()
+    )
+
+
+class DelegationAuthority(Base):
+    """Phase 15 — TRST-04's `action_id -> effective Authority` ledger, shared across instances.
+
+    A child action's parent may have been resolved by another replica; without this the child
+    was denied as "unknown lineage" whenever the load balancer split a delegation chain.
+    """
+
+    __tablename__ = "delegation_authority"
+
+    action_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    trust: Mapped[float] = mapped_column(Float, nullable=False)
+    scope: Mapped[list] = mapped_column(JSON, nullable=False)
+    depth: Mapped[int] = mapped_column(Integer, nullable=False)
+    ring: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, nullable=False, server_default=func.now(), index=True
+    )
+
+
+class ApiPrincipal(Base):
+    """Phase 16 (AUTH-01) — a named API credential with a role.
+
+    Only a SHA-256 of the token's secret half is stored: the secret is 32 random bytes, so a fast
+    hash is not brute-forceable and a slow KDF would only tax every request. The token is shown
+    once, at creation. Revocation is a timestamp, not a delete, so the audit's actor names keep
+    resolving to a principal that existed.
+    """
+
+    __tablename__ = "api_principal"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, nullable=False, server_default=func.now()
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+
+class McpQuarantine(Base):
+    """SEC-07 quarantine, made durable and shared (Phase 17 follow-up to HA-02).
+
+    The gateway kept its quarantine in process memory only: a restart un-quarantined every hostile
+    server, and a second control-plane instance never learned of the first one's quarantine.
+    """
+
+    __tablename__ = "mcp_quarantine"
+
+    server: Mapped[str] = mapped_column(String(255), primary_key=True)
+    tool: Mapped[str] = mapped_column(String(255), primary_key=True)
+    findings: Mapped[list] = mapped_column(JSON, nullable=False)
+    quarantined_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, nullable=False, server_default=func.now()
+    )

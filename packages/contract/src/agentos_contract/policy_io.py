@@ -27,6 +27,7 @@ POLICY_INPUT_FIELDS: dict[str, tuple[type, frozenset[str] | str]] = {
     "guardrails.exfiltration": (bool, "all"),     # SEC-04 sensitive data to an external host
     "guardrails.code_exec": (bool, "all"),        # SEC-11 unsafe dynamic code/command execution (ASI05)
     "guardrails.memory_poison": (bool, "all"),    # SEC-09 memory/context poisoning (ASI06)
+    "guardrails.credential_solicitation": (bool, "all"),  # MCP-02 elicitation asking for secrets
     "sequence.matched_refs": (list, "all"),
     # ECON-02 economics fields — the FIRST numeric fields in this registry, so they are also the
     # first live consumers of the gte/lte operators the schema and compiler have carried since
@@ -35,13 +36,17 @@ POLICY_INPUT_FIELDS: dict[str, tuple[type, frozenset[str] | str]] = {
     # runaway agent burns its budget through tool and MCP calls as readily as through the model.
     "cost.spend_usd": (float, "all"),          # spend inside the agent's window; 0.0 if unbudgeted
     "cost.budget_used_ratio": (float, "all"),  # 0.0 when NO budget is configured (not a breach)
-    "egress.host": (str, frozenset({"tool_call", "mcp_call"})),
+    # computer_use (Phase 17): the page URL a UI action happens on — so the SAME egress allowlist
+    # a principle applies to HTTP tool calls can apply to a browser agent's navigation.
+    "egress.host": (str, frozenset({"tool_call", "mcp_call", "computer_use"})),
     "memory.operation": (str, frozenset({"memory_access"})),
     "memory.key": (str, frozenset({"memory_access"})),
     "mcp.server": (str, frozenset({"mcp_call"})),
     "mcp.tool": (str, frozenset({"mcp_call"})),
     "delegation.to_agent": (str, frozenset({"delegation"})),
     "model.name": (str, frozenset({"model_invocation"})),
+    "computer.operation": (str, frozenset({"computer_use"})),
+    "code.language": (str, frozenset({"code_execution"})),
 }
 
 # Single source of restrictiveness (ties: governance_review/temporary_exception both

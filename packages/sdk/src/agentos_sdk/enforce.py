@@ -313,6 +313,10 @@ _EGRESS_TYPES = frozenset(
         ActionType.mcp_call,
         ActionType.model_invocation,
         ActionType.delegation,
+        # Phase 17: a browser agent reaches the network by definition, and agent-authored code can
+        # open a socket — a network="deny" budget refuses both before they run.
+        ActionType.computer_use,
+        ActionType.code_execution,
     }
 )
 
@@ -494,10 +498,17 @@ async def _run_within_limits_inner(
                 tracemalloc.stop()
 
     elapsed = time.monotonic() - started
-    if limits.wall_s is not None and elapsed > limits.wall_s:
+    # `deadline.expired()` is authoritative: asyncio fires a timer up to its clock resolution EARLY
+    # (`_run_once` runs anything due before `now + clock_resolution`, ~15.6 ms on Windows), so a
+    # handler that swallows the cancel and returns at once can measure a hair UNDER the budget —
+    # and the stopwatch comparison alone let it keep its result.
+    fired = deadline is not None and deadline.expired()
+    if limits.wall_s is not None and (fired or elapsed > limits.wall_s):
         # The deadline passed yet the handler still completed — it blocked the loop or swallowed its
         # CancelledError. preventive=False: post-hoc detection, the same honest treatment memory gets.
-        # Returning the result here would make the wall budget silently escapable.
+        # Returning the result here would make the wall budget silently escapable. The recorded
+        # figure never reads below the budget the loop declared reached.
+        elapsed = max(elapsed, limits.wall_s)
         await governor.record_breach(
             action, decision, limit="wall_s", budget=limits.wall_s, observed=elapsed
         )

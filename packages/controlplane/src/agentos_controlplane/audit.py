@@ -23,14 +23,16 @@ an `asyncio.Lock` (single writer) — the seam a Postgres advisory lock replaces
 
 import asyncio
 import hashlib
+import hmac
 import json
+import os
 from typing import Protocol, runtime_checkable
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from agentos_contract import AgentAction, Decision
@@ -78,9 +80,11 @@ def verify_record_signature(public_key_pem, signature: bytes, canonical_body: by
 #   delegation       : {"to_agent", "task"}
 # Free-text / secret-bearing fields are reduced to a length+SHA-256 digest (never
 # persisted raw); short identifier fields are safe to keep verbatim for forensics.
-_DIGEST_KEYS = frozenset({"content", "messages", "value", "args", "task"})
+# Phase 17: `text` (typed into a UI), `element` (a UI target description, which can quote what is
+# on the page) and `code` are free text -> digested; `language` is a short identifier.
+_DIGEST_KEYS = frozenset({"content", "messages", "value", "args", "task", "text", "element", "code"})
 _VERBATIM_KEYS = frozenset(
-    {"model", "operation", "key", "server", "tool", "to_agent", "from_agent"}
+    {"model", "operation", "key", "server", "tool", "to_agent", "from_agent", "language"}
 )
 # `url` is special-cased (host-only redaction). The full set of classifiable keys:
 _KNOWN_PAYLOAD_KEYS = frozenset({"url"}) | _DIGEST_KEYS | _VERBATIM_KEYS
@@ -164,6 +168,10 @@ EVENT_KINDS = frozenset(
         # proposed text lives in the amendment row, not in the chain.
         "amendment_proposed",
         "amendment_resolved",
+        # AUTH-01 (Phase 16): who may act on the control plane is itself governed state. Name,
+        # role and the acting principal only — never the token.
+        "principal_created",
+        "principal_revoked",
     }
 )
 
@@ -198,8 +206,13 @@ def _redact_url(url: str) -> str:
     return f"{parts.scheme}://{host}"
 
 
-def _redact_content(content: object) -> dict:
-    """Never persist raw content — store length + SHA-256 digest only.
+def _redact_content(content: object, key: bytes | None = None) -> dict:
+    """Never persist raw content — store length + a digest only.
+
+    With a deployment `key` (RED-01, Phase 16) the digest is HMAC-SHA256: an UNKEYED digest of a
+    low-entropy value (an SSN has 10^9 candidates) is reversed by brute force in seconds, so the
+    "redacted" value was recoverable from the audit log. `key_id` names the key, never reveals it.
+    Without a key the legacy `sha256` form is kept, so existing deployments read the same.
 
     Digest keys accept ANY JSON-serializable value (PIPE-05 seed): a non-str
     value is digested over its canonical JSON bytes. A value canonical_json
@@ -214,10 +227,36 @@ def _redact_content(content: object) -> dict:
             raise RedactionError(
                 f"undigestable payload value of type {type(content).__name__}"
             ) from None
+    if key is not None:
+        return {
+            "len": len(raw),
+            "hmac_sha256": hmac.new(key, raw, hashlib.sha256).hexdigest(),
+            "key_id": digest_key_id(key),
+        }
     return {"len": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
 
 
-def _redact_or_raise(payload: dict) -> dict:
+def digest_key_id(key: bytes) -> str:
+    """A stable, non-reversible name for a digest key (domain-separated from any other use)."""
+    return hashlib.sha256(b"agentos-guard/digest-key-id/v1\x00" + key).hexdigest()[:16]
+
+
+_MIN_DIGEST_KEY = 32
+
+
+def resolve_digest_key(explicit: bytes | str | None = None) -> bytes | None:
+    """explicit -> AGENTOS_AUDIT_DIGEST_KEY -> None (legacy unkeyed digests). A key shorter than
+    32 bytes is refused at startup: a guessable key is the brute-force problem again."""
+    key = explicit if explicit is not None else os.environ.get("AGENTOS_AUDIT_DIGEST_KEY")
+    if key is None or key == "":
+        return None
+    key = key.encode("utf-8") if isinstance(key, str) else key
+    if len(key) < _MIN_DIGEST_KEY:
+        raise ValueError(f"audit digest key must be at least {_MIN_DIGEST_KEY} bytes")
+    return key
+
+
+def _redact_or_raise(payload: dict, digest_key: bytes | None = None) -> dict:
     """Classify + redact every payload field; raise on any unknown field (D-15)."""
     redacted: dict = {}
     for key, value in payload.items():
@@ -228,7 +267,7 @@ def _redact_or_raise(payload: dict) -> dict:
                 raise RedactionError("payload field 'url' is not a string")
             redacted["url"] = _redact_url(value)
         elif key in _DIGEST_KEYS:
-            redacted[key] = _redact_content(value)
+            redacted[key] = _redact_content(value, key=digest_key)
         else:  # _VERBATIM_KEYS — short string identifiers, safe to keep
             if not isinstance(value, str):
                 raise RedactionError(f"payload field {key!r} is not a string")
@@ -236,12 +275,30 @@ def _redact_or_raise(payload: dict) -> dict:
     return redacted
 
 
-class AuditWriter:
-    """Append-only, hash-chained writer over a (SQLite-backed) Store.
+# Every control-plane instance appending to one Postgres store takes THIS advisory lock, so appends
+# serialize across processes, not only across coroutines. Any fixed 64-bit key works; it only has
+# to be the same everywhere ("agentos1" in ASCII).
+CHAIN_LOCK_KEY = 0x6167656E746F7331
 
-    Phase-1 backend is SQLite (D-14). The writer only ever INSERTs — append-only
-    is enforced at the application layer (no UPDATE/DELETE path); the Postgres
-    DB-level trigger is the production-target second line of defense.
+
+class AuditWriter:
+    """Append-only, hash-chained writer over the Store.
+
+    The writer only ever INSERTs — append-only is enforced at the application layer (no
+    UPDATE/DELETE path) and by the DB trigger from migration 0001 as the second line of defense.
+
+    Two serialization modes, chosen from the engine's dialect:
+
+    - SQLite (single process by nature): an `asyncio.Lock` plus a cached chain head, so a
+      steady-state append is one INSERT (the PIPE-04 lever from Slice 6c).
+    - Postgres (Phase 15 — any number of control-plane instances on one store): each append is one
+      transaction that takes `pg_advisory_xact_lock(CHAIN_LOCK_KEY)`, re-reads the head INSIDE the
+      lock, then inserts. No head is cached, because another instance may have advanced it. The
+      lock is released by the commit or the rollback, so a writer that dies mid-append cannot
+      wedge the chain.
+
+    In both modes the UNIQUE `seq` constraint is the backstop: a writer that somehow bypassed the
+    lock collides and raises instead of forking the chain.
     """
 
     def __init__(
@@ -249,70 +306,57 @@ class AuditWriter:
         session_factory: sessionmaker[Session],
         *,
         signer: RecordSigner | None = None,
+        digest_key: bytes | str | None = None,
     ) -> None:
         self.session_factory = session_factory
+        # RED-01: keyed payload digests (explicit -> AGENTOS_AUDIT_DIGEST_KEY -> legacy unkeyed).
+        self.digest_key = resolve_digest_key(digest_key)
         # AUD-08: optional record signer (the control-plane IdentityEngine). None
         # -> unsigned records (backward compat); the production path always wires one.
         self._signer = signer
-        self._lock = asyncio.Lock()  # serial chain: single in-process writer
-        # PIPE-04 hot-path lever (Slice 6c): the chain head is cached INSIDE the
-        # writer-lock discipline, so steady-state appends are one INSERT, not
-        # SELECT+INSERT. Safe under the same single-writer assumption the lock
-        # already encodes (D-14); a failed insert rolls back without touching
-        # the cache, so the prior head stays correct. (prev record_hash, next seq)
+        self._lock = asyncio.Lock()  # in-process serialization (both modes)
+        # SQLite-mode head cache: (prev record_hash, next seq). A failed insert rolls back
+        # without touching it, so the prior head stays correct.
         self._head: tuple[str | None, int] | None = None
+        bind = session_factory.kw.get("bind")
+        self._shared = bind is not None and bind.dialect.name == "postgresql"
 
     async def append(self, action: AgentAction, decision: Decision) -> UUID:
         """Append one AuditRecord; return its id (the Decision.evidence_ref)."""
         # 1. Redact FIRST and fail closed — if this raises, no record is written.
-        redacted = _redact_or_raise(action.payload)
-
+        redacted = _redact_or_raise(action.payload, self.digest_key)
+        fields = {
+            "action_id": str(action.id),
+            "agent_id": action.agent_id,
+            "action_type": action.type.value,
+            # Lineage (INT-05): persist the delegation/conversation edges so the
+            # Phase-12 evidence graph (AUD-09) can reconstruct causal chains. These
+            # are ids, not payload, so they need no redaction.
+            "parent_action_id": (
+                str(action.context.parent_action_id)
+                if action.context.parent_action_id
+                else None
+            ),
+            "conversation_id": action.context.conversation_id,
+            "outcome": decision.outcome.value,
+            "risk_score": decision.risk_score,
+            "trust_score": decision.trust_score,
+            # mode="json" keeps every reason field JSON-native for canonical_json
+            # (belt-and-braces atop the contract's JSON-native evidence validator).
+            "reasons": [r.model_dump(mode="json") for r in decision.reasons],
+            "redacted_payload": redacted,
+            # Phase-3 Slice-1 Decision fields — all bounded/typed at the contract,
+            # so the hash covers the COMPLETE decision (no un-audited field).
+            "side_effects": [s.value for s in decision.side_effects],
+            "inferred_intent": decision.inferred_intent,
+            "remediation": decision.remediation,
+            "constitution_version": decision.constitution_version,
+            "policy_version": decision.policy_version,
+            "expires_at": decision.expires_at.isoformat() if decision.expires_at else None,
+        }
         # 2. Serialize the chain head -> body -> hash -> append-only INSERT.
         async with self._lock:
-            prev_hash, seq = self._chain_head()
-            body = {
-                "seq": seq,
-                "prev_hash": prev_hash,
-                "action_id": str(action.id),
-                "agent_id": action.agent_id,
-                "action_type": action.type.value,
-                # Lineage (INT-05): persist the delegation/conversation edges so the
-                # Phase-12 evidence graph (AUD-09) can reconstruct causal chains. These
-                # are ids, not payload, so they need no redaction.
-                "parent_action_id": (
-                    str(action.context.parent_action_id)
-                    if action.context.parent_action_id
-                    else None
-                ),
-                "conversation_id": action.context.conversation_id,
-                "outcome": decision.outcome.value,
-                "risk_score": decision.risk_score,
-                "trust_score": decision.trust_score,
-                # mode="json" keeps every reason field JSON-native for canonical_json
-                # (belt-and-braces atop the contract's JSON-native evidence validator).
-                "reasons": [r.model_dump(mode="json") for r in decision.reasons],
-                "redacted_payload": redacted,
-                # Phase-3 Slice-1 Decision fields — all bounded/typed at the contract,
-                # so the hash covers the COMPLETE decision (no un-audited field).
-                "side_effects": [s.value for s in decision.side_effects],
-                "inferred_intent": decision.inferred_intent,
-                "remediation": decision.remediation,
-                "constitution_version": decision.constitution_version,
-                "policy_version": decision.policy_version,
-                "expires_at": decision.expires_at.isoformat() if decision.expires_at else None,
-            }
-            # Compute the canonical bytes ONCE — the SAME bytes feed the hash AND
-            # the signature (AUD-08), so a verifier reproduces both from `body`.
-            canonical = canonical_json(body)
-            # AUD-04 last gate: content-based secret scan over the fully-assembled,
-            # already-redacted body bytes (defense-in-depth beneath the classifier).
-            # A hit fails CLOSED before any write — the head is not advanced.
-            leaks = scan(canonical.decode("utf-8"))
-            if leaks:
-                raise SecretLeakError(f"secret-like content in audit body: {sorted(set(leaks))}")
-            record_hash = hashlib.sha256(canonical).hexdigest()
-            signature, signing_key_id = self._sign(canonical)
-            return self._insert(seq, prev_hash, record_hash, body, signature, signing_key_id)
+            return self._append_chained(fields)
 
     async def append_event(self, kind: str, body: dict) -> UUID:
         """Append one lifecycle EVENT record through the SAME hash chain.
@@ -332,16 +376,63 @@ class AuditWriter:
         if shadowed:
             raise ValueError(f"audit event body shadows reserved keys: {sorted(shadowed)}")
         async with self._lock:
-            prev_hash, seq = self._chain_head()
-            full_body = {"seq": seq, "prev_hash": prev_hash, "kind": kind, **body}
-            canonical = canonical_json(full_body)
-            # AUD-04 last gate — same fail-closed scan as `append` (gate BOTH paths).
-            leaks = scan(canonical.decode("utf-8"))
-            if leaks:
-                raise SecretLeakError(f"secret-like content in audit body: {sorted(set(leaks))}")
-            record_hash = hashlib.sha256(canonical).hexdigest()
-            signature, signing_key_id = self._sign(canonical)
-            return self._insert(seq, prev_hash, record_hash, full_body, signature, signing_key_id)
+            return self._append_chained({"kind": kind, **body})
+
+    def _append_chained(self, fields: dict) -> UUID:
+        """Link `fields` onto the chain and insert it. Caller holds `self._lock`."""
+        if self._shared:
+            return self._append_shared(fields)
+        prev_hash, seq = self._chain_head()
+        body, record_hash, signature, signing_key_id = self._seal(seq, prev_hash, fields)
+        return self._insert(seq, prev_hash, record_hash, body, signature, signing_key_id)
+
+    def _seal(
+        self, seq: int, prev_hash: str | None, fields: dict
+    ) -> tuple[dict, str, str | None, str | None]:
+        """Build the chained body and its hash + signature, or raise before anything is written."""
+        body = {"seq": seq, "prev_hash": prev_hash, **fields}
+        # Compute the canonical bytes ONCE — the SAME bytes feed the hash AND
+        # the signature (AUD-08), so a verifier reproduces both from `body`.
+        canonical = canonical_json(body)
+        # AUD-04 last gate: content-based secret scan over the fully-assembled,
+        # already-redacted body bytes (defense-in-depth beneath the classifier).
+        # A hit fails CLOSED before any write — the head is not advanced.
+        leaks = scan(canonical.decode("utf-8"))
+        if leaks:
+            raise SecretLeakError(f"secret-like content in audit body: {sorted(set(leaks))}")
+        record_hash = hashlib.sha256(canonical).hexdigest()
+        signature, signing_key_id = self._sign(canonical)
+        return body, record_hash, signature, signing_key_id
+
+    def _append_shared(self, fields: dict) -> UUID:
+        """Postgres mode: lock, read the head, seal and insert — all in ONE transaction."""
+        record_id = uuid4()
+        with self.session_factory() as session:
+            # READ COMMITTED is load-bearing: each statement takes a fresh snapshot, so the head
+            # read AFTER the lock sees the previous holder's commit. Under REPEATABLE READ the
+            # snapshot could predate the wait and the insert would collide on `seq`.
+            session.connection(execution_options={"isolation_level": "READ COMMITTED"})
+            session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": CHAIN_LOCK_KEY})
+            last = session.execute(
+                select(AuditRecord.record_hash, AuditRecord.seq)
+                .order_by(AuditRecord.seq.desc())
+                .limit(1)
+            ).first()
+            prev_hash, seq = (last.record_hash, last.seq + 1) if last else (None, 0)
+            body, record_hash, signature, signing_key_id = self._seal(seq, prev_hash, fields)
+            session.add(
+                AuditRecord(
+                    id=record_id,
+                    seq=seq,
+                    prev_hash=prev_hash,
+                    record_hash=record_hash,
+                    body=body,
+                    signature=signature,
+                    signing_key_id=signing_key_id,
+                )
+            )
+            session.commit()  # releases the advisory lock; any raise above rolls back and releases
+        return record_id
 
     def _sign(self, canonical: bytes) -> tuple[str | None, str | None]:
         """Detached EdDSA signature over SIG_DOMAIN + the canonical body bytes (AUD-08).

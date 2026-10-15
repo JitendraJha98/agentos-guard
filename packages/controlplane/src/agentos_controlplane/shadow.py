@@ -94,6 +94,32 @@ def claimed_id_digest(raw: str) -> str:
     return hashlib.sha256((raw or "").encode("utf-8", "replace")).hexdigest()[:16]
 
 
+_DIGEST_SUFFIX = 17  # "#" + the 16 hex chars `claimed_id_digest` returns
+# A value `bounded` already produced: the sanitizer's output alphabet (`_SAFE` plus the `?` it
+# substitutes, or the empty placeholder), then "#" + digest. `#` is outside `_SAFE`, so
+# no unaltered identifier has this shape except one that was ALREADY bounded.
+_BOUNDED_FORM = re.compile(r"(?:[A-Za-z0-9._:@?-]*|<empty>)#[0-9a-f]{16}")
+
+
+def bounded(raw: str, limit: int = _MAX_ID) -> str:
+    """The identifier AS RECORDED: sanitized (an operator reads these in a dashboard and a log) and
+    bounded to the column width.
+
+    Both are lossy, so a value that had to be altered carries a digest of the FULL original — `#`
+    is outside the accepted charset, so the suffix can never collide with an unaltered identifier
+    and two distinct components can never become one finding.
+
+    IDEMPOTENT (Phase 15): the inventory now bounds at write time — Postgres enforces String(255)
+    and rejects NUL, so an unbounded hostile name aborted the write — and rogue detection bounds
+    what it reads back. Re-bounding an already-bounded value must return it unchanged, or the
+    finding would carry a digest of a digest.
+    """
+    if len(raw) <= limit and _BOUNDED_FORM.fullmatch(raw):
+        return raw
+    safe = sanitize_claimed_id(raw)[:limit]
+    return safe if safe == raw else f"{safe[: limit - _DIGEST_SUFFIX]}#{claimed_id_digest(raw)}"
+
+
 def chain_safe_id(safe: str) -> str:
     """The sanitized id AS IT MAY APPEAR IN THE HASH-COVERED BODY.
 

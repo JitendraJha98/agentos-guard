@@ -67,14 +67,19 @@ def _percentile(sorted_times: list[float], q: float) -> float:
 
 
 def _profile_whole_path(wired) -> dict:
-    """Wall-clock for the complete `pipeline.evaluate`, which is what the budget is defined against."""
+    """Wall-clock for the complete `pipeline.evaluate`, which is what the budget is defined against.
+
+    One event loop for the run, as production has: `asyncio.run` per round would time loop setup
+    (~4 ms on a loaded Windows box) as if it were pipeline cost.
+    """
     times: list[float] = []
-    for _ in range(_ROUNDS):
-        action = _action(wired)
-        start = time.perf_counter()
-        decision = asyncio.run(wired.pipeline.evaluate(action))
-        times.append(time.perf_counter() - start)
-        assert decision.outcome is Outcome.allow
+    with asyncio.Runner() as runner:
+        for _ in range(_ROUNDS):
+            action = _action(wired)
+            start = time.perf_counter()
+            decision = runner.run(wired.pipeline.evaluate(action))
+            times.append(time.perf_counter() - start)
+            assert decision.outcome is Outcome.allow
     times.sort()
     return {
         "rounds": len(times),
@@ -96,10 +101,11 @@ def _profile_by_stage(wired) -> dict:
     import pstats
 
     profiler = cProfile.Profile()
-    profiler.enable()
-    for _ in range(_ROUNDS):
-        asyncio.run(wired.pipeline.evaluate(_action(wired)))
-    profiler.disable()
+    with asyncio.Runner() as runner:
+        profiler.enable()
+        for _ in range(_ROUNDS):
+            runner.run(wired.pipeline.evaluate(_action(wired)))
+        profiler.disable()
 
     stats = pstats.Stats(profiler)
     buckets = {

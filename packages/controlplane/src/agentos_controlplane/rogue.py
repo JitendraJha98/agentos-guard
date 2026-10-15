@@ -65,29 +65,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, aliased
 
 from agentos_controlplane.inventory import DECLARED, OBSERVED
-from agentos_controlplane.shadow import chain_safe_id, claimed_id_digest, sanitize_claimed_id
+from agentos_controlplane.shadow import bounded, chain_safe_id, claimed_id_digest
 from agentos_controlplane.store.models import InventoryComponent, RogueFinding
 
 # The `rogue_finding` column widths — bounded at the source so SQLite (which does not enforce
 # String(n)) and Postgres (which would fail the INSERT and abort the sweep) store the same row.
-_MAX_ID = 255
 _MAX_KIND = 32
-_DIGEST_SUFFIX = 17  # "#" + the 16 hex chars `claimed_id_digest` returns
 # How many findings one read returns. The route materializes everything it selects into ONE JSON
 # response (the shadow / dashboard `.limit()` precedent), and the table grows with the fleet.
 _MAX_FINDINGS = 1000
-
-
-def bounded(raw: str, limit: int = _MAX_ID) -> str:
-    """The identifier AS RECORDED: sanitized (an operator reads these in a dashboard and a log) and
-    bounded to the column width.
-
-    Both are lossy, so a value that had to be altered carries a digest of the FULL original — `#`
-    is outside the accepted charset, so the suffix can never collide with an unaltered identifier
-    and two distinct components can never become one finding.
-    """
-    safe = sanitize_claimed_id(raw)[:limit]
-    return safe if safe == raw else f"{safe[: limit - _DIGEST_SUFFIX]}#{claimed_id_digest(raw)}"
 
 
 @dataclass(frozen=True)

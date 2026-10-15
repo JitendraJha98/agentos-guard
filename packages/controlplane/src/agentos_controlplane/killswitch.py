@@ -16,6 +16,7 @@ from uuid import uuid4
 from sqlalchemy import select
 
 from agentos_controlplane.secret_scan import scan
+from agentos_controlplane.state_bus import SharedStateMixin
 from agentos_controlplane.store.models import EmergencyShutdown, KillSwitch
 
 _FLEET = "*"
@@ -65,18 +66,28 @@ class ShutdownResult:
     degraded: tuple[str, ...] = ()
 
 
-class KillSwitchStore:
+class KillSwitchStore(SharedStateMixin):
+    _topic = "kill_switch"
+
     def __init__(self, session_factory, audit) -> None:
         self._sf = session_factory
         self._audit = audit
         self._killed: dict[str, str] = {}  # active target -> reason (in-memory hot-path cache)
         self._emergency = False  # RUN-07: is the live fleet halt an EMERGENCY stop?
+        # Kills set in memory BEFORE their row commits (containment first). A cross-instance
+        # reload landing in that gap would rebuild from a table without them; `_load` keeps them.
+        # An emergency whose durable steps all failed stays here until cleared.
+        self._pending: dict[str, str] = {}
         self._load()
 
     def _load(self) -> None:
+        """Rebuild the cache from the table and SWAP it in. Also the cross-instance reload
+        (Phase 15): a clear made by another instance must drop the entry here, so this builds a
+        fresh dict rather than adding to the old one."""
+        killed: dict[str, str] = {}
         with self._sf() as s:
             for row in s.scalars(select(KillSwitch).where(KillSwitch.active.is_(True))).all():
-                self._killed[row.target] = row.reason or ""
+                killed[row.target] = row.reason or ""
             # RUN-07: an OPEN incident is AUTHORITATIVE for containment, not just for labelling.
             # The incident row and the kill_switch flag are two separate commits, so a crash (or a
             # failed durable step) between them can leave a declared emergency with no fleet flag —
@@ -84,11 +95,17 @@ class KillSwitchStore:
             # halt here fails toward CONTAINED and makes the incident table the source of truth.
             row = self._open_incident(s)
             if row is not None:
-                self._killed[_FLEET] = _emergency_reason(row.id)
+                killed[_FLEET] = _emergency_reason(row.id)
+        killed.update(self._pending)
+        self._killed = killed
         # Derived, never a sticky bool: the scope is whatever the live fleet reason says it is.
         self._emergency = self._killed.get(_FLEET, "").startswith(_EMERGENCY_PREFIX)
 
     def status(self, agent_id: str) -> KillStatus | None:
+        # Stage 0 runs on every action, so it is where a multi-instance deployment proves its
+        # control state is current (Phase 15). Stale -> raises -> PIPE-05 fail posture.
+        if self._bus is not None:
+            self._bus.assert_fresh()
         if _FLEET in self._killed:
             # The scope the pipeline renders as f"{scope}_killed" — so an emergency stop reads
             # emergency_killed and a routine fleet kill still reads fleet_killed (no hot-path code).
@@ -143,7 +160,7 @@ class KillSwitchStore:
         # it costs no I/O, so a DB blip can never block the stop. Every durable/audit step below is
         # best-effort and reported via `degraded` instead of raising: raising left the operator
         # unable to tell "halted but unaudited" from "not halted", and invited a retry.
-        self._killed[_FLEET] = _emergency_reason(incident_id)
+        self._killed[_FLEET] = self._pending[_FLEET] = _emergency_reason(incident_id)
         self._emergency = True
         degraded: list[str] = []
         # Durable incident record: the justification must survive a restart (and _load re-asserts
@@ -151,6 +168,7 @@ class KillSwitchStore:
         try:
             with self._sf() as s:
                 s.add(EmergencyShutdown(id=incident_id, justification=text, declared_by=set_by))
+                self.bump_in(s)
                 s.commit()
         except Exception:
             degraded.append("incident")
@@ -193,6 +211,7 @@ class KillSwitchStore:
             for row in rows:
                 row.resumed_at, row.resumed_by = now, set_by
             if rows:
+                self.bump_in(s)
                 s.commit()
         for incident_id in incident_ids or [""]:
             await self._audit.append_event(
@@ -234,7 +253,7 @@ class KillSwitchStore:
         ]
 
     async def _set(self, target, scope, set_by, reason):
-        self._killed[target] = reason  # in-memory first (hot path)
+        self._killed[target] = self._pending[target] = reason  # in-memory first (hot path)
         if target == _FLEET:
             self._emergency = scope == "emergency"  # recomputed here, never sticky
         with self._sf() as s:  # upsert current state
@@ -243,7 +262,9 @@ class KillSwitchStore:
                 s.add(KillSwitch(target=target, active=True, reason=reason, set_by=set_by))
             else:
                 row.active, row.reason, row.set_by = True, reason, set_by
+            self.bump_in(s)
             s.commit()
+        self._pending.pop(target, None)  # durable now; the table carries it from here
         # audit event body = short identifiers only (no free-text reason -> the 4d secret-gate on
         # append_event can never block an emergency kill).
         await self._audit.append_event(
@@ -263,10 +284,12 @@ class KillSwitchStore:
             row = s.get(KillSwitch, target)
             if row is not None:
                 row.active, row.set_by = False, set_by
+                self.bump_in(s)
                 s.commit()
         await self._audit.append_event(
             "kill_switch_cleared", {"target": target, "scope": scope, "set_by": set_by}
         )
+        self._pending.pop(target, None)
         self._killed.pop(target, None)  # un-kill the hot path only after durable steps succeed
         if target == _FLEET:
             self._emergency = False  # the flag can never outlive the halt it describes

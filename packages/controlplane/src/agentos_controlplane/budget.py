@@ -67,6 +67,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 
 from agentos_controlplane.reconcile import DEFAULT_INTERVALS
+from agentos_controlplane.state_bus import SharedStateMixin
 from agentos_controlplane.store.models import AgentBudget, CostRecord
 
 _MICRO = 1_000_000
@@ -111,8 +112,10 @@ def _window_start(period: str, now: datetime) -> datetime | None:
     return None
 
 
-class BudgetLedger:
+class BudgetLedger(SharedStateMixin):
     """In-memory per-agent spend, converged from the cost table."""
+
+    _topic = "budget"
 
     def __init__(self, session_factory) -> None:
         self._sf = session_factory
@@ -172,6 +175,10 @@ class BudgetLedger:
             self._windows[agent_id] = start
 
     # ---- convergence + administration (DB) ----
+    def _load(self) -> None:
+        """The bus reload hook (Phase 15): another instance recorded spend or changed a limit."""
+        self.reload()
+
     def reload(self) -> int:
         """Converge the cache from the tables. Returns the number of agents whose posture CHANGED
         (API-04: zero means converged)."""
@@ -250,6 +257,7 @@ class BudgetLedger:
                 )
             else:
                 row.period, row.limit_micro_usd = period, limit_micro_usd
+            self.bump_in(s)
             s.commit()
             # The new limit is measured over a window the cached total may not cover — switching
             # day->month would otherwise weigh a day's spend against a month's limit — and an agent

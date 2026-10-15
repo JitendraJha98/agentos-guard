@@ -26,6 +26,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import select
 
+from agentos_controlplane.state_bus import SharedStateMixin
 from agentos_controlplane.store.models import AgentPrivilege, TargetPrivilege
 
 
@@ -38,7 +39,9 @@ class PrivilegeVerdict:
     held: int
 
 
-class PrivilegeRingStore:
+class PrivilegeRingStore(SharedStateMixin):
+    _topic = "privilege"
+
     def __init__(self, session_factory, audit) -> None:
         self._sf = session_factory
         self._audit = audit
@@ -47,11 +50,13 @@ class PrivilegeRingStore:
         self._load()
 
     def _load(self) -> None:
+        """Rebuild both maps and SWAP them in (also the Phase-15 cross-instance reload)."""
         with self._sf() as s:
-            for row in s.scalars(select(AgentPrivilege)).all():
-                self._agent_rings[row.agent_id] = row.ring
-            for row in s.scalars(select(TargetPrivilege)).all():
-                self._target_rings[row.target] = row.required_ring
+            agent_rings = {r.agent_id: r.ring for r in s.scalars(select(AgentPrivilege)).all()}
+            target_rings = {
+                r.target: r.required_ring for r in s.scalars(select(TargetPrivilege)).all()
+            }
+        self._agent_rings, self._target_rings = agent_rings, target_rings
 
     # ---- hot path (in-memory only) ----
     def ring_for(self, agent_id: str) -> int:
@@ -91,7 +96,7 @@ class PrivilegeRingStore:
         # the table records — in EITHER direction. Updating memory after the audit append instead
         # would break exactly that on a TIGHTENING whose audit write raises (committed row, stale
         # looser cache). Directional discipline mirrors KillSwitchStore._set/_clear.
-        with self._sf() as s:
+        with self._state_lock, self._sf() as s:
             if scope == "agent":
                 row = s.get(AgentPrivilege, key)
                 if row is None:
@@ -104,6 +109,7 @@ class PrivilegeRingStore:
                     s.add(TargetPrivilege(target=key, required_ring=ring, set_by=set_by))
                 else:
                     row.required_ring, row.set_by = ring, set_by
+            self.bump_in(s)
             s.commit()
             if scope == "agent":
                 self._agent_rings[key] = ring

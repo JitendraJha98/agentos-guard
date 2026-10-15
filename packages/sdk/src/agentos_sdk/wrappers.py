@@ -35,9 +35,13 @@ from agentos_sdk.enforce import (
     governed_call,
 )
 from agentos_sdk.normalize import (
+    normalize_code_execution,
+    normalize_computer_use,
     normalize_delegation,
-    normalize_memory_access,
     normalize_mcp_call,
+    normalize_mcp_elicitation,
+    normalize_mcp_sampling,
+    normalize_memory_access,
 )
 
 _T = TypeVar("_T")
@@ -128,6 +132,131 @@ async def governed_delegation(
     lineage. Allow dispatches the sub-agent (`run`); a block never dispatches it."""
     action = normalize_delegation(
         to_agent, task, token,
+        parent_action_id=parent_action_id, conversation_id=conversation_id,
+    )
+    return await governed_call(
+        pipeline, action, run,
+        coordinator=coordinator, dispatcher=dispatcher, sandbox=sandbox,
+        consensus=consensus, governor=governor, reporter=reporter, meter=meter,
+    )
+
+
+# --- Phase 17: new action types and server-initiated MCP requests ------------------------------
+
+
+async def governed_computer_use(
+    pipeline: PipelineProtocol,
+    token: str,
+    *,
+    operation: str,
+    url: str,
+    run: Callable[[], Awaitable[_T]],
+    element: str = "",
+    text: str = "",
+    parent_action_id: UUID | None = None,
+    conversation_id: str | None = None,
+    coordinator: ApprovalCoordinator | None = None,
+    dispatcher: SideEffectDispatcher | None = None,
+    sandbox: SandboxRunner | None = None,
+    consensus: ConsensusCoordinator | None = None,
+    governor: ResourceGovernor | None = None,
+    reporter: CircuitReporter | None = None,
+    meter: CostMeter | None = None,
+) -> _T:
+    """Govern a browser/desktop UI action (ACT-01). A block never performs the click/keystroke."""
+    action = normalize_computer_use(
+        operation, url, token, element=element, text=text,
+        parent_action_id=parent_action_id, conversation_id=conversation_id,
+    )
+    return await governed_call(
+        pipeline, action, run,
+        coordinator=coordinator, dispatcher=dispatcher, sandbox=sandbox,
+        consensus=consensus, governor=governor, reporter=reporter, meter=meter,
+    )
+
+
+async def governed_code_execution(
+    pipeline: PipelineProtocol,
+    token: str,
+    *,
+    language: str,
+    code: str,
+    run: Callable[[], Awaitable[_T]],
+    parent_action_id: UUID | None = None,
+    conversation_id: str | None = None,
+    coordinator: ApprovalCoordinator | None = None,
+    dispatcher: SideEffectDispatcher | None = None,
+    sandbox: SandboxRunner | None = None,
+    consensus: ConsensusCoordinator | None = None,
+    governor: ResourceGovernor | None = None,
+    reporter: CircuitReporter | None = None,
+    meter: CostMeter | None = None,
+) -> _T:
+    """Govern running agent-authored code (ACT-02). A block never starts the interpreter."""
+    action = normalize_code_execution(
+        language, code, token,
+        parent_action_id=parent_action_id, conversation_id=conversation_id,
+    )
+    return await governed_call(
+        pipeline, action, run,
+        coordinator=coordinator, dispatcher=dispatcher, sandbox=sandbox,
+        consensus=consensus, governor=governor, reporter=reporter, meter=meter,
+    )
+
+
+async def governed_mcp_sampling(
+    pipeline: PipelineProtocol,
+    token: str,
+    *,
+    server: str,
+    messages,
+    run: Callable[[], Awaitable[_T]],
+    system_prompt: str = "",
+    parent_action_id: UUID | None = None,
+    conversation_id: str | None = None,
+    coordinator: ApprovalCoordinator | None = None,
+    dispatcher: SideEffectDispatcher | None = None,
+    sandbox: SandboxRunner | None = None,
+    consensus: ConsensusCoordinator | None = None,
+    governor: ResourceGovernor | None = None,
+    reporter: CircuitReporter | None = None,
+    meter: CostMeter | None = None,
+) -> _T:
+    """Govern an MCP server's `sampling/createMessage` request (MCP-01). A block never spends the
+    client's model on the server's prompt."""
+    action = normalize_mcp_sampling(
+        server, messages, token, system_prompt=system_prompt,
+        parent_action_id=parent_action_id, conversation_id=conversation_id,
+    )
+    return await governed_call(
+        pipeline, action, run,
+        coordinator=coordinator, dispatcher=dispatcher, sandbox=sandbox,
+        consensus=consensus, governor=governor, reporter=reporter, meter=meter,
+    )
+
+
+async def governed_mcp_elicitation(
+    pipeline: PipelineProtocol,
+    token: str,
+    *,
+    server: str,
+    message: str,
+    requested_schema: dict,
+    run: Callable[[], Awaitable[_T]],
+    parent_action_id: UUID | None = None,
+    conversation_id: str | None = None,
+    coordinator: ApprovalCoordinator | None = None,
+    dispatcher: SideEffectDispatcher | None = None,
+    sandbox: SandboxRunner | None = None,
+    consensus: ConsensusCoordinator | None = None,
+    governor: ResourceGovernor | None = None,
+    reporter: CircuitReporter | None = None,
+    meter: CostMeter | None = None,
+) -> _T:
+    """Govern an MCP server's `elicitation/create` request (MCP-02). A block never shows the
+    server's prompt to the user."""
+    action = normalize_mcp_elicitation(
+        server, message, requested_schema, token,
         parent_action_id=parent_action_id, conversation_id=conversation_id,
     )
     return await governed_call(

@@ -60,6 +60,7 @@ def tag_intent(action: AgentAction) -> str | None:
 # imports must run after tag_intent exists for either entry point of the cycle
 # to resolve.
 from agentos_pipeline.risk.code_execution import CodeExecutionScorer  # noqa: E402
+from agentos_pipeline.risk.credential_solicitation import CredentialSolicitationScorer  # noqa: E402
 from agentos_pipeline.risk.exfiltration import ExfiltrationScorer  # noqa: E402
 from agentos_pipeline.risk.format_check import FormatViolationScorer  # noqa: E402
 from agentos_pipeline.risk.memory_poison import MemoryPoisoningScorer  # noqa: E402
@@ -78,6 +79,7 @@ _GUARDRAIL_SCORERS = (
     ExfiltrationScorer(),
     CodeExecutionScorer(),
     MemoryPoisoningScorer(),
+    CredentialSolicitationScorer(),  # Phase 17 (MCP-02)
 )
 
 _FLAG_BY_CATEGORY = {
@@ -88,6 +90,7 @@ _FLAG_BY_CATEGORY = {
     "egress_exfil": "exfiltration",
     "code_execution": "code_exec",
     "memory_poisoning": "memory_poison",
+    "credential_solicitation": "credential_solicitation",
 }
 
 
@@ -97,6 +100,7 @@ def enrich(action: AgentAction) -> Enrichment:
     flags = {
         "pii": False, "unsafe": False, "format": False, "secret": False,
         "exfiltration": False, "code_exec": False, "memory_poison": False,
+        "credential_solicitation": False,
     }
     for finding in findings:
         if finding.matched:

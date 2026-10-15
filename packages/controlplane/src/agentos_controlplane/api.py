@@ -9,19 +9,20 @@ store, not here, so every writer is audited identically.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from agentos_controlplane.amendments import AmendmentStore
 from agentos_controlplane.approvals import AlreadyResolvedError, ApprovalStore
-from agentos_controlplane.auth import make_require_token, resolve_api_token
+from agentos_controlplane.auth import PrincipalStore, make_authenticator, resolve_api_token
 from agentos_controlplane.circuit_breaker import CircuitBreakerStore
 from agentos_controlplane.budget import BudgetLedger
 from agentos_controlplane.compliance import export_evidence_bundle, parse_time_bound
@@ -39,6 +40,7 @@ from agentos_controlplane.registry import Registry
 from agentos_controlplane.resources import ConstitutionError, ResourceStore, VersionConflict
 from agentos_controlplane.rogue import RogueDetector
 from agentos_controlplane.shadow import ShadowAgentStore
+from agentos_controlplane.state_bus import ControlStateBus
 from agentos_controlplane.supply_chain import KnownBad, SupplyChainChecker
 from agentos_controlplane.validation import ValidationStore
 from agentos_controlplane.store.models import ApprovalRequest, GovernanceReview
@@ -930,6 +932,46 @@ def build_registration_router(registry: Registry) -> APIRouter:
     return router
 
 
+class CreatePrincipalIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    name: str = Field(min_length=1, max_length=128)
+    role: Literal["viewer", "operator", "admin"]
+
+
+def build_principal_router(principals: PrincipalStore) -> APIRouter:
+    """AUTH-01 — admin-only (see auth.ADMIN_ROUTES). The acting admin is the authenticated
+    principal, never a body field, so "who granted this" cannot be claimed."""
+    router = APIRouter()
+
+    @router.get("/principals")
+    def list_principals() -> list[dict]:
+        return principals.list()
+
+    @router.post("/principals", status_code=201)
+    async def create_principal(body: CreatePrincipalIn, request: Request) -> dict:
+        try:
+            token = await principals.create(
+                body.name, body.role, created_by=request.state.principal.name
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        except KeyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        # The only time the token exists outside its holder's hands.
+        return {"name": body.name, "role": body.role, "token": token}
+
+    @router.post("/principals/{name}/revoke")
+    async def revoke_principal(name: str, request: Request) -> dict:
+        try:
+            await principals.revoke(name, revoked_by=request.state.principal.name)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown principal") from None
+        return {"name": name, "revoked": True}
+
+    return router
+
+
 def create_app(
     store: ApprovalStore,
     kill_store: KillSwitchStore | None = None,
@@ -968,14 +1010,26 @@ def create_app(
     amendments: AmendmentStore | None = None,
     # ABOM-03: likewise appended last.
     impact: ImpactAnalyzer | None = None,
+    # Phase 15: a multi-instance deployment passes its bus (stores already attached via
+    # `bus.wire(...)`); the app starts polling on startup and stops on shutdown.
+    state_bus: ControlStateBus | None = None,
+    # Phase 16 (AUTH-01..03): named, role-bearing credentials. None keeps the shared token as the
+    # only credential (it is always accepted, as the bootstrap admin).
+    principals: PrincipalStore | None = None,
 ) -> FastAPI:
     # Phase-5 P0: a shared-token gate guards EVERY router. Token resolution is
     # explicit arg -> AGENTOS_API_TOKEN env -> ephemeral random (logged) — never silently open.
     token = resolve_api_token(api_token)
-    guard = [Depends(make_require_token(token))]
-    app = FastAPI(title="agentos-guard control plane", version="0.1.0")
+    # Phase 16: authenticate (shared token = bootstrap admin, or a named principal), authorize by
+    # route role, and bind body actor fields to the principal. See auth.py.
+    guard = [Depends(make_authenticator(token, principals))]
+    app = FastAPI(
+        title="agentos-guard control plane", version="0.1.0", lifespan=_bus_lifespan(state_bus)
+    )
     app.state.api_token = token
     app.include_router(build_router(store), dependencies=guard)
+    if principals is not None:
+        app.include_router(build_principal_router(principals), dependencies=guard)
     # RUN-01/02: the kill-switch router is wired only when a kill_store is supplied —
     # existing create_app(store) callers keep working with no /kill routes.
     if kill_store is not None:
@@ -1064,5 +1118,22 @@ def create_app(
             kill_store=kill_store,
             inventory=inventory_store,
             session_factory=session_factory,
+            principals=principals,
         )
     return app
+
+
+def _bus_lifespan(state_bus: ControlStateBus | None):
+    """Phase 15: poll shared control state for exactly the app's lifetime (None -> no-op)."""
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        if state_bus is not None:
+            state_bus.start()
+        try:
+            yield
+        finally:
+            if state_bus is not None:
+                state_bus.stop()
+
+    return lifespan

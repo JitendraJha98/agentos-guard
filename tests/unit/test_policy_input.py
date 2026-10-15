@@ -15,6 +15,7 @@ from agentos_pipeline.policy_input import build_policy_input
 _BASE_GUARDRAILS = {
     "pii": False, "unsafe": False, "format": False, "secret": False,
     "exfiltration": False, "code_exec": False, "memory_poison": False,
+    "credential_solicitation": False,
 }
 # ECON-02: with no ledger wired the cost section is zeros — "no budget configured",
 # which is not "over budget". Every action type carries it (scope "all").
@@ -159,3 +160,34 @@ def test_a_supplied_posture_reaches_the_document_verbatim() -> None:
     doc = build_policy_input(a, enrich(a), cost=_Posture())
 
     assert doc["cost"] == {"spend_usd": 2.5, "budget_used_ratio": 0.25}
+
+
+def test_computer_use_carries_its_page_host_into_the_egress_section() -> None:
+    """Phase 17: a browser action is governed by the SAME egress allowlist as an HTTP tool call."""
+    a = _act(ActionType.computer_use, "computer:navigate",
+             {"operation": "navigate", "url": "https://attacker.example/login", "text": "", "element": ""})
+    doc = build_policy_input(a, enrich(a))
+    assert doc["egress"] == {"host": "attacker.example"}
+    assert doc["computer"] == {"operation": "navigate"}
+
+
+def test_computer_use_without_a_page_fails_closed_on_egress() -> None:
+    a = _act(ActionType.computer_use, "computer:click", {"operation": "click"})
+    assert build_policy_input(a, enrich(a))["egress"] == {"host": ""}
+
+
+def test_code_execution_input() -> None:
+    a = _act(ActionType.code_execution, "code:python", {"language": "python", "code": "print(1)"})
+    doc = build_policy_input(a, enrich(a))
+    assert doc["code"] == {"language": "python"} and "egress" not in doc
+
+
+def test_an_action_type_without_a_shape_is_refused_not_treated_as_a_model_call(monkeypatch) -> None:
+    """The builder once ended in a bare `else: model_invocation`; an unknown type now raises (the
+    runner turns that into the fail-closed PIPE-05 posture)."""
+    import pytest
+
+    a = _act(ActionType.tool_call, "t", {})
+    object.__setattr__(a, "type", type("Fake", (), {"value": "teleport"})())
+    with pytest.raises(ValueError, match="teleport"):
+        build_policy_input(a, enrich(_act(ActionType.tool_call, "t", {})))

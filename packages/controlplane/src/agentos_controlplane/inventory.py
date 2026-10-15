@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from agentos_controlplane.shadow import bounded
 from agentos_controlplane.store.models import AuditRecord, InventoryComponent
 
 # `source` values, in PRECEDENCE order (see `_upsert` — a row is never downgraded):
@@ -42,6 +43,8 @@ _KIND_BY_ACTION = {
     "mcp_call": "mcp",
     "model_invocation": "model",
     "delegation": "delegation",
+    "computer_use": "computer",
+    "code_execution": "code",
 }
 
 
@@ -128,6 +131,11 @@ class InventoryStore:
 
     @staticmethod
     def _upsert(s: Session, agent_id: str, kind: str, name: str, *, source: str) -> None:
+        # Component names are caller text (a manifest, or a tool name an agent chose at runtime).
+        # Bounded HERE, at the write: Postgres enforces String(255) and rejects NUL bytes, so an
+        # unbounded hostile name aborted the write — an agent could keep its own undeclared tool
+        # out of the inventory (and out of DISC-05) just by naming it badly. Found in Phase 15.
+        name = bounded(name)
         row = s.scalar(
             select(InventoryComponent).where(
                 InventoryComponent.agent_id == agent_id,

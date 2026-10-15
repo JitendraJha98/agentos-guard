@@ -508,7 +508,9 @@ def test_a_value_written_around_the_setter_never_reaches_the_bundle(registry):
         s.execute(
             update(Agent)
             .where(Agent.agent_id == "a8")
-            .values(risk_classification="CERTIFIED COMPLIANT - Art. 43 conformity assessed")
+            # Fits VARCHAR(32): Postgres enforces the width (SQLite does not), and the claim under
+            # test is about an invented tier that DID get stored, not about the column's width.
+            .values(risk_classification="CERTIFIED_COMPLIANT_ART43")
         )
         s.commit()
 

@@ -87,6 +87,16 @@ def build_policy_input(
         }
     elif action.type is ActionType.delegation:
         doc["delegation"] = {"to_agent": str(payload.get("to_agent", ""))}
-    else:  # ActionType.model_invocation
+    elif action.type is ActionType.model_invocation:
         doc["model"] = {"name": str(payload.get("model", ""))}
+    elif action.type is ActionType.computer_use:
+        doc["computer"] = {"operation": str(payload.get("operation", ""))}
+        doc["egress"] = {"host": _host(action)}
+    elif action.type is ActionType.code_execution:
+        doc["code"] = {"language": str(payload.get("language", ""))}
+    else:
+        # Was a bare `else: model_invocation`, so a NEW action type would have been evaluated as a
+        # model call — silently skipping every type-scoped principle. Unknown now raises, and the
+        # runner turns that into the PIPE-05 fail posture (closed by default).
+        raise ValueError(f"no policy-input shape for action type {action.type.value!r}")
     return doc

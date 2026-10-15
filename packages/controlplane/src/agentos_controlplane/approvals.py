@@ -79,7 +79,8 @@ class ApprovalStore:
     def create(self, action: AgentAction, decision: Decision, *, deadline_s: float) -> UUID:
         """Park one approval request. Context is REDACTED fail-closed first —
         a RedactionError means NO row is created."""
-        context = _redact_or_raise(action.payload)  # raises -> no row (D-15)
+        # raises -> no row (D-15); the audit writer's digest key keeps context digests keyed too
+        context = _redact_or_raise(action.payload, self._audit.digest_key)
         row = ApprovalRequest(
             action_id=action.id,
             agent_id=action.agent_id,

@@ -18,6 +18,8 @@ class ActionType(str, Enum):
     mcp_call = "mcp_call"                  # Phase 2 (INT-04)
     model_invocation = "model_invocation"  # Phase 2 (INT-02)
     delegation = "delegation"              # Phase 2 (INT-05)
+    computer_use = "computer_use"          # Phase 17 (ACT-01): browser/desktop UI actions
+    code_execution = "code_execution"      # Phase 17 (ACT-02): running agent-authored code
 
 
 class ActionContext(BaseModel):

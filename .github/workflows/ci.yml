@@ -133,3 +133,35 @@ jobs:
         run: |
           uv run pytest tests/unit/test_openai_agents_adapter.py \
             tests/integration/test_openai_agents_e2e.py -q
+
+  postgres:
+    # Phase 15 (DB-01): the WHOLE suite on real Postgres, the documented production backend. Every
+    # in-memory SQLite store is rerouted to a fresh Postgres schema (tests/_pg.py, pgserver — no
+    # Docker, no service container). Kept as its own job because it is slower than the SQLite run,
+    # and because before Phase 15 nothing ran on Postgres at all — five real bugs were hiding there.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.17"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install pinned OPA CLI
+        run: |
+          curl -fsSL -o /usr/local/bin/opa \
+            "https://openpolicyagent.org/downloads/v${OPA_VERSION}/opa_linux_amd64_static"
+          chmod +x /usr/local/bin/opa
+          opa version
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      - name: Pytest on Postgres
+        env:
+          AGENTOS_TEST_DB: postgres
+        run: uv run pytest -q --ignore=tests/benchmarks

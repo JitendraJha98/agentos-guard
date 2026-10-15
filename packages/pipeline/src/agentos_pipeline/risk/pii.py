@@ -15,7 +15,7 @@ INVARIANTS (tested):
   - Credit-card candidates are IIN-guarded (first digit 2-6) then Luhn-verified —
     a 16-digit string alone is not a finding, and Luhn-passing digit runs that
     start "1" (epoch-ms timestamps, snowflake IDs) are not cards.
-  - matched holds pattern IDs only ("email", "ssn", "credit_card", "phone") —
+  - matched holds pattern IDs only ("email", "ssn", "credit_card", "phone", "iban") —
     never raw values (the RiskFinding validator enforces this; threat T-01-11).
   - Advisory only: 0.35 when matched — below the 0.4 sandbox band by design.
     PII to an *allowlisted* host stays allow; the 3.2 constitution floor does
@@ -44,6 +44,17 @@ def _luhn_valid(digits: str) -> bool:
     return total % 10 == 0
 
 
+def _iban_valid(candidate: str) -> bool:
+    """ISO 13616 mod-97: move the first four characters to the end, map A-Z to 10-35, and the
+    number must be 1 mod 97. Length 15-34 (the shortest national IBAN is Norway's 15)."""
+    iban = candidate.replace(" ", "")
+    if not 15 <= len(iban) <= 34:
+        return False
+    rotated = iban[4:] + iban[:4]
+    digits = "".join(str(int(ch, 36)) for ch in rotated)
+    return int(digits) % 97 == 1
+
+
 class PiiScorer:
     """Slice-4 inline detector: deterministic PII regex heuristics, no model, no I/O."""
 
@@ -57,6 +68,15 @@ class PiiScorer:
     # Card CANDIDATES only — each is Luhn-checked before it becomes a finding.
     _CARD_CANDIDATE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
     _PHONE = re.compile(r"\+\d{7,15}\b|\(\d{3}\)\s?\d{3}-\d{4}")
+    # Phase 16 (RED-02) recall fixes. `_PHONE` required contiguous digits after "+", so the way
+    # numbers are actually written — "+1 415-555-2671", "+44 20 7946 0958" — was missed, and so
+    # was a bare NANP "415.555.2671". Separated international candidates are digit-counted (7-15,
+    # E.164) before they count.
+    _PHONE_SEPARATED = re.compile(r"\+\d{1,3}(?:[ .-]\d{1,4}){2,5}\b")
+    _PHONE_NANP = re.compile(r"\b\d{3}([.-])\d{3}\1\d{4}\b")
+    # IBAN candidates (country, check digits, 11-30 alphanumerics, optionally in groups of 4); each
+    # is mod-97 verified (ISO 13616) before it becomes a finding, like cards are Luhn-verified.
+    _IBAN_CANDIDATE = re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,4})?\b")
 
     @classmethod
     def find_pii(cls, text: str) -> list[str]:
@@ -81,8 +101,13 @@ class PiiScorer:
             if 13 <= len(digits) <= 19 and _luhn_valid(digits):
                 matched.append("credit_card")
                 break
-        if cls._PHONE.search(text):
+        if cls._PHONE.search(text) or cls._PHONE_NANP.search(text) or any(
+            7 <= sum(ch.isdigit() for ch in m.group(0)) <= 15
+            for m in cls._PHONE_SEPARATED.finditer(text)
+        ):
             matched.append("phone")
+        if any(_iban_valid(m.group(0)) for m in cls._IBAN_CANDIDATE.finditer(text)):
+            matched.append("iban")
         return matched
 
     def score(self, action: AgentAction) -> RiskFinding:

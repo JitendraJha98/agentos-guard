@@ -26,13 +26,16 @@ from sqlalchemy import select
 from agentos_contract import AgentAction, Decision
 from agentos_sdk.enforce import ResourceLimits
 
+from agentos_controlplane.state_bus import SharedStateMixin
 from agentos_controlplane.store.models import ResourceLimit
 
 _NETWORK_MODES = frozenset({"allow", "deny"})
 
 
-class ResourceGovernorStore:
+class ResourceGovernorStore(SharedStateMixin):
     """Satisfies the SDK's `ResourceGovernor` Protocol structurally (no SDK import at the seam)."""
+
+    _topic = "resource_limits"
 
     def __init__(self, session_factory, audit) -> None:
         self._sf = session_factory
@@ -41,11 +44,15 @@ class ResourceGovernorStore:
         self._load()
 
     def _load(self) -> None:
+        """Rebuild the limits and SWAP them in (also the Phase-15 cross-instance reload)."""
         with self._sf() as s:
-            for row in s.scalars(select(ResourceLimit)).all():
-                self._limits[row.agent_id] = ResourceLimits(
+            limits = {
+                row.agent_id: ResourceLimits(
                     wall_s=row.wall_s, memory_mb=row.memory_mb, network=row.network
                 )
+                for row in s.scalars(select(ResourceLimit)).all()
+            }
+        self._limits = limits
 
     # ---- hot path (in-memory only) ----
     def limits_for(self, agent_id: str) -> ResourceLimits | None:
@@ -80,7 +87,7 @@ class ResourceGovernorStore:
         if memory_mb is not None and (not math.isfinite(memory_mb) or memory_mb <= 0):
             raise ValueError("memory_mb must be a finite number > 0 when set")
         # DURABLE FIRST, then the cache IN THE SAME BREATH as the commit, then the audit append.
-        with self._sf() as s:
+        with self._state_lock, self._sf() as s:
             row = s.get(ResourceLimit, agent_id)
             if row is None:
                 s.add(
@@ -99,6 +106,7 @@ class ResourceGovernorStore:
                     network,
                     set_by,
                 )
+            self.bump_in(s)
             s.commit()
             self._limits[agent_id] = ResourceLimits(
                 wall_s=wall_s, memory_mb=memory_mb, network=network

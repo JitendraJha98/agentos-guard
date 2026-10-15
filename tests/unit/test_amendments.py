@@ -110,6 +110,16 @@ def test_an_over_long_title_is_refused(store, amendments) -> None:
 # --- ratification --------------------------------------------------------------
 
 
+def test_the_proposer_cannot_ratify_their_own_amendment(store, amendments) -> None:
+    """Separation of duties (Phase 16): self-ratification is a self-approval. Nothing is applied."""
+    aid = asyncio.run(amendments.propose("v2", "reason", "operator-jane", _constitution("b.test")))
+    with pytest.raises(ValueError, match="proposed it"):
+        asyncio.run(amendments.ratify(aid, " operator-jane "))
+    assert amendments.get(aid).status != RATIFIED
+    asyncio.run(amendments.ratify(aid, "operator-bob"))  # a second party still can
+    assert amendments.get(aid).status == RATIFIED
+
+
 def test_ratifying_produces_a_new_constitution_version_and_records_it(store, amendments) -> None:
     aid = asyncio.run(amendments.propose("v2", "reason", "agent-1", _constitution("b.test")))
 

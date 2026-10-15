@@ -46,6 +46,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from agentos_controlplane.state_bus import SharedStateWriter
 from agentos_controlplane.store.models import Agent, ApprovalRequest, AuditRecord, TrustProfile
 
 
@@ -178,7 +179,9 @@ def _age_s(then: datetime | None, now: float) -> float:
     return now - then.timestamp()
 
 
-class ReputationEngine:
+class ReputationEngine(SharedStateWriter):
+    _topic = "identity"  # a changed score invalidates identity caches (Phase 15)
+
     """Loads an agent's history and derives its reputation (TRST-03).
 
     Evidence sources are the two the requirement names: the audit log's decision
@@ -280,11 +283,14 @@ class ReputationEngine:
             profile = s.get(TrustProfile, agent_id)
             if profile is None:
                 s.add(TrustProfile(agent_id=agent_id, trust_score=result.score, band=band, version=1))
+                self.bump_in(s)
             else:
                 # No expected_version guard: the reconciler is a derived-state writer,
                 # not a competing author. A racing operator PUT wins the row and the
                 # next reconcile pass re-derives from it — last-writer-wins is correct
                 # here precisely because reputation is recomputable from the audit log.
+                if profile.trust_score != result.score:
+                    self.bump_in(s)
                 profile.trust_score = result.score
             s.commit()
         return result

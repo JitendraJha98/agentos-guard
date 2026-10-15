@@ -164,6 +164,11 @@ class AmendmentStore:
                 raise KeyError(f"unknown amendment {amendment_id}")
             if row.status in _TERMINAL:
                 raise AlreadyResolvedError(f"amendment is already {row.status}")
+            if row.proposed_by.strip() == ratifier:
+                # Separation of duties: ratification is a SECOND party's judgement, or it is a
+                # self-approval with extra steps. Meaningful since Phase 16 binds names to
+                # authenticated principals; before, both names were self-declared anyway.
+                raise ValueError("an amendment cannot be ratified by the party that proposed it")
             source, title = row.source, row.title
         # Applied OUTSIDE the session above so a compile failure cannot leave a half-written
         # transition, and applied BEFORE the status flip so an amendment is never marked ratified

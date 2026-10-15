@@ -11,7 +11,6 @@ shared session factory. This router is NOT behind the Bearer guard — it has it
 
 from __future__ import annotations
 
-import secrets
 from pathlib import Path
 from uuid import UUID
 
@@ -20,6 +19,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from agentos_controlplane.approvals import ApprovalStore
+from agentos_controlplane.auth import identify
 from agentos_controlplane.inventory import InventoryStore
 from agentos_controlplane.killswitch import EmergencyActiveError, KillSwitchStore
 
@@ -34,23 +34,34 @@ class _NotLoggedIn(Exception):
     translates it to a 303 redirect to /dashboard/login (the page never executes)."""
 
 
-def make_require_session(api_token: str):
-    def require_session(request: Request) -> bool:
-        cookie = request.cookies.get(_COOKIE)
-        ok = False
-        if cookie is not None:
-            try:
-                ok = secrets.compare_digest(cookie, api_token)
-            except TypeError:
-                # A raw high-byte Cookie header decodes into a non-ASCII str, which
-                # compare_digest refuses; treat it as an invalid cookie (fail closed),
-                # not a 500. Honors the "absent/invalid -> redirect" contract.
-                ok = False
-        if not ok:
+def make_require_session(api_token: str, principals=None):
+    """Resolve the session cookie to a principal (the shared token = bootstrap admin, or a named
+    principal's token — Phase 16), or raise _NotLoggedIn. Returns the Principal."""
+
+    def require_session(request: Request):
+        principal = identify(request.cookies.get(_COOKIE), api_token, principals)
+        if principal is None:
             raise _NotLoggedIn()
-        return True
+        return principal
 
     return require_session
+
+
+def make_require_operator(require_session):
+    """Every dashboard ACTION changes enforcement state, so it needs at least operator (AUTH-02)."""
+
+    def require_operator(principal=Depends(require_session)):
+        if not principal.allows("operator"):
+            raise HTTPException(status_code=403, detail="the operator role is required")
+        return principal
+
+    return require_operator
+
+
+def _actor(principal, claimed: str) -> str:
+    """AUTH-03: a named principal is the actor, whatever the form says. The bootstrap (shared)
+    token keeps the caller-claimed name, unverified, as before Phase 16."""
+    return claimed if principal.bootstrap else principal.name
 
 
 def _approval_row(row) -> dict:
@@ -126,9 +137,11 @@ def build_dashboard_router(
     graph=None,
     health=None,
     validation=None,
+    principals=None,
 ) -> APIRouter:
     router = APIRouter()
-    require_session = make_require_session(api_token)
+    require_session = make_require_session(api_token, principals)
+    require_operator = make_require_operator(require_session)
 
     # --- auth: cookie login + session gate ----------------------------------
     @router.get("/dashboard/login", response_class=HTMLResponse)
@@ -137,17 +150,12 @@ def build_dashboard_router(
 
     @router.post("/dashboard/login")
     def login(token: str = Form(...)):
-        try:
-            ok = secrets.compare_digest(token, api_token)
-        except TypeError:
-            # A non-ASCII form value (any pasted string) makes compare_digest
-            # refuse; treat it as a wrong token (fail closed to the error
-            # redirect), not a 500 — same contract as the session-cookie gate.
-            ok = False
-        if not ok:
+        # Shared token or a named principal's token (Phase 16); a non-ASCII value is simply a
+        # wrong token (identify fails closed), never a 500.
+        if identify(token, api_token, principals) is None:
             return RedirectResponse("/dashboard/login?error=1", status_code=303)
         resp = RedirectResponse("/dashboard", status_code=303)
-        resp.set_cookie(_COOKIE, api_token, httponly=True, samesite="strict")
+        resp.set_cookie(_COOKIE, token, httponly=True, samesite="strict")
         return resp
 
     # --- DASH-01: inventory + recent-decisions landing page (read-only) ------
@@ -229,13 +237,15 @@ def build_dashboard_router(
     @router.post("/dashboard/approvals/{approval_id}/resolve")
     async def resolve_approval(
         approval_id: str,
-        _: bool = Depends(require_session),
+        principal=Depends(require_operator),
         decision: str = Form(...),
         resolver: str = Form("operator"),
     ):
         # SAME ApprovalStore.resolve the JSON API calls (no behavior drift).
         await approvals.resolve(
-            UUID(approval_id), approved=(decision == "approve"), resolver=resolver
+            UUID(approval_id),
+            approved=(decision == "approve"),
+            resolver=_actor(principal, resolver),
         )
         return RedirectResponse("/dashboard/approvals", status_code=303)
 
@@ -250,42 +260,42 @@ def build_dashboard_router(
 
     @router.post("/dashboard/kill/agent")
     async def kill_agent(
-        _: bool = Depends(require_session),
+        principal=Depends(require_operator),
         agent_id: str = Form(...),
         reason: str = Form(""),
         set_by: str = Form("operator"),
     ):
-        await kill_store.kill(agent_id, set_by=set_by, reason=reason)
+        await kill_store.kill(agent_id, set_by=_actor(principal, set_by), reason=reason)
         return RedirectResponse("/dashboard/kill", status_code=303)
 
     @router.post("/dashboard/kill/agent/clear")
     async def clear_agent(
-        _: bool = Depends(require_session),
+        principal=Depends(require_operator),
         agent_id: str = Form(...),
         set_by: str = Form("operator"),
     ):
-        await kill_store.clear(agent_id, set_by=set_by)
+        await kill_store.clear(agent_id, set_by=_actor(principal, set_by))
         return RedirectResponse("/dashboard/kill", status_code=303)
 
     @router.post("/dashboard/kill/fleet")
     async def kill_fleet(
-        _: bool = Depends(require_session),
+        principal=Depends(require_operator),
         reason: str = Form(""),
         set_by: str = Form("operator", max_length=128),
     ):
         try:
-            await kill_store.kill_fleet(set_by=set_by, reason=reason)
+            await kill_store.kill_fleet(set_by=_actor(principal, set_by), reason=reason)
         except EmergencyActiveError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
         return RedirectResponse("/dashboard/kill", status_code=303)
 
     @router.post("/dashboard/kill/fleet/clear")
     async def clear_fleet(
-        _: bool = Depends(require_session),
+        principal=Depends(require_operator),
         set_by: str = Form("operator", max_length=128),
     ):
         try:
-            await kill_store.clear_fleet(set_by=set_by)
+            await kill_store.clear_fleet(set_by=_actor(principal, set_by))
         except EmergencyActiveError as exc:  # the routine clear cannot lift an emergency halt
             raise HTTPException(status_code=409, detail=str(exc)) from None
         return RedirectResponse("/dashboard/kill", status_code=303)
@@ -296,12 +306,14 @@ def build_dashboard_router(
     # whitespace-only justification).
     @router.post("/dashboard/kill/emergency-shutdown")
     async def emergency_shutdown(
-        _: bool = Depends(require_session),
+        principal=Depends(require_operator),
         justification: str = Form(...),  # REQUIRED: a missing field is a 422 before the store
         set_by: str = Form("operator", max_length=128),
     ):
         try:
-            await kill_store.emergency_shutdown(justification=justification, set_by=set_by)
+            await kill_store.emergency_shutdown(
+                justification=justification, set_by=_actor(principal, set_by)
+            )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
         except EmergencyActiveError as exc:
@@ -310,11 +322,11 @@ def build_dashboard_router(
 
     @router.post("/dashboard/kill/emergency-resume")
     async def emergency_resume(
-        _: bool = Depends(require_session),
+        principal=Depends(require_operator),
         set_by: str = Form("operator", max_length=128),
     ):
         try:
-            await kill_store.resume_fleet(set_by=set_by)
+            await kill_store.resume_fleet(set_by=_actor(principal, set_by))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
         return RedirectResponse("/dashboard/kill", status_code=303)
@@ -336,6 +348,7 @@ def mount_dashboard(
     graph=None,
     health=None,
     validation=None,
+    principals=None,
 ) -> None:
     """Mount the dashboard router and register the _NotLoggedIn -> 303 redirect handler.
 
@@ -350,6 +363,7 @@ def mount_dashboard(
             graph=graph,
             health=health,
             validation=validation,
+            principals=principals,
         )
     )
 

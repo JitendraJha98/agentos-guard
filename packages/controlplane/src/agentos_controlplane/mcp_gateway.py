@@ -34,7 +34,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from sqlalchemy import delete, select
+
 from agentos_controlplane.abom import component_digest
+from agentos_controlplane.state_bus import SharedStateMixin
+from agentos_controlplane.store.models import McpQuarantine
 
 # Injection/imperative shapes that must never appear in DATA (a tool description).
 # Kept independent of the pipeline package (control plane cannot import it); the
@@ -49,6 +53,9 @@ _HIDDEN_INSTRUCTION = re.compile(
 )
 
 _MAX_DESCRIPTION = 2000  # chars; a legit tool description is a sentence or two, not a manifesto
+
+# MCP methods a SERVER sends to the client (as governed by agentos_sdk.normalize, Phase 17).
+SERVER_INITIATED = frozenset({"sampling/createMessage", "elicitation/create"})
 
 
 def _edit_distance_le(a: str, b: str, limit: int) -> bool:
@@ -76,7 +83,7 @@ class MCPVerdict:
 
 
 @dataclass
-class MCPGateway:
+class MCPGateway(SharedStateMixin):
     """Inspects, normalizes, and quarantines MCP tool manifests (SEC-07).
 
     `known_good` is the set of trusted server/tool names typosquatting is measured
@@ -88,6 +95,22 @@ class MCPGateway:
     known_good: set[str] = field(default_factory=set)
     blessed_digests: dict[tuple[str, str], str] = field(default_factory=dict)
     _quarantine: set[tuple[str, str]] = field(default_factory=set)
+    # Phase 17: with a session factory the quarantine is durable (survives a restart) and, with a
+    # bus attached, shared across instances. None keeps the original in-memory behaviour.
+    session_factory: object | None = None
+
+    _topic = "mcp_quarantine"
+
+    def __post_init__(self) -> None:
+        self._load()
+
+    def _load(self) -> None:
+        """Rebuild from the table and SWAP in (the bus reload hook). No store: nothing to load."""
+        if self.session_factory is None:
+            return
+        with self.session_factory() as s:
+            rows = s.execute(select(McpQuarantine.server, McpQuarantine.tool)).all()
+        self._quarantine = {(r.server, r.tool) for r in rows}
 
     @staticmethod
     def normalize(manifest: dict) -> dict:
@@ -131,18 +154,53 @@ class MCPGateway:
             findings.append("manifest_drift")
 
         if findings:
-            self._quarantine.add((server, tool))
+            self._quarantine_durably(server, tool, findings)
         return MCPVerdict(
             ok=not findings, server=server, tool=tool, findings=findings,
             detail="; ".join(findings) or "clean",
         )
 
     def is_quarantined(self, server: str, tool: str) -> bool:
-        return (server, tool) in self._quarantine
+        if (server, tool) in self._quarantine:
+            return True
+        # Phase 17: requests a SERVER initiates into the client (sampling runs the client's model on
+        # the server's prompt; elicitation puts the server's words in front of the user) are denied
+        # once ANY of that server's tools is quarantined — a server caught serving a poisoned
+        # manifest has lost the standing to drive the client, whichever "tool" name it uses next.
+        return tool in SERVER_INITIATED and any(s == server for s, _ in self._quarantine)
 
     def release(self, server: str, tool: str) -> None:
-        """Explicit operator un-quarantine — the ONLY way out (a clean re-serve is not)."""
-        self._quarantine.discard((server, tool))
+        """Explicit operator un-quarantine — the ONLY way out (a clean re-serve is not).
+
+        Table FIRST, then memory (mirroring KillSwitchStore._clear): a failed durable release leaves
+        the tool quarantined in both, never released in memory while the table still says hostile.
+        """
+        with self._state_lock:
+            if self.session_factory is not None:
+                with self.session_factory() as s:
+                    s.execute(
+                        delete(McpQuarantine).where(
+                            McpQuarantine.server == server, McpQuarantine.tool == tool
+                        )
+                    )
+                    self.bump_in(s)
+                    s.commit()
+            self._quarantine.discard((server, tool))
+
+    def _quarantine_durably(self, server: str, tool: str, findings: list[str]) -> None:
+        """Memory FIRST (containment never waits on the DB), then the durable row + bus bump."""
+        with self._state_lock:
+            self._quarantine.add((server, tool))
+            if self.session_factory is None:
+                return
+            with self.session_factory() as s:
+                row = s.get(McpQuarantine, (server, tool))
+                if row is None:
+                    s.add(McpQuarantine(server=server, tool=tool, findings=sorted(findings)))
+                else:
+                    row.findings = sorted(set(row.findings) | set(findings))
+                self.bump_in(s)
+                s.commit()
 
     def bless(self, server: str, manifest: dict) -> str:
         """Record a manifest's digest as approved (baseline for the rug-pull check)."""

@@ -39,6 +39,7 @@ from typing import Callable
 
 from sqlalchemy import select
 
+from agentos_controlplane.state_bus import SharedStateMixin
 from agentos_controlplane.store.models import CircuitBreakerState
 
 _AGENT, _TOOL = "agent", "tool"
@@ -57,7 +58,9 @@ class BreakerVerdict:
     state: str      # "open" | "half_open"
 
 
-class CircuitBreakerStore:
+class CircuitBreakerStore(SharedStateMixin):
+    _topic = "breaker"
+
     def __init__(
         self,
         session_factory,
@@ -81,10 +84,14 @@ class CircuitBreakerStore:
         self._load()
 
     def _load(self) -> None:
+        """Rebuild trip state from the table and SWAP it in (also the Phase-15 cross-instance
+        reload: a breaker closed elsewhere must close here). Failure counts stay per-instance."""
+        state: dict[_Key, tuple[str, float | None]] = {}
         with self._sf() as s:
             for row in s.scalars(select(CircuitBreakerState)).all():
                 if row.state != "closed":
-                    self._state[(row.scope, row.agent_id, row.target)] = (row.state, row.opened_at)
+                    state[(row.scope, row.agent_id, row.target)] = (row.state, row.opened_at)
+        self._state = state
 
     # ---- keys ----
     @staticmethod
@@ -163,24 +170,26 @@ class CircuitBreakerStore:
         # must fail toward CONTAINED — a database outage cannot be allowed to silently stop the
         # breaker from containing in-process while the agent keeps violating. The reconciler / next
         # restart repairs the row.
-        self._state[key] = ("open", opened_at)
-        with self._sf() as s:
-            row = s.get(CircuitBreakerState, key)
-            if row is None:
-                s.add(
-                    CircuitBreakerState(
-                        scope=scope,
-                        agent_id=agent_id,
-                        target=target,
-                        state="open",
-                        opened_at=opened_at,
-                        trip_count=1,
+        with self._state_lock:
+            self._state[key] = ("open", opened_at)
+            with self._sf() as s:
+                row = s.get(CircuitBreakerState, key)
+                if row is None:
+                    s.add(
+                        CircuitBreakerState(
+                            scope=scope,
+                            agent_id=agent_id,
+                            target=target,
+                            state="open",
+                            opened_at=opened_at,
+                            trip_count=1,
+                        )
                     )
-                )
-            else:
-                row.state, row.opened_at = "open", opened_at
-                row.trip_count = (row.trip_count or 0) + 1
-            s.commit()
+                else:
+                    row.state, row.opened_at = "open", opened_at
+                    row.trip_count = (row.trip_count or 0) + 1
+                self.bump_in(s)
+                s.commit()
         await self._audit.append_event(
             "circuit_tripped",
             {
@@ -198,6 +207,7 @@ class CircuitBreakerStore:
             row = s.get(CircuitBreakerState, key)
             if row is not None:
                 row.state, row.opened_at = "closed", None
+                self.bump_in(s)
                 s.commit()
         await self._audit.append_event(
             "circuit_reset",
